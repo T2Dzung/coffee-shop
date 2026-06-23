@@ -1,22 +1,25 @@
-# Step 1: Modules caching
-FROM golang:1.19.2-alpine3.16 as modules
-COPY go.mod go.sum /modules/
-WORKDIR /modules
+# Step 1: Builder
+FROM golang:1.22-alpine3.19 AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Cache dependencies
+COPY go.mod go.sum ./
 RUN go mod download
 
-# Step 2: Builder
-FROM golang:1.19.2-alpine3.16 as builder
-COPY --from=modules /go/pkg /go/pkg
-COPY . /app
-WORKDIR /app
+# Build application
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -tags migrate -o /bin/app ./cmd/kitchen
+    go build -tags migrate -ldflags="-w -s" -o /bin/app ./cmd/kitchen
 
-# Step 3: Final
-FROM scratch
+# Step 2: Final
+FROM gcr.io/distroless/static-debian12:nonroot
 
-# GOPATH for scratch images is /
-COPY --from=builder /app/cmd/kitchen/config.yml /
+# Copy configuration and migrations
+COPY --from=builder /app/cmd/kitchen/config.yml /config.yml
 COPY --from=builder /app/db/migrations /db/migrations
 COPY --from=builder /bin/app /app
-CMD ["/app"]
+
+ENTRYPOINT ["/app"]
