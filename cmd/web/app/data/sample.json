@@ -1,0 +1,64 @@
+{
+  "itemTypes": [
+    {
+      "type": 0,
+      "name": "CAPPUCCINO",
+      "price": 4.5,
+      "image": "static/img/CAPPUCCINO.png"
+    },
+    {
+      "type": 1,
+      "name": "COFFEE BLACK",
+      "price": 3,
+      "image": "static/img/COFFEE_BLACK.png"
+    },
+    {
+      "type": 2,
+      "name": "COFFEE WITH ROOM",
+      "price": 3,
+      "image": "static/img/COFFEE_WITH_ROOM.png"
+    },
+    {
+      "type": 3,
+      "name": "ESPRESSO",
+      "price": 3.5,
+      "image": "static/img/ESPRESSO.png"
+    },
+    {
+      "type": 4,
+      "name": "ESPRESSO DOUBLE",
+      "price": 4.5,
+      "image": "static/img/ESPRESSO_DOUBLE.png"
+    },
+    {
+      "type": 5,
+      "name": "LATTE",
+      "price": 4.5,
+      "image": "static/img/LATTE.png"
+    },
+    {
+      "type": 6,
+      "name": "CAKEPOP",
+      "price": 2.5,
+      "image": "static/img/CAKEPOP.png"
+    },
+    {
+      "type": 7,
+      "name": "CROISSANT",
+      "price": 3.25,
+      "image": "static/img/CROISSANT.png"
+    },
+    {
+      "type": 8,
+      "name": "MUFFIN",
+      "price": 3,
+      "image": "static/img/MUFFIN.png"
+    },
+    {
+      "type": 9,
+      "name": "CROISSANT CHOCOLATE",
+      "price": 3.5,
+      "image": "static/img/CROISSANT_CHOCOLATE.png"
+    }
+  ]
+}
