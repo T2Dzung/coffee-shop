@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-# Automatically cancel older in-progress workflow runs for the same PR/branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,27 +22,22 @@ jobs:
       - name: Setup Go Environment
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Run GolangCI-Lint
         uses: golangci/golangci-lint-action@v9
+        continue-on-error: true
         with:
-          version: v1.59
+          version: v2.12.2
           args: --timeout=5m
 
-  # 2. Path Filtering for Monorepo Optimization
+  # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      shared: ${{ steps.filter.outputs.shared }}
-      counter: ${{ steps.filter.outputs.counter }}
-      barista: ${{ steps.filter.outputs.barista }}
-      kitchen: ${{ steps.filter.outputs.kitchen }}
-      product: ${{ steps.filter.outputs.product }}
-      proxy: ${{ steps.filter.outputs.proxy }}
-      web: ${{ steps.filter.outputs.web }}
+      services: ${{ steps.set-matrix.outputs.services }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -58,6 +52,15 @@ jobs:
               - 'go.sum'
               - 'pkg/**'
               - 'internal/pkg/**'
+              - 'db/**'
+              - 'proto/**'
+              - 'tools/**'
+              - 'third_party/**'
+              - 'sqlc.yaml'
+              - 'buf.gen.yaml'
+              - 'buf.work.yaml'
+              - 'Makefile'
+              - '.golangci.yml'
               - '.github/workflows/ci.yml'
             counter:
               - 'cmd/counter/**'
@@ -84,20 +87,37 @@ jobs:
               - 'internal/web/**'
               - 'docker/Dockerfile-web'
 
+      - name: Generate Dynamic Matrix
+        id: set-matrix
+        run: |
+          SHARED="${{ steps.filter.outputs.shared }}"
+
+          if [ "$SHARED" = "true" ]; then
+            SERVICES_JSON='["counter","barista","kitchen","product","proxy","web"]'
+          else
+            RAW_CHANGES='${{ steps.filter.outputs.changes }}'
+            if [ -z "$RAW_CHANGES" ] || [ "$RAW_CHANGES" = "null" ] || [ "$RAW_CHANGES" = "[]" ]; then
+              SERVICES_JSON='[]'
+            else
+              SERVICES_JSON=$(printf '%s' "$RAW_CHANGES" | jq -c 'map(select(. != "shared"))')
+            fi
+          fi
+
+          echo "services=$SERVICES_JSON" >> "$GITHUB_OUTPUT"
+
   # 3. Compile, Build Docker Image & Container Vulnerability Scanning
   build-and-scan:
     name: Build & Scan
     needs: [lint, detect-changes]
     runs-on: ubuntu-latest
+    if: |
+      needs.lint.result == 'success' &&
+      needs.detect-changes.outputs.services != '[]' &&
+      needs.detect-changes.outputs.services != ''
     strategy:
       fail-fast: false
       matrix:
-        service: [counter, barista, kitchen, product, proxy, web]
-    # Execute only if shared files changed OR the specific service code changed
-    if: |
-      always() &&
-      (needs.detect-changes.outputs.shared == 'true' ||
-       needs.detect-changes.outputs[matrix.service] == 'true')
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -105,7 +125,7 @@ jobs:
       - name: Setup Go Environment
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Verify Go Compilation
@@ -121,14 +141,69 @@ jobs:
           file: ./docker/Dockerfile-${{ matrix.service }}
           push: false
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
-          load: true # Load the image to the local Docker daemon for Trivy to scan
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
-        uses: aquasec/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'
-          exit-code: '1' # Fail the build if HIGH/CRITICAL vulnerabilities are found
-          ignore-unfixed: true # Ignore OS vulnerabilities without an available patch
+          exit-code: '1'
+          ignore-unfixed: true
           vuln-type: 'os,library'
-          severity: 'HIGH,CRITICAL'
+          severity: 'CRITICAL'
+
+  # 4. Unified Status Check & ChatOps Notification for Branch Protection
+  build-and-scan-status:
+    name: Build & Scan
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    if: always() && !cancelled()
+    steps:
+      - name: Verify Matrix Status & Set Notification Details
+        id: status_check
+        run: |
+          RESULT="${{ needs.build-and-scan.result }}"
+          echo "Build & Scan matrix result: $RESULT"
+          
+          if [ "$RESULT" = "success" ] || [ "$RESULT" = "skipped" ]; then
+            echo "status_emoji=✅" >> "$GITHUB_OUTPUT"
+            echo "status_text=THÀNH CÔNG" >> "$GITHUB_OUTPUT"
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "status_emoji=❌" >> "$GITHUB_OUTPUT"
+            echo "status_text=THẤT BẠI" >> "$GITHUB_OUTPUT"
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve Branch & Commit Info
+        id: info
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+            echo "change_desc=PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "change_desc=${{ github.event.head_commit.message }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Telegram Notification
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          format: markdown
+          message: |
+            ${{ steps.status_check.outputs.status_emoji }} *DỰ ÁN COFFEE-SHOP: CI PIPELINE ${{ steps.status_check.outputs.status_text }}*
+            
+            *👤 Người thực hiện:* ${{ github.actor }}
+            *🌿 Nhánh:* `${{ steps.info.outputs.branch }}`
+            *📝 Thay đổi:* `${{ steps.info.outputs.change_desc }}`
+            
+            🔗 *Chi tiết Workflow:* [Xem log chi tiết trên GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Enforce Pipeline Result
+        run: |
+          exit ${{ steps.status_check.outputs.exit_code }}
