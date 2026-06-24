@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-# Automatically cancel older in-progress workflow runs for the same PR/branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,7 +22,7 @@ jobs:
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Run GolangCI-Lint
@@ -32,18 +31,12 @@ jobs:
           version: v1.59
           args: --timeout=5m
 
-  # 2. Path Filtering for Monorepo Optimization
+  # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      shared: ${{ steps.filter.outputs.shared }}
-      counter: ${{ steps.filter.outputs.counter }}
-      barista: ${{ steps.filter.outputs.barista }}
-      kitchen: ${{ steps.filter.outputs.kitchen }}
-      product: ${{ steps.filter.outputs.product }}
-      proxy: ${{ steps.filter.outputs.proxy }}
-      web: ${{ steps.filter.outputs.web }}
+      services: ${{ steps.set-matrix.outputs.services }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -84,20 +77,37 @@ jobs:
               - 'internal/web/**'
               - 'docker/Dockerfile-web'
 
+      - name: Generate Dynamic Matrix
+        id: set-matrix
+        run: |
+          SHARED="${{ steps.filter.outputs.shared }}"
+
+          if [ "$SHARED" = "true" ]; then
+            SERVICES_JSON='["counter","barista","kitchen","product","proxy","web"]'
+          else
+            RAW_CHANGES='${{ steps.filter.outputs.changes }}'
+            if [ -z "$RAW_CHANGES" ] || [ "$RAW_CHANGES" = "null" ] || [ "$RAW_CHANGES" = "[]" ]; then
+              SERVICES_JSON='[]'
+            else
+              SERVICES_JSON=$(printf '%s' "$RAW_CHANGES" | jq -c 'map(select(. != "shared"))')
+            fi
+          fi
+
+          echo "services=$SERVICES_JSON" >> "$GITHUB_OUTPUT"
+
   # 3. Compile, Build Docker Image & Container Vulnerability Scanning
   build-and-scan:
     name: Build & Scan
     needs: [lint, detect-changes]
     runs-on: ubuntu-latest
+    if: |
+      needs.lint.result == 'success' &&
+      needs.detect-changes.outputs.services != '[]' &&
+      needs.detect-changes.outputs.services != ''
     strategy:
       fail-fast: false
       matrix:
-        service: [counter, barista, kitchen, product, proxy, web]
-    # Execute only if shared files changed OR the specific service code changed
-    if: |
-      always() &&
-      (needs.detect-changes.outputs.shared == 'true' ||
-       needs.detect-changes.outputs[matrix.service] == 'true')
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -105,7 +115,7 @@ jobs:
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Verify Go Compilation
@@ -121,14 +131,14 @@ jobs:
           file: ./docker/Dockerfile-${{ matrix.service }}
           push: false
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
-          load: true # Load the image to the local Docker daemon for Trivy to scan
+          load: true
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasec/trivy-action@v0.36.0
         with:
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'
-          exit-code: '1' # Fail the build if HIGH/CRITICAL vulnerabilities are found
-          ignore-unfixed: true # Ignore OS vulnerabilities without an available patch
+          exit-code: '1'
+          ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'HIGH,CRITICAL'
