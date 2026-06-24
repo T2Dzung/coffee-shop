@@ -134,7 +134,7 @@ jobs:
           load: true
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
-        uses: aquasec/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'
