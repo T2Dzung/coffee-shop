@@ -88,5 +88,3 @@ func main() {
 		slog.Info("ctx.Done", done)
 	}
 }
-
-// Test CI path filtering for product service
