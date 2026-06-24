@@ -180,13 +180,18 @@ jobs:
 
       - name: Resolve Branch & Commit Info
         id: info
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
-            echo "change_desc=PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}" >> "$GITHUB_OUTPUT"
+            echo "change_desc=PR #${{ github.event.pull_request.number }}: $PR_TITLE" >> "$GITHUB_OUTPUT"
           else
             echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            echo "change_desc=${{ github.event.head_commit.message }}" >> "$GITHUB_OUTPUT"
+            # Extract only the first line of the commit message to prevent multiline output errors and keep notifications clean
+            FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+            echo "change_desc=$FIRST_LINE" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Send Telegram Notification
