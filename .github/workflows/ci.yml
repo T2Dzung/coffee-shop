@@ -195,6 +195,7 @@ jobs:
           fi
 
       - name: Send Telegram Notification
+        if: ${{ secrets.TELEGRAM_TO && secrets.TELEGRAM_TOKEN }}
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
