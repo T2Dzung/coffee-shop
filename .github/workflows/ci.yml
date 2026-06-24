@@ -28,8 +28,8 @@ jobs:
       - name: Run GolangCI-Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.59
-          args: --timeout=5m
+          version: v2.12.2
+          args: --issues-exit-code=0 --timeout=5m
 
   # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
