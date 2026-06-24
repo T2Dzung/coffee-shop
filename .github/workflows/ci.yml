@@ -160,7 +160,7 @@ jobs:
     name: Build & Scan
     needs: build-and-scan
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && !cancelled()
     steps:
       - name: Verify Matrix Status & Set Notification Details
         id: status_check
@@ -178,6 +178,17 @@ jobs:
             echo "exit_code=1" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve Branch & Commit Info
+        id: info
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+            echo "change_desc=PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "change_desc=${{ github.event.head_commit.message }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Send Telegram Notification
         uses: appleboy/telegram-action@master
         with:
@@ -188,8 +199,8 @@ jobs:
             ${{ steps.status_check.outputs.status_emoji }} *DỰ ÁN COFFEE-SHOP: CI PIPELINE ${{ steps.status_check.outputs.status_text }}*
             
             *👤 Người thực hiện:* ${{ github.actor }}
-            *🌿 Nhánh:* `${{ github.ref_name }}`
-            *📝 Commit:* `${{ github.event.head_commit.message }}`
+            *🌿 Nhánh:* `${{ steps.info.outputs.branch }}`
+            *📝 Thay đổi:* `${{ steps.info.outputs.change_desc }}`
             
             🔗 *Chi tiết Workflow:* [Xem log chi tiết trên GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
