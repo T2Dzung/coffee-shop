@@ -27,9 +27,10 @@ jobs:
 
       - name: Run GolangCI-Lint
         uses: golangci/golangci-lint-action@v9
+        continue-on-error: true
         with:
           version: v2.12.2
-          args: --issues-exit-code=0 --timeout=5m
+          args: --timeout=5m
 
   # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
@@ -132,6 +133,8 @@ jobs:
           push: false
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0
