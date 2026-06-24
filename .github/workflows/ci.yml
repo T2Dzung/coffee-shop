@@ -1,0 +1,134 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Automatically cancel older in-progress workflow runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1. Code Quality Check & Static Application Security Testing (SAST)
+  lint:
+    name: Lint & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run GolangCI-Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59
+          args: --timeout=5m
+
+  # 2. Path Filtering for Monorepo Optimization
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      counter: ${{ steps.filter.outputs.counter }}
+      barista: ${{ steps.filter.outputs.barista }}
+      kitchen: ${{ steps.filter.outputs.kitchen }}
+      product: ${{ steps.filter.outputs.product }}
+      proxy: ${{ steps.filter.outputs.proxy }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Filter Paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            shared:
+              - 'go.mod'
+              - 'go.sum'
+              - 'pkg/**'
+              - 'internal/pkg/**'
+              - '.github/workflows/ci.yml'
+            counter:
+              - 'cmd/counter/**'
+              - 'internal/counter/**'
+              - 'docker/Dockerfile-counter'
+            barista:
+              - 'cmd/barista/**'
+              - 'internal/barista/**'
+              - 'docker/Dockerfile-barista'
+            kitchen:
+              - 'cmd/kitchen/**'
+              - 'internal/kitchen/**'
+              - 'docker/Dockerfile-kitchen'
+            product:
+              - 'cmd/product/**'
+              - 'internal/product/**'
+              - 'docker/Dockerfile-product'
+            proxy:
+              - 'cmd/proxy/**'
+              - 'internal/proxy/**'
+              - 'docker/Dockerfile-proxy'
+            web:
+              - 'cmd/web/**'
+              - 'internal/web/**'
+              - 'docker/Dockerfile-web'
+
+  # 3. Compile, Build Docker Image & Container Vulnerability Scanning
+  build-and-scan:
+    name: Build & Scan
+    needs: [lint, detect-changes]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [counter, barista, kitchen, product, proxy, web]
+    # Execute only if shared files changed OR the specific service code changed
+    if: |
+      always() &&
+      (needs.detect-changes.outputs.shared == 'true' ||
+       needs.detect-changes.outputs[matrix.service] == 'true')
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Verify Go Compilation
+        run: go build -v ./cmd/${{ matrix.service }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image Locally
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile-${{ matrix.service }}
+          push: false
+          tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+          load: true # Load the image to the local Docker daemon for Trivy to scan
+
+      - name: Trivy Container Image Scan (DevSecOps Gate)
+        uses: aquasec/trivy-action@v0.36.0
+        with:
+          image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+          format: 'table'
+          exit-code: '1' # Fail the build if HIGH/CRITICAL vulnerabilities are found
+          ignore-unfixed: true # Ignore OS vulnerabilities without an available patch
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
