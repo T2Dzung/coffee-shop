@@ -146,21 +146,44 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL'
 
-  # 4. Unified Status Check for Branch Protection (Required Status Checks)
+  # 4. Unified Status Check & ChatOps Notification for Branch Protection
   build-and-scan-status:
     name: Build & Scan
     needs: build-and-scan
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Verify Matrix Status
+      - name: Verify Matrix Status & Set Notification Details
+        id: status_check
         run: |
           RESULT="${{ needs.build-and-scan.result }}"
           echo "Build & Scan matrix result: $RESULT"
+          
           if [ "$RESULT" = "success" ] || [ "$RESULT" = "skipped" ]; then
-            echo "All builds passed or skipped successfully."
-            exit 0
+            echo "status_emoji=✅" >> "$GITHUB_OUTPUT"
+            echo "status_text=THÀNH CÔNG" >> "$GITHUB_OUTPUT"
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
           else
-            echo "One or more builds failed."
-            exit 1
+            echo "status_emoji=❌" >> "$GITHUB_OUTPUT"
+            echo "status_text=THẤT BẠI" >> "$GITHUB_OUTPUT"
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Send Telegram Notification
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          format: markdown
+          message: |
+            ${{ steps.status_check.outputs.status_emoji }} *DỰ ÁN COFFEE-SHOP: CI PIPELINE ${{ steps.status_check.outputs.status_text }}*
+            
+            *👤 Người thực hiện:* ${{ github.actor }}
+            *🌿 Nhánh:* `${{ github.ref_name }}`
+            *📝 Commit:* `${{ github.event.head_commit.message }}`
+            
+            🔗 *Chi tiết Workflow:* [Xem log chi tiết trên GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Enforce Pipeline Result
+        run: |
+          exit ${{ steps.status_check.outputs.exit_code }}
