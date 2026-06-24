@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Auto-update GitHub Actions dependencies weekly (limit to 3 open PRs)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Auto-update Go modules dependencies weekly (limit to 3 open PRs)
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "go-modules"
