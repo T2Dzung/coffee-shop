@@ -145,3 +145,22 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL'
+
+  # 4. Unified Status Check for Branch Protection (Required Status Checks)
+  build-and-scan-status:
+    name: Build & Scan
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify Matrix Status
+        run: |
+          RESULT="${{ needs.build-and-scan.result }}"
+          echo "Build & Scan matrix result: $RESULT"
+          if [ "$RESULT" = "success" ] || [ "$RESULT" = "skipped" ]; then
+            echo "All builds passed or skipped successfully."
+            exit 0
+          else
+            echo "One or more builds failed."
+            exit 1
+          fi
