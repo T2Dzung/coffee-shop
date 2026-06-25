@@ -14,7 +14,7 @@ jobs:
   # 1. Code Quality Check & Static Application Security Testing (SAST)
   lint:
     name: Lint & Code Quality
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
   # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     outputs:
       services: ${{ steps.set-matrix.outputs.services }}
     steps:
@@ -109,7 +109,7 @@ jobs:
   build-and-scan:
     name: Build & Scan
     needs: [lint, detect-changes]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     if: |
       needs.lint.result == 'success' &&
       needs.detect-changes.outputs.services != '[]' &&
@@ -155,11 +155,18 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL'
 
+      - name: Docker System Garbage Collection
+        if: always()
+        run: |
+          echo "=== TIẾN HÀNH DỌN DẸP DUNG LƯỢNG ĐĨA CỨNG CỤC BỘ ==="
+          docker system prune -f --volumes
+          df -h
+
   # 4. Unified Status Check & ChatOps Notification for Branch Protection
   build-and-scan-status:
     name: Build & Scan
     needs: build-and-scan
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     if: always() && !cancelled()
     steps:
       - name: Verify Matrix Status & Set Notification Details
