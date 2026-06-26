@@ -122,3 +122,6 @@ The details of how to run it can be find at [deployment with Nomad, Consult Conn
 - [go-build-template](https://github.com/thockin/go-build-template)
 - [go-clean-template](https://github.com/evrone/go-clean-template)
 - [emsifa/tailwind-pos](https://github.com/emsifa/tailwind-pos)
+
+
+// test CI

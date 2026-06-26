@@ -14,7 +14,7 @@ jobs:
   # 1. Code Quality Check & Static Application Security Testing (SAST)
   lint:
     name: Lint & Code Quality
-    runs-on: [self-hosted, linux]
+    runs-on: coffeeshop-runner
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -35,7 +35,7 @@ jobs:
   # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
     name: Detect Changes
-    runs-on: [self-hosted, linux]
+    runs-on: coffeeshop-runner
     outputs:
       services: ${{ steps.set-matrix.outputs.services }}
     steps:
@@ -109,7 +109,7 @@ jobs:
   build-and-scan:
     name: Build & Scan
     needs: [lint, detect-changes]
-    runs-on: [self-hosted, linux]
+    runs-on: coffeeshop-runner
     if: |
       needs.lint.result == 'success' &&
       needs.detect-changes.outputs.services != '[]' &&
@@ -166,7 +166,7 @@ jobs:
   build-and-scan-status:
     name: Build & Scan
     needs: build-and-scan
-    runs-on: [self-hosted, linux]
+    runs-on: coffeeshop-runner
     if: always() && !cancelled()
     steps:
       - name: Verify Matrix Status & Set Notification Details
