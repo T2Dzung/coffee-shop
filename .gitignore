@@ -29,6 +29,7 @@ go.work
 *.env
 
 .terraform
+.terraform.lock.hcl
 *tfstate*
 
 # IDE settings
