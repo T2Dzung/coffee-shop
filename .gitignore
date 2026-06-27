@@ -45,3 +45,6 @@ go.work
 # MCP MemPalace files
 mempalace.yaml
 entities.json
+
+# K8S config
+/infrastructure/terraform/envs/dev/dev-kubeconfig
