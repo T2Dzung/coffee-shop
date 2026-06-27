@@ -113,10 +113,9 @@ jobs:
   # 3. Compile, Build Docker Image & Container Vulnerability Scanning
   build-and-scan:
     name: Build & Scan
-    needs: [lint, detect-changes]
+    needs: [detect-changes]
     runs-on: coffeeshop-runner
     if: |
-      needs.lint.result == 'success' &&
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     strategy:
