@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: barista
+  namespace: coffeeshop
+  labels:
+    app: barista
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: barista
+  template:
+    metadata:
+      labels:
+        app: barista
+    spec:
+      containers:
+        - name: barista
+          image: go-coffeeshop-barista:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: APP_NAME_BARISTA
+            - name: IN_DOCKER
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: IN_DOCKER
+            - name: PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: PG_URL
+            - name: PG_DSN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: PG_DSN_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: RABBITMQ_URL

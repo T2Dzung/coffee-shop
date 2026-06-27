@@ -1,0 +1,10 @@
+project_name            = "coffeeshop"
+environment             = "dev"
+aws_region              = "ap-southeast-1"
+primary_instance_type   = "t3.large"
+secondary_instance_type = "t3.large"
+disk_size               = 80
+key_name                = "coffeeshop-runner-key"
+private_key_path        = "C:/Users/My Computer/Downloads/coffeeshop-secrets/coffeeshop-runner-key.pem"
+my_ip                   = "42.118.49.61/32"
+secondary_node_count    = 2

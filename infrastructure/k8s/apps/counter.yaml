@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: counter
+  namespace: coffeeshop
+  labels:
+    app: counter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: counter
+  template:
+    metadata:
+      labels:
+        app: counter
+    spec:
+      containers:
+        - name: counter
+          image: go-coffeeshop-counter:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: APP_NAME_COUNTER
+            - name: IN_DOCKER
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: IN_DOCKER
+            - name: PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: PG_URL
+            - name: PG_DSN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: PG_DSN_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: RABBITMQ_URL
+            - name: PRODUCT_CLIENT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: PRODUCT_CLIENT_URL
+          ports:
+            - containerPort: 5002
+              name: http-grpc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: counter
+  namespace: coffeeshop
+spec:
+  ports:
+    - port: 5002
+      targetPort: 5002
+  selector:
+    app: counter

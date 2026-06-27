@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: coffeeshop
+  labels:
+    app: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: go-coffeeshop-web:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REVERSE_PROXY_URL
+              value: "http://proxy:5000" # Proxy nội bộ trong K8s cluster
+            - name: WEB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: WEB_PORT
+          ports:
+            - containerPort: 8888
+              name: web-port
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: coffeeshop
+spec:
+  ports:
+    - port: 8888
+      targetPort: 8888
+  selector:
+    app: web

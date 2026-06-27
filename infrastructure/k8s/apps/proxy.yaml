@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+  namespace: coffeeshop
+  labels:
+    app: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+    spec:
+      containers:
+        - name: proxy
+          image: go-coffeeshop-proxy:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: APP_NAME_PROXY
+            - name: GRPC_PRODUCT_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: GRPC_PRODUCT_HOST
+            - name: GRPC_PRODUCT_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: GRPC_PRODUCT_PORT
+            - name: GRPC_COUNTER_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: GRPC_COUNTER_HOST
+            - name: GRPC_COUNTER_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: GRPC_COUNTER_PORT
+          ports:
+            - containerPort: 5000
+              name: proxy-port
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy
+  namespace: coffeeshop
+spec:
+  ports:
+    - port: 5000
+      targetPort: 5000
+  selector:
+    app: proxy
