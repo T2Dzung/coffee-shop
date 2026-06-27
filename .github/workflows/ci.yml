@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GOMODCACHE: /go/pkg/mod
+
 jobs:
   # 1. Code Quality Check & Static Application Security Testing (SAST)
   lint:
@@ -23,11 +26,13 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
+          cache: false
 
       - name: Run GolangCI-Lint
         uses: golangci/golangci-lint-action@v9
         continue-on-error: true
+        env:
+          GOLANGCI_LINT_CACHE: /go/pkg/mod/.golangci-lint-cache
         with:
           version: v2.12.2
           args: --timeout=5m
@@ -126,9 +131,11 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
+          cache: false
 
       - name: Verify Go Compilation
+        env:
+          GOCACHE: /go/pkg/mod/.go-build-cache/${{ matrix.service }}
         run: go build -v ./cmd/${{ matrix.service }}
 
       - name: Set up Docker Buildx
@@ -142,11 +149,13 @@ jobs:
           push: false
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/go/pkg/mod/.docker-cache/${{ matrix.service }}
+          cache-to: type=local,dest=/go/pkg/mod/.docker-cache/${{ matrix.service }},mode=max
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
         with:
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'

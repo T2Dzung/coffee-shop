@@ -6,8 +6,8 @@
 githubConfigUrl: "https://github.com/T2Dzung/coffee-shop"
 githubConfigSecret: "github-actions-token-secret" # Kubernetes Secret containing the GitHub PAT
 
-minRunners: 0
-maxRunners: 3
+minRunners: 2
+maxRunners: 6
 
 template:
   spec:
@@ -17,6 +17,7 @@ template:
     initContainers:
       - name: dind
         image: docker:24.0.7-dind
+        imagePullPolicy: IfNotPresent
         restartPolicy: Always
         env:
           - name: DOCKER_TLS_CERTDIR
@@ -25,10 +26,10 @@ template:
           privileged: true # Privileged mode is required for docker daemon execution inside container namespaces
         resources:
           limits:
-            cpu: "1"
-            memory: "2Gi"
+            cpu: "2"
+            memory: "3Gi"
           requests:
-            cpu: "0.5"
+            cpu: "400m"
             memory: "1Gi"
         volumeMounts:
           - name: docker-storage
@@ -36,7 +37,8 @@ template:
     
     containers:
       - name: runner
-        image: ghcr.io/actions/actions-runner:latest
+        image: ghcr.io/actions/actions-runner:2.317.0
+        imagePullPolicy: IfNotPresent
         command: ["/home/runner/run.sh"]
         env:
           - name: DOCKER_HOST
@@ -44,10 +46,10 @@ template:
         resources:
           limits:
             cpu: "1"
-            memory: "2Gi"
-          requests:
-            cpu: "0.5"
             memory: "1Gi"
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
         volumeMounts:
           - name: go-cache
             mountPath: /go/pkg/mod
