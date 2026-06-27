@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: go-coffeeshop
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/T2Dzung/coffee-shop.git
+    targetRevision: HEAD
+    path: infrastructure/k8s/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: coffeeshop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
