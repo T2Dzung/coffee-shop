@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: product
-          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product:9de6d85f9541b747b716c9154b48474f7d4885f7
+          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product:fc5b71320acf152022a8e3d8f43fb5314aeaece9
           imagePullPolicy: IfNotPresent
           env:
             - name: APP_NAME
