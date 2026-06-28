@@ -1,0 +1,262 @@
+name: CD — Build, Push & Deploy (GitOps)
+
+# ============================================================================
+# SECURITY: This workflow runs on self-hosted runner (EC2) and is ONLY triggered
+# by push events on trusted branches. Never triggered by pull_request.
+# Self-hosted runner leverages EC2 IAM Instance Profile for AWS access (zero secrets).
+# ============================================================================
+on:
+  push:
+    branches: [ main, "feat/*" ]
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOMODCACHE: /go/pkg/mod
+
+jobs:
+  # 1. Path Filtering for Monorepo Optimization
+  detect-changes:
+    name: Detect Changes
+    runs-on: coffeeshop-runner
+    outputs:
+      services: ${{ steps.set-matrix.outputs.services }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Filter Paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            shared:
+              - 'go.mod'
+              - 'go.sum'
+              - 'pkg/**'
+              - 'internal/pkg/**'
+              - 'db/**'
+              - 'proto/**'
+              - 'tools/**'
+              - 'third_party/**'
+              - 'sqlc.yaml'
+              - 'buf.gen.yaml'
+              - 'buf.work.yaml'
+              - 'Makefile'
+              - '.golangci.yml'
+              - '.github/workflows/**'
+            counter:
+              - 'cmd/counter/**'
+              - 'internal/counter/**'
+              - 'docker/Dockerfile-counter'
+            barista:
+              - 'cmd/barista/**'
+              - 'internal/barista/**'
+              - 'docker/Dockerfile-barista'
+            kitchen:
+              - 'cmd/kitchen/**'
+              - 'internal/kitchen/**'
+              - 'docker/Dockerfile-kitchen'
+            product:
+              - 'cmd/product/**'
+              - 'internal/product/**'
+              - 'docker/Dockerfile-product'
+            proxy:
+              - 'cmd/proxy/**'
+              - 'internal/proxy/**'
+              - 'docker/Dockerfile-proxy'
+            web:
+              - 'cmd/web/**'
+              - 'internal/web/**'
+              - 'docker/Dockerfile-web'
+
+      - name: Generate Dynamic Matrix
+        id: set-matrix
+        run: |
+          SHARED="${{ steps.filter.outputs.shared }}"
+
+          if [ "$SHARED" = "true" ]; then
+            SERVICES_JSON='["counter","barista","kitchen","product","proxy","web"]'
+          else
+            RAW_CHANGES='${{ steps.filter.outputs.changes }}'
+            if [ -z "$RAW_CHANGES" ] || [ "$RAW_CHANGES" = "null" ] || [ "$RAW_CHANGES" = "[]" ]; then
+              SERVICES_JSON='[]'
+            else
+              SERVICES_JSON=$(printf '%s' "$RAW_CHANGES" | jq -c 'map(select(. != "shared"))')
+            fi
+          fi
+
+          echo "services=$SERVICES_JSON" >> "$GITHUB_OUTPUT"
+
+  # 2. Build, Scan, Push to ECR & Update K8s Manifests (GitOps)
+  build-push-deploy:
+    name: Build, Push & Deploy
+    needs: [detect-changes]
+    runs-on: coffeeshop-runner
+    permissions:
+      contents: write
+    if: |
+      needs.detect-changes.outputs.services != '[]' &&
+      needs.detect-changes.outputs.services != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Go Environment
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Build Go Binary
+        env:
+          GOCACHE: /go/pkg/mod/.go-build-cache/${{ matrix.service }}
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p ./bin
+          go build -v -tags migrate -ldflags="-w -s" -o ./bin/${{ matrix.service }} ./cmd/${{ matrix.service }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker Image Locally
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile-${{ matrix.service }}
+          push: false
+          tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+          load: true
+
+      - name: Trivy Container Image Scan (DevSecOps Gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
+        with:
+          image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
+          cache: 'false'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-southeast-1
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push Docker Image to ECR
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile-${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update K8s Manifest & Push to GitHub (GitOps)
+        env:
+          CURRENT_BRANCH: ${{ github.ref_name }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Retry loop to avoid race conditions in monorepos when multiple jobs push simultaneously
+          for i in {1..10}; do
+            echo "Attempt $i to push manifest update..."
+            git fetch origin "$CURRENT_BRANCH"
+            git checkout "$CURRENT_BRANCH"
+            git reset --hard "origin/$CURRENT_BRANCH"
+            
+            # Use sed to update image URL to point to AWS ECR with the current Git SHA
+            sed -i "s|image: .*go-coffeeshop-${{ matrix.service }}:.*|image: ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:${{ github.sha }}|g" infrastructure/k8s/apps/${{ matrix.service }}.yaml
+            
+            git add infrastructure/k8s/apps/${{ matrix.service }}.yaml
+            git commit -m "chore(gitops): update ${{ matrix.service }} image tag to ${{ github.sha }} [skip ci]" || { echo "No changes to commit"; exit 0; }
+            
+            if git push origin "$CURRENT_BRANCH"; then
+              echo "Push successful!"
+              break
+            else
+              echo "Push conflict detected, retrying in 5 seconds..."
+              sleep 5
+            fi
+          done
+
+      - name: Docker System Garbage Collection
+        if: always()
+        run: |
+          echo "=== TIẾN HÀNH DỌN DẸP DUNG LƯỢNG ĐĨA CỨNG CỤC BỘ ==="
+          docker system prune -f --volumes
+          df -h
+
+  # 3. Unified Status Check & ChatOps Notification
+  deploy-status:
+    name: Deploy Status
+    needs: build-push-deploy
+    runs-on: coffeeshop-runner
+    if: always() && !cancelled()
+    steps:
+      - name: Verify Deploy Status & Set Notification Details
+        id: status_check
+        run: |
+          RESULT="${{ needs.build-push-deploy.result }}"
+          echo "Build-Push-Deploy matrix result: $RESULT"
+          
+          if [ "$RESULT" = "success" ] || [ "$RESULT" = "skipped" ]; then
+            echo "status_emoji=✅" >> "$GITHUB_OUTPUT"
+            echo "status_text=THÀNH CÔNG" >> "$GITHUB_OUTPUT"
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "status_emoji=❌" >> "$GITHUB_OUTPUT"
+            echo "status_text=THẤT BẠI" >> "$GITHUB_OUTPUT"
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve Branch & Commit Info
+        id: info
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+          echo "change_desc=$FIRST_LINE" >> "$GITHUB_OUTPUT"
+
+      - name: Send Telegram Notification
+        env:
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        if: ${{ env.TELEGRAM_TO != '' && env.TELEGRAM_TOKEN != '' }}
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          format: markdown
+          message: |
+            ${{ steps.status_check.outputs.status_emoji }} *DỰ ÁN COFFEE-SHOP: CD PIPELINE ${{ steps.status_check.outputs.status_text }}*
+            
+            *👤 Người thực hiện:* ${{ github.actor }}
+            *🌿 Nhánh:* `${{ steps.info.outputs.branch }}`
+            *📝 Thay đổi:* `${{ steps.info.outputs.change_desc }}`
+            
+            🔗 *Chi tiết Workflow:* [Xem log chi tiết trên GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Enforce Pipeline Result
+        run: |
+          exit ${{ steps.status_check.outputs.exit_code }}

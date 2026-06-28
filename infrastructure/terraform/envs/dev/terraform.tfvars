@@ -6,5 +6,5 @@ secondary_instance_type = "t3.large"
 disk_size               = 80
 key_name                = "coffeeshop-runner-key"
 private_key_path        = "C:/Users/My Computer/Downloads/coffeeshop-secrets/coffeeshop-runner-key.pem"
-my_ip                   = "42.118.49.61/32"
+my_ip                   = "113.23.103.82/32"
 secondary_node_count    = 2

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: counter
-          image: go-coffeeshop-counter:latest
+          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter:bef39cfbbc4badb56ff0c62168c778d79f4dc8a6
           imagePullPolicy: IfNotPresent
           env:
             - name: APP_NAME
