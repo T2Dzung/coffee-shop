@@ -1,23 +1,21 @@
-name: Continuous Integration
+name: CI — Code Quality Gate
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-pr-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  GOMODCACHE: /go/pkg/mod
+  GOMODCACHE: /home/runner/go/pkg/mod
 
 jobs:
   # 1. Code Quality Check & Static Application Security Testing (SAST)
   lint:
     name: Lint & Code Quality
-    runs-on: coffeeshop-runner
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -26,22 +24,18 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: false
 
       - name: Run GolangCI-Lint
         uses: golangci/golangci-lint-action@v9
         continue-on-error: true
-        env:
-          GOLANGCI_LINT_CACHE: /go/pkg/mod/.golangci-lint-cache
         with:
           version: v2.12.2
           args: --timeout=5m
-          skip-cache: true
 
   # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
     name: Detect Changes
-    runs-on: coffeeshop-runner
+    runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.set-matrix.outputs.services }}
     steps:
@@ -67,7 +61,7 @@ jobs:
               - 'buf.work.yaml'
               - 'Makefile'
               - '.golangci.yml'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/**'
             counter:
               - 'cmd/counter/**'
               - 'internal/counter/**'
@@ -111,13 +105,11 @@ jobs:
 
           echo "services=$SERVICES_JSON" >> "$GITHUB_OUTPUT"
 
-  # 3. Host-based Compilation, Docker Packaging & Container Vulnerability Scanning
+  # 3. Build & Scan (validation only — no push to registry)
   build-and-scan:
     name: Build & Scan
     needs: [detect-changes]
-    runs-on: coffeeshop-runner
-    permissions:
-      contents: write
+    runs-on: ubuntu-latest
     if: |
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
@@ -133,11 +125,9 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: false
 
       - name: Build Go Binary
         env:
-          GOCACHE: /go/pkg/mod/.go-build-cache/${{ matrix.service }}
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: amd64
@@ -148,7 +138,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build Docker Image Locally
+      - name: Build Docker Image (Local Only)
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -159,8 +149,6 @@ jobs:
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0
-        env:
-          TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
         with:
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'
@@ -168,121 +156,22 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL'
-          cache: 'false'
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ap-southeast-1
-
-      - name: Log in to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and Push Docker Image to ECR
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./docker/Dockerfile-${{ matrix.service }}
-          push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Update K8s Manifest & Push to GitHub (GitOps)
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          # Retry loop to avoid race conditions in monorepos when multiple jobs push simultaneously
-          for i in {1..10}; do
-            echo "Attempt $i to push manifest update..."
-            git fetch origin feat/cd-pipeline
-            git checkout feat/cd-pipeline
-            git reset --hard origin/feat/cd-pipeline
-            
-            # Use sed to update image URL to point to AWS ECR with the current Git SHA
-            sed -i "s|image: .*go-coffeeshop-${{ matrix.service }}:.*|image: ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:${{ github.sha }}|g" infrastructure/k8s/apps/${{ matrix.service }}.yaml
-            
-            git add infrastructure/k8s/apps/${{ matrix.service }}.yaml
-            git commit -m "chore(gitops): update ${{ matrix.service }} image tag to ${{ github.sha }} [skip ci]" || { echo "No changes to commit"; exit 0; }
-            
-            if git push origin feat/cd-pipeline; then
-              echo "Push successful!"
-              break
-            else
-              echo "Push conflict detected, retrying in 5 seconds..."
-              sleep 5
-            fi
-          done
-
-      - name: Docker System Garbage Collection
-        if: always()
-        run: |
-          echo "=== TIẾN HÀNH DỌN DẸP DUNG LƯỢNG ĐĨA CỨNG CỤC BỘ ==="
-          docker system prune -f --volumes
-          df -h
-
-  # 4. Unified Status Check & ChatOps Notification for Branch Protection
-  build-and-scan-status:
-    name: Build & Scan
-    needs: build-and-scan
-    runs-on: coffeeshop-runner
+  # 4. Unified Status Check for Branch Protection
+  ci-status:
+    name: CI Status
+    needs: [lint, build-and-scan]
+    runs-on: ubuntu-latest
     if: always() && !cancelled()
     steps:
-      - name: Verify Matrix Status & Set Notification Details
-        id: status_check
+      - name: Verify CI Results
         run: |
-          RESULT="${{ needs.build-and-scan.result }}"
-          echo "Build & Scan matrix result: $RESULT"
-          
-          if [ "$RESULT" = "success" ] || [ "$RESULT" = "skipped" ]; then
-            echo "status_emoji=✅" >> "$GITHUB_OUTPUT"
-            echo "status_text=THÀNH CÔNG" >> "$GITHUB_OUTPUT"
-            echo "exit_code=0" >> "$GITHUB_OUTPUT"
-          else
-            echo "status_emoji=❌" >> "$GITHUB_OUTPUT"
-            echo "status_text=THẤT BẠI" >> "$GITHUB_OUTPUT"
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+          LINT="${{ needs.lint.result }}"
+          BUILD="${{ needs.build-and-scan.result }}"
+          echo "Lint: $LINT | Build & Scan: $BUILD"
+
+          if [ "$LINT" = "failure" ] || [ "$BUILD" = "failure" ]; then
+            echo "❌ CI checks failed"
+            exit 1
           fi
-
-      - name: Resolve Branch & Commit Info
-        id: info
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
-            echo "change_desc=PR #${{ github.event.pull_request.number }}: $PR_TITLE" >> "$GITHUB_OUTPUT"
-          else
-            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            # Extract only the first line of the commit message to prevent multiline output errors and keep notifications clean
-            FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
-            echo "change_desc=$FIRST_LINE" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Send Telegram Notification
-        env:
-          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        if: ${{ env.TELEGRAM_TO != '' && env.TELEGRAM_TOKEN != '' }}
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_TO }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          format: markdown
-          message: |
-            ${{ steps.status_check.outputs.status_emoji }} *DỰ ÁN COFFEE-SHOP: CI PIPELINE ${{ steps.status_check.outputs.status_text }}*
-            
-            *👤 Người thực hiện:* ${{ github.actor }}
-            *🌿 Nhánh:* `${{ steps.info.outputs.branch }}`
-            *📝 Thay đổi:* `${{ steps.info.outputs.change_desc }}`
-            
-            🔗 *Chi tiết Workflow:* [Xem log chi tiết trên GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-      - name: Enforce Pipeline Result
-        run: |
-          exit ${{ steps.status_check.outputs.exit_code }}
+          echo "✅ All CI checks passed"
