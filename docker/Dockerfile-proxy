@@ -1,26 +1,9 @@
-# Step 1: Builder
-FROM golang:1.24-alpine AS builder
-
-WORKDIR /app
-
-RUN apk add --no-cache git ca-certificates tzdata
-
-# Cache dependencies
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Build application
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -tags migrate -ldflags="-w -s" -o /bin/app ./cmd/proxy
-
-# Step 2: Final
 FROM gcr.io/distroless/static-debian12:nonroot
 
 EXPOSE 5000
 
-# Copy configuration
-COPY --from=builder /app/cmd/proxy/config.yml /config.yml
-COPY --from=builder /bin/app /app
+# Copy configuration and the pre-built binary directly from the host workspace
+COPY ./cmd/proxy/config.yml /config.yml
+COPY ./bin/proxy /app
 
 ENTRYPOINT ["/app"]

@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GOMODCACHE: /go/pkg/mod
+
 jobs:
   # 1. Code Quality Check & Static Application Security Testing (SAST)
   lint:
@@ -23,11 +26,13 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
+          cache: false
 
       - name: Run GolangCI-Lint
         uses: golangci/golangci-lint-action@v9
         continue-on-error: true
+        env:
+          GOLANGCI_LINT_CACHE: /go/pkg/mod/.golangci-lint-cache
         with:
           version: v2.12.2
           args: --timeout=5m
@@ -105,13 +110,12 @@ jobs:
 
           echo "services=$SERVICES_JSON" >> "$GITHUB_OUTPUT"
 
-  # 3. Compile, Build Docker Image & Container Vulnerability Scanning
+  # 3. Host-based Compilation, Docker Packaging & Container Vulnerability Scanning
   build-and-scan:
     name: Build & Scan
-    needs: [lint, detect-changes]
+    needs: [detect-changes]
     runs-on: coffeeshop-runner
     if: |
-      needs.lint.result == 'success' &&
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     strategy:
@@ -126,10 +130,17 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
+          cache: false
 
-      - name: Verify Go Compilation
-        run: go build -v ./cmd/${{ matrix.service }}
+      - name: Build Go Binary
+        env:
+          GOCACHE: /go/pkg/mod/.go-build-cache/${{ matrix.service }}
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p ./bin
+          go build -v -tags migrate -ldflags="-w -s" -o ./bin/${{ matrix.service }} ./cmd/${{ matrix.service }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -142,11 +153,11 @@ jobs:
           push: false
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
         with:
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'

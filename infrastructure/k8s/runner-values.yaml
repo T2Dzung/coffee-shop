@@ -6,8 +6,8 @@
 githubConfigUrl: "https://github.com/T2Dzung/coffee-shop"
 githubConfigSecret: "github-actions-token-secret" # Kubernetes Secret containing the GitHub PAT
 
-minRunners: 0
-maxRunners: 3
+minRunners: 2
+maxRunners: 7
 
 template:
   spec:
@@ -17,6 +17,7 @@ template:
     initContainers:
       - name: dind
         image: docker:24.0.7-dind
+        imagePullPolicy: IfNotPresent
         restartPolicy: Always
         env:
           - name: DOCKER_TLS_CERTDIR
@@ -26,10 +27,10 @@ template:
         resources:
           limits:
             cpu: "1"
-            memory: "2Gi"
+            memory: "1.5Gi"
           requests:
-            cpu: "0.5"
-            memory: "1Gi"
+            cpu: "100m"
+            memory: "512Mi"
         volumeMounts:
           - name: docker-storage
             mountPath: /var/lib/docker
@@ -37,17 +38,18 @@ template:
     containers:
       - name: runner
         image: ghcr.io/actions/actions-runner:latest
+        imagePullPolicy: IfNotPresent
         command: ["/home/runner/run.sh"]
         env:
           - name: DOCKER_HOST
             value: "tcp://localhost:2375" # Points docker commands to the Native DinD Sidecar daemon
         resources:
           limits:
-            cpu: "1"
+            cpu: "2"
             memory: "2Gi"
           requests:
-            cpu: "0.5"
-            memory: "1Gi"
+            cpu: "500m"
+            memory: "512Mi"
         volumeMounts:
           - name: go-cache
             mountPath: /go/pkg/mod
