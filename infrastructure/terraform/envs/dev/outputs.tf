@@ -26,3 +26,8 @@ output "dev_cluster_status" {
   description = "The deployment status of the Dev HA K3s Cluster"
   value       = module.dev_k8s_primary.public_ip != null ? "Dev HA Cluster deployed. Primary K3s node is bootstrapping, and Secondary nodes are waiting to join. Please wait 3-5 minutes for the entire HA cluster to become ready." : "Deployment in progress."
 }
+
+output "ecr_repository_urls" {
+  description = "The URLs of the ECR repositories for the microservices"
+  value       = { for k, v in aws_ecr_repository.services : k => v.repository_url }
+}

@@ -31,6 +31,13 @@ module "ec2" {
   user_data_replace_on_change = true
   user_data                   = var.user_data
 
+  metadata_options = {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required" # IMDSv2
+    http_put_response_hop_limit = 2          # Allow containers inside K8s pods to fetch IAM role credentials
+  }
+
+
   # Dynamic Spot / On-Demand configuration managed elegantly by the community module
   create_spot_instance                = var.enable_spot
   spot_price                          = var.spot_price

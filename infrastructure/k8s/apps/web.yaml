@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: go-coffeeshop-web:latest
+          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web:fc5b71320acf152022a8e3d8f43fb5314aeaece9
           imagePullPolicy: IfNotPresent
           env:
             - name: REVERSE_PROXY_URL

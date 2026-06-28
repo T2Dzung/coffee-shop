@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: proxy
-          image: go-coffeeshop-proxy:latest
+          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy:19d08f70d1df94c0e87e932ecb7c4845087e93c9
           imagePullPolicy: IfNotPresent
           env:
             - name: APP_NAME
