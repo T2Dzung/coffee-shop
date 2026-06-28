@@ -110,7 +110,7 @@ jobs:
 
           echo "services=$SERVICES_JSON" >> "$GITHUB_OUTPUT"
 
-  # 3. Compile, Build Docker Image & Container Vulnerability Scanning
+  # 3. Host-based Compilation, Docker Packaging & Container Vulnerability Scanning
   build-and-scan:
     name: Build & Scan
     needs: [detect-changes]
@@ -132,10 +132,15 @@ jobs:
           go-version-file: 'go.mod'
           cache: false
 
-      - name: Verify Go Compilation
+      - name: Build Go Binary
         env:
           GOCACHE: /go/pkg/mod/.go-build-cache/${{ matrix.service }}
-        run: go build -v ./cmd/${{ matrix.service }}
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p ./bin
+          go build -v -tags migrate -ldflags="-w -s" -o ./bin/${{ matrix.service }} ./cmd/${{ matrix.service }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -148,8 +153,6 @@ jobs:
           push: false
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
-          cache-from: type=local,src=/go/pkg/mod/.docker-cache/${{ matrix.service }}
-          cache-to: type=local,dest=/go/pkg/mod/.docker-cache/${{ matrix.service }},mode=max
 
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0

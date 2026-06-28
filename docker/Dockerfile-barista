@@ -1,25 +1,8 @@
-# Step 1: Builder
-FROM golang:1.24-alpine AS builder
-
-WORKDIR /app
-
-RUN apk add --no-cache git ca-certificates tzdata
-
-# Cache dependencies
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Build application
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -tags migrate -ldflags="-w -s" -o /bin/app ./cmd/barista
-
-# Step 2: Final
 FROM gcr.io/distroless/static-debian12:nonroot
 
-# Copy configuration and migrations
-COPY --from=builder /app/cmd/barista/config.yml /config.yml
-COPY --from=builder /app/db/migrations /db/migrations
-COPY --from=builder /bin/app /app
+# Copy configuration, migrations and the pre-built binary directly from the host workspace
+COPY ./cmd/barista/config.yml /config.yml
+COPY ./db/migrations /db/migrations
+COPY ./bin/barista /app
 
 ENTRYPOINT ["/app"]
