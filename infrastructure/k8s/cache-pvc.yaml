@@ -11,7 +11,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   nfs:
     path: /mnt/go-cache
-    server: 172.31.22.51 # Internal IP of the Primary node acting as NFS Server
+    server: 172.31.28.92 # Internal IP of the Primary node acting as NFS Server
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

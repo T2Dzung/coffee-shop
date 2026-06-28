@@ -36,6 +36,7 @@ jobs:
         with:
           version: v2.12.2
           args: --timeout=5m
+          skip-cache: true
 
   # 2. Path Filtering for Monorepo Optimization — generates a dynamic build matrix
   detect-changes:
@@ -165,6 +166,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL'
+          cache: 'false'
 
       - name: Docker System Garbage Collection
         if: always()
