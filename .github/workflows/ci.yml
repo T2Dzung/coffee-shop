@@ -1,4 +1,4 @@
-name: CI — Code Quality Gate
+name: Continuous Integration
 
 on:
   pull_request:

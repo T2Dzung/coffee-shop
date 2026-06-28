@@ -136,6 +136,19 @@ jobs:
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
 
+      - name: Trivy Container Image Scan (DevSecOps Gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
+        with:
+          image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
+          cache: 'false'
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
