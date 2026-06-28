@@ -47,5 +47,6 @@ go.work
 mempalace.yaml
 entities.json
 
-# K8S config
+# K8S Secrets
 /infrastructure/terraform/envs/dev/dev-kubeconfig
+/infrastructure/k8s/apps/configmap-secrets.yaml
