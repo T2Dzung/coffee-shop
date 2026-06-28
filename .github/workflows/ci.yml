@@ -1,4 +1,4 @@
-name: Continuous Integration
+name: CI — Code Quality Gate
 
 on:
   pull_request:
@@ -165,13 +165,18 @@ jobs:
     if: always() && !cancelled()
     steps:
       - name: Verify CI Results
+        id: status_check
         run: |
           LINT="${{ needs.lint.result }}"
           BUILD="${{ needs.build-and-scan.result }}"
-          echo "Lint: $LINT | Build & Scan: $BUILD"
+          echo "Lint result: $LINT | Build-Scan result: $BUILD"
 
-          if [ "$LINT" = "failure" ] || [ "$BUILD" = "failure" ]; then
-            echo "❌ CI checks failed"
-            exit 1
+          if [ "$LINT" = "failure" ] || [ "$LINT" = "cancelled" ] || [ "$BUILD" = "failure" ] || [ "$BUILD" = "cancelled" ]; then
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
           fi
-          echo "✅ All CI checks passed"
+
+      - name: Enforce Pipeline Result
+        run: |
+          exit ${{ steps.status_check.outputs.exit_code }}
