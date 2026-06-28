@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: kitchen
-          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen:508409789719c02395cb840c35050b1f2ea18707
+          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen:bef39cfbbc4badb56ff0c62168c778d79f4dc8a6
           imagePullPolicy: IfNotPresent
           env:
             - name: APP_NAME
