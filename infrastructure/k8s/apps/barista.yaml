@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: barista
-          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista:fc5b71320acf152022a8e3d8f43fb5314aeaece9
+          image: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista:19d08f70d1df94c0e87e932ecb7c4845087e93c9
           imagePullPolicy: IfNotPresent
           env:
             - name: APP_NAME
