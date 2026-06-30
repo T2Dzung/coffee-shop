@@ -114,14 +114,6 @@ resource "aws_iam_instance_profile" "dev_profile" {
 }
 
 # ==============================================================================
-# Generate a secure, unique token for K3s HA cluster join
-# ==============================================================================
-resource "random_password" "k3s_token" {
-  length  = 48
-  special = false
-}
-
-# ==============================================================================
 # Primary K3s Control Plane Node (HA Seed Node)
 # ==============================================================================
 module "dev_k8s_primary" {
@@ -138,56 +130,18 @@ module "dev_k8s_primary" {
   # Run as On-Demand to prevent unexpected Spot shutdowns during development
   enable_spot = false
 
-  # Bootstrap: Automate Docker, K3s (Primary with --cluster-init), and Helm
+  # Minimal Bootstrap: Prepare instance for Ansible configuration management
   user_data = <<-EOF
               #!/bin/bash
               set -e
-              
               echo "=== STARTING PRIMARY DEV BOOTSTRAP ===" >> /var/log/user-data-done.log
-              apt-get update -y && apt-get upgrade -y
-              apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release jq git unzip
-              
-              # 1. Install Docker Engine (Needed by DinD sidecars)
-              mkdir -p /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-              chmod a+r /etc/apt/keyrings/docker.gpg
-              echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
               apt-get update -y
-              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              usermod -aG docker ubuntu
-              systemctl enable docker
-              systemctl start docker
-
-              # Get Public & Private IPs dynamically via IMDSv2 for K3s TLS SAN configuration
-              IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-              PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
-              PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
-
-              # 2. Install K3s as Primary Control Plane Node (embedded etcd initializer)
-              # Configured with TLS SAN to allow secure kubectl access from local machine using public IP
-              curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--cluster-init --token ${random_password.k3s_token.result} --tls-san $PUBLIC_IP --tls-san $PRIVATE_IP --disable traefik --write-kubeconfig-mode 644" sh -
-              
-              # 3. Configure kubectl for user 'ubuntu'
-              mkdir -p /home/ubuntu/.kube
-              cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-              chown -R ubuntu:ubuntu /home/ubuntu/.kube
-              chmod 600 /home/ubuntu/.kube/config
-              echo 'export KUBECONFIG=/home/ubuntu/.kube/config' >> /home/ubuntu/.bashrc
-
-              # 4. Install Helm v3
-              curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-              chmod 700 get_helm.sh
-              ./get_helm.sh
-              rm get_helm.sh
-
+              apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release jq git unzip python3 python3-pip
               echo "=== PRIMARY DEV BOOTSTRAP COMPLETED: $(date) ===" >> /var/log/user-data-done.log
-              echo "Docker version: $(docker --version)" >> /var/log/user-data-done.log
-              echo "K3s status: $(kubectl get nodes)" >> /var/log/user-data-done.log
-              echo "Helm version: $(helm version --short)" >> /var/log/user-data-done.log
               EOF
 
   additional_tags = {
-    K8sRole       = "primary"
+    K8sRole = "primary"
   }
 }
 
@@ -209,56 +163,32 @@ module "dev_k8s_secondary" {
   # Run as On-Demand to prevent unexpected Spot shutdowns during development
   enable_spot = false
 
-  # Bootstrap: Automate Docker and K3s (Join as Server Node to form HA etcd cluster)
+  # Minimal Bootstrap: Prepare instance for Ansible configuration management
   user_data = <<-EOF
               #!/bin/bash
               set -e
-              
               echo "=== STARTING SECONDARY DEV BOOTSTRAP ===" >> /var/log/user-data-done.log
-              apt-get update -y && apt-get upgrade -y
-              apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release jq git unzip
-              
-              # 1. Install Docker Engine (Needed by DinD sidecars)
-              mkdir -p /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-              chmod a+r /etc/apt/keyrings/docker.gpg
-              echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
               apt-get update -y
-              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              usermod -aG docker ubuntu
-              systemctl enable docker
-              systemctl start docker
-
-              # 2. Wait for Primary K3s API Server to be fully online at port 6443
-              echo "Waiting for Primary K3s node (${module.dev_k8s_primary.private_ip}:6443) to be online..." >> /var/log/user-data-done.log
-              while ! nc -z ${module.dev_k8s_primary.private_ip} 6443; do
-                sleep 5
-              done
-              echo "Primary K3s node is online! Proceeding with K3s secondary join..." >> /var/log/user-data-done.log
-
-              # 3. Install K3s as Secondary Server (Join the etcd HA cluster)
-              curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--server https://${module.dev_k8s_primary.private_ip}:6443 --token ${random_password.k3s_token.result} --disable traefik --write-kubeconfig-mode 644" sh -
-              
-              # 4. Configure kubectl for user 'ubuntu'
-              mkdir -p /home/ubuntu/.kube
-              cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-              chown -R ubuntu:ubuntu /home/ubuntu/.kube
-              chmod 600 /home/ubuntu/.kube/config
-              echo 'export KUBECONFIG=/home/ubuntu/.kube/config' >> /home/ubuntu/.bashrc
-
-              # 5. Install Helm v3
-              curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-              chmod 700 get_helm.sh
-              ./get_helm.sh
-              rm get_helm.sh
-
+              apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release jq git unzip python3 python3-pip
               echo "=== SECONDARY DEV BOOTSTRAP COMPLETED: $(date) ===" >> /var/log/user-data-done.log
-              echo "Docker version: $(docker --version)" >> /var/log/user-data-done.log
-              echo "K3s status: $(kubectl get nodes)" >> /var/log/user-data-done.log
-              echo "Helm version: $(helm version --short)" >> /var/log/user-data-done.log
               EOF
 
   additional_tags = {
-    K8sRole       = "secondary"
+    K8sRole = "secondary"
+  }
+}
+
+# ==============================================================================
+# Ansible Configuration Management Trigger
+# ==============================================================================
+resource "terraform_data" "trigger_ansible" {
+  depends_on = [
+    aws_eip.primary_eip,
+    module.dev_k8s_secondary
+  ]
+
+  provisioner "local-exec" {
+    command     = "ansible-playbook -i inventory/aws_ec2.yml playbooks/site.yml --private-key=\"${var.private_key_path}\""
+    working_dir = "${path.module}/../../ansible"
   }
 }
