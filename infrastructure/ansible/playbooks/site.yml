@@ -1,0 +1,34 @@
+---
+- name: Gather facts from all nodes
+  hosts: all
+  gather_facts: yes
+
+- name: Provision Common Configuration
+  hosts: all
+  become: yes
+  roles:
+    - common
+
+- name: Provision K3s Master
+  hosts: k3s_master
+  become: yes
+  roles:
+    - k3s_master
+
+- name: Provision K3s Workers
+  hosts: k3s_worker
+  become: yes
+  roles:
+    - k3s_worker
+
+- name: Setup ECR Registry Authentication
+  hosts: all
+  become: yes
+  roles:
+    - ecr_auth
+
+- name: Setup NFS Shared Storage
+  hosts: all
+  become: yes
+  roles:
+    - nfs_shared
