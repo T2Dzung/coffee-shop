@@ -4,7 +4,7 @@
 # This configuration deploys Ephemeral Pod Runners using ARC (Actions Runner Controller).
 
 githubConfigUrl: "https://github.com/T2Dzung/coffee-shop"
-githubConfigSecret: "github-actions-token-secret" # Kubernetes Secret containing the GitHub PAT
+githubConfigSecret: "github-actions-token-secret"  # Kubernetes Secret containing the GitHub PAT
 
 minRunners: 2
 maxRunners: 7
@@ -12,7 +12,7 @@ maxRunners: 7
 template:
   spec:
     securityContext:
-      fsGroup: 1000 # Ensures correct file permissions for the non-root runner user (uid 1000)
+      fsGroup: 1000  # Ensures correct file permissions for the non-root runner user (uid 1000)
 
     initContainers:
       - name: dind
@@ -21,9 +21,9 @@ template:
         restartPolicy: Always
         env:
           - name: DOCKER_TLS_CERTDIR
-            value: "" # Disables TLS to allow unsecured TCP connection on port 2375 within the pod network namespace
+            value: ""  # Disables TLS to allow unsecured TCP connection on port 2375 within the pod network namespace
         securityContext:
-          privileged: true # Privileged mode is required for docker daemon execution inside container namespaces
+          privileged: true  # Privileged mode is required for docker daemon execution inside container namespaces
         resources:
           limits:
             cpu: "1"
@@ -34,15 +34,16 @@ template:
         volumeMounts:
           - name: docker-storage
             mountPath: /var/lib/docker
-    
+
     containers:
       - name: runner
-        image: ghcr.io/actions/actions-runner:latest
+        # Pin the runner so a pod restart cannot introduce an unreviewed binary.
+        image: ghcr.io/actions/actions-runner:2.333.1
         imagePullPolicy: IfNotPresent
         command: ["/home/runner/run.sh"]
         env:
           - name: DOCKER_HOST
-            value: "tcp://localhost:2375" # Points docker commands to the Native DinD Sidecar daemon
+            value: "tcp://localhost:2375"  # Points docker commands to the Native DinD Sidecar daemon
         resources:
           limits:
             cpu: "2"
@@ -53,7 +54,7 @@ template:
         volumeMounts:
           - name: go-cache
             mountPath: /go/pkg/mod
-    
+
     volumes:
       - name: go-cache
         persistentVolumeClaim:

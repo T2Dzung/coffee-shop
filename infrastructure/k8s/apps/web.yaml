@@ -21,7 +21,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: REVERSE_PROXY_URL
-              value: "http://proxy:5000" # Proxy nội bộ trong K8s cluster
+              value: "http://proxy:5000"  # Proxy nội bộ trong K8s cluster
             - name: WEB_PORT
               valueFrom:
                 configMapKeyRef:

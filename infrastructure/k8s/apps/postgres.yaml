@@ -50,7 +50,6 @@ spec:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data
               subPath: postgres-data
-          healthCheck:
           # K8s liveness/readiness probes thay cho docker-compose healthcheck
           livenessProbe:
             exec:

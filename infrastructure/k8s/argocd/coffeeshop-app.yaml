@@ -7,7 +7,9 @@ spec:
   project: default
   source:
     repoURL: https://github.com/T2Dzung/coffee-shop.git
-    targetRevision: HEAD
+    # Track the explicit environment branch; HEAD depends on the repository's
+    # mutable default branch and makes reconciliation intent ambiguous.
+    targetRevision: main
     path: infrastructure/k8s/apps
   destination:
     server: https://kubernetes.default.svc

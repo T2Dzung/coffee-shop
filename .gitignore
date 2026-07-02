@@ -52,3 +52,7 @@ entities.json
 # K8S Secrets
 /infrastructure/terraform/envs/dev/dev-kubeconfig
 /infrastructure/k8s/apps/configmap-secrets.yaml
+/infrastructure/k8s/runtime/
+
+# Runtime backup artifacts must remain outside version control.
+/artifacts/backups/
