@@ -1,0 +1,16 @@
+plugin: aws_ec2
+regions:
+  - ap-southeast-1
+filters:
+  tag:Environment: dev
+  tag:ManagedBy: Terraform
+  instance-state-name: [running]
+hostnames:
+  - public-ip-address
+strict: False
+groups:
+  k3s_master: tags.K8sRole == 'primary'
+  k3s_worker: tags.K8sRole == 'secondary'
+compose:
+  # Use private IP inside cluster communication
+  private_ip: private_ip_address

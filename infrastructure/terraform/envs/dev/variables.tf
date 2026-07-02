@@ -25,13 +25,13 @@ variable "primary_instance_type" {
 variable "secondary_instance_type" {
   description = "EC2 instance type for the Secondary K3s Worker Nodes"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
 variable "disk_size" {
   description = "Size of the root EBS volume in GB"
   type        = number
-  default     = 30
+  default     = 50
 }
 
 variable "key_name" {
