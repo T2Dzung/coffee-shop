@@ -1,0 +1,22 @@
+tls-san:
+{% for san in k3s_tls_sans %}
+  - "{{ san }}"
+{% endfor %}
+disable:
+  - traefik
+  - servicelb
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+cluster-cidr: 10.42.0.0/16
+service-cidr: 10.43.0.0/16
+cluster-dns: 10.43.0.10
+cluster-domain: cluster.local
+etcd-snapshot-schedule-cron: "0 */12 * * *"
+etcd-snapshot-retention: 5
+{% if ec2_tags.K3sBootstrap == 'true' %}
+# Initialization of the cluster
+cluster-init: true
+{% else %}
+# Join the existing cluster
+server: https://{{ k3s_registration_endpoint }}:6443
+{% endif %}

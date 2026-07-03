@@ -1,34 +1,54 @@
 ---
 - name: Gather facts from all nodes
   hosts: all
-  gather_facts: yes
+  gather_facts: true
+
+- name: Validate cluster node prerequisites
+  hosts: k3s_servers
+  become: true
+  roles:
+    - preflight
 
 - name: Provision Common Configuration
-  hosts: all
-  become: yes
+  hosts: k3s_servers
+  become: true
   roles:
     - common
 
-- name: Provision K3s Master
-  hosts: k3s_master
-  become: yes
+- name: Provision HAProxy Load Balancer
+  hosts: haproxy
+  become: true
   roles:
-    - k3s_master
+    - haproxy_lb
 
-- name: Provision K3s Workers
-  hosts: k3s_worker
-  become: yes
+- name: Provision K3s Bootstrap Server
+  hosts: k3s_bootstrap_server
+  become: true
   roles:
-    - k3s_worker
+    - k3s_bootstrap_server
+
+- name: Provision K3s Join Servers
+  hosts: k3s_join_servers
+  become: true
+  serial: 1
+  roles:
+    - k3s_join_server
+
+- name: Verify K3s Cluster Status
+  hosts: k3s_bootstrap_server
+  become: true
+  roles:
+    - k3s_verify
 
 - name: Setup ECR Registry Authentication
-  hosts: all
-  become: yes
+  hosts: k3s_servers
+  become: true
+  serial: 1
   roles:
     - ecr_auth
 
 - name: Setup NFS Shared Storage
-  hosts: all
-  become: yes
+  hosts: k3s_servers
+  become: true
   roles:
     - nfs_shared

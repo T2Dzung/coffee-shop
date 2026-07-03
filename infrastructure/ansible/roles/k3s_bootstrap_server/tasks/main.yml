@@ -1,0 +1,116 @@
+---
+- name: Create K3s config directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    mode: '0755'
+
+- name: Deploy K3s configuration (Bootstrap)
+  ansible.builtin.template:
+    src: ../../../templates/k3s-config.yaml.j2  # noqa no-relative-paths
+    dest: /etc/rancher/k3s/config.yaml
+    mode: '0600'
+  vars:
+    is_bootstrap: true
+
+- name: Install K3s (Bootstrap)
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sfL https://get.k3s.io | sh -
+  args:
+    executable: /bin/bash
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: "server"
+  register: k3s_bootstrap_server_install
+  changed_when: "'No change' not in k3s_bootstrap_server_install.stdout"
+
+- name: Wait for K3s node token to be generated
+  ansible.builtin.wait_for:
+    path: /var/lib/rancher/k3s/server/node-token
+    timeout: 60
+
+- name: Download etcdctl for operational verification
+  ansible.builtin.get_url:
+    url: "https://github.com/etcd-io/etcd/releases/download/{{ etcdctl_version }}/etcd-{{ etcdctl_version }}-linux-amd64.tar.gz"
+    dest: "/tmp/etcd-{{ etcdctl_version }}-linux-amd64.tar.gz"
+    checksum: "sha256:{{ etcdctl_linux_amd64_sha256 }}"
+    mode: "0644"
+
+- name: Extract etcdctl
+  ansible.builtin.unarchive:
+    src: "/tmp/etcd-{{ etcdctl_version }}-linux-amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+
+- name: Install etcdctl binary
+  ansible.builtin.copy:
+    src: "/tmp/etcd-{{ etcdctl_version }}-linux-amd64/etcdctl"
+    dest: /usr/local/bin/etcdctl
+    remote_src: true
+    mode: "0755"
+
+- name: Read remote kubeconfig
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: k3s_bootstrap_server_remote_kubeconfig
+
+- name: Write local kubeconfig with correct endpoint
+  delegate_to: localhost
+  become: false
+  ansible.builtin.copy:
+    content: "{{ k3s_bootstrap_server_remote_kubeconfig.content | b64decode | replace('127.0.0.1', active_api_endpoint) }}"
+    dest: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    mode: "0600"
+
+- name: Create kube directory for ubuntu user
+  ansible.builtin.file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0700'
+
+- name: Copy K3s kubeconfig to user's kube config directory
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /home/ubuntu/.kube/config
+    remote_src: true
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+
+- name: Add KUBECONFIG env to .bashrc
+  ansible.builtin.lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'export KUBECONFIG=/home/ubuntu/.kube/config'
+    state: present
+
+- name: Read the installed Helm version
+  ansible.builtin.command: /usr/local/bin/helm version --short
+  register: k3s_bootstrap_server_helm_current_version
+  changed_when: false
+  failed_when: false
+
+- name: Download the pinned Helm archive
+  ansible.builtin.get_url:
+    url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: "/tmp/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    checksum: "sha256:{{ helm_linux_amd64_sha256 }}"
+    mode: "0644"
+  when: helm_version not in k3s_bootstrap_server_helm_current_version.stdout
+
+- name: Extract the pinned Helm archive
+  ansible.builtin.unarchive:
+    src: "/tmp/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: helm_version not in k3s_bootstrap_server_helm_current_version.stdout
+
+- name: Install the pinned Helm binary
+  ansible.builtin.copy:
+    src: /tmp/linux-amd64/helm
+    dest: /usr/local/bin/helm
+    remote_src: true
+    mode: "0755"
+  when: helm_version not in k3s_bootstrap_server_helm_current_version.stdout

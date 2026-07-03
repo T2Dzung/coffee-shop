@@ -13,9 +13,29 @@ VENV_DIR="${CONTROL_VENV_DIR:-${HOME}/.venvs/go-coffeeshop-platform}"
 export TF_DATA_DIR
 install -d -m 0700 "${TF_DATA_DIR}"
 
+ACTION="${1:-}"
+if [[ -z "${ACTION}" ]]; then
+  echo "Usage: $0 plan [terraform-plan-options] | apply" >&2
+  exit 2
+fi
+shift
+
+TF_PLAN_DIR="${TF_PLAN_DIR:-${HOME}/.cache/go-coffeeshop/terraform/plans}"
+TF_PLAN_FILE="${TF_PLAN_DIR}/dev.tfplan"
+install -d -m 0700 "${TF_PLAN_DIR}"
+
 : "${ANSIBLE_PRIVATE_KEY_FILE:?Set ANSIBLE_PRIVATE_KEY_FILE to a key stored under the WSL filesystem}"
 : "${AWS_DEFAULT_REGION:=ap-southeast-1}"
 export AWS_DEFAULT_REGION ANSIBLE_PRIVATE_KEY_FILE
+
+export ANSIBLE_INVENTORY="${ANSIBLE_DIR}/inventory/aws_ec2.yml"
+export ANSIBLE_HOST_KEY_CHECKING=True
+export ANSIBLE_REMOTE_USER=ubuntu
+export ANSIBLE_FORKS=10
+export ANSIBLE_ROLES_PATH="${ANSIBLE_DIR}/roles"
+export ANSIBLE_INVENTORY_ENABLED="host_list,script,auto,yaml,ini,toml,amazon.aws.aws_ec2"
+export ANSIBLE_SSH_PIPELINING=True
+export ANSIBLE_SSH_ARGS="-o StrictHostKeyChecking=accept-new"
 
 if [[ "${ANSIBLE_PRIVATE_KEY_FILE}" == /mnt/* ]]; then
   echo "Keep the SSH private key under ~/.ssh in WSL, not on a /mnt filesystem." >&2
@@ -51,14 +71,47 @@ aws sts get-caller-identity >/dev/null
 
 terraform -chdir="${DEV_TF_DIR}" init
 terraform -chdir="${DEV_TF_DIR}" validate -no-color
-terraform -chdir="${DEV_TF_DIR}" apply "$@"
+
+case "${ACTION}" in
+  plan)
+    terraform -chdir="${DEV_TF_DIR}" plan -out="${TF_PLAN_FILE}" "$@"
+    chmod 0600 "${TF_PLAN_FILE}"
+    terraform -chdir="${DEV_TF_DIR}" show -no-color "${TF_PLAN_FILE}"
+    echo "Saved reviewed plan candidate: ${TF_PLAN_FILE}"
+    echo "After reviewing it, run: $0 apply"
+    exit 0
+    ;;
+  apply)
+    if (($# > 0)); then
+      echo "The apply action does not accept extra arguments; regenerate the saved plan instead." >&2
+      exit 2
+    fi
+    if [[ ! -f "${TF_PLAN_FILE}" ]]; then
+      echo "Saved plan does not exist: ${TF_PLAN_FILE}. Run '$0 plan' first." >&2
+      exit 1
+    fi
+    terraform -chdir="${DEV_TF_DIR}" apply "${TF_PLAN_FILE}"
+    rm -f "${TF_PLAN_FILE}"
+    ;;
+  *)
+    echo "Unknown action '${ACTION}'. Use 'plan' or 'apply'." >&2
+    exit 2
+    ;;
+esac
 
 echo "Waiting for AWS instance status checks..."
-aws ec2 wait instance-status-ok \
+INSTANCE_IDS=$(aws ec2 describe-instances \
   --filters \
     "Name=tag:Environment,Values=dev" \
     "Name=tag:ManagedBy,Values=Terraform" \
-    "Name=instance-state-name,Values=running"
+    "Name=instance-state-name,Values=running" \
+  --query "Reservations[*].Instances[*].InstanceId" \
+  --output text)
+
+if [[ -n "${INSTANCE_IDS}" ]]; then
+  # shellcheck disable=SC2086
+  aws ec2 wait instance-status-ok --instance-ids ${INSTANCE_IDS}
+fi
 
 cd "${ANSIBLE_DIR}"
 
@@ -75,9 +128,18 @@ for attempt in $(seq 1 30); do
 done
 
 ansible-playbook --inventory "localhost," --syntax-check playbooks/site.yml
+API_ENDPOINT_PROVIDER=$(terraform -chdir="${DEV_TF_DIR}" output -raw active_api_endpoint_provider)
+ACTIVE_API_ENDPOINT=$(terraform -chdir="${DEV_TF_DIR}" output -raw active_api_endpoint)
+K3S_REGISTRATION_ENDPOINT=$(terraform -chdir="${DEV_TF_DIR}" output -raw k3s_registration_endpoint)
+K3S_TLS_SANS=$(terraform -chdir="${DEV_TF_DIR}" output -json k3s_tls_sans)
+
 ansible-playbook \
   --inventory inventory/aws_ec2.yml \
   --private-key "${ANSIBLE_PRIVATE_KEY_FILE}" \
+  --extra-vars "active_api_endpoint_provider=${API_ENDPOINT_PROVIDER}" \
+  --extra-vars "active_api_endpoint=${ACTIVE_API_ENDPOINT}" \
+  --extra-vars "k3s_registration_endpoint=${K3S_REGISTRATION_ENDPOINT}" \
+  --extra-vars "{\"k3s_tls_sans\": ${K3S_TLS_SANS}}" \
   playbooks/site.yml
 
-KUBECONFIG="${DEV_TF_DIR}/dev-kubeconfig" kubectl get nodes --output wide
+KUBECONFIG="${HOME}/.kube/coffeeshop-dev.yaml" kubectl get nodes --output wide

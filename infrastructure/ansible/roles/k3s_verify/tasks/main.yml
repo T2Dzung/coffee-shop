@@ -1,0 +1,46 @@
+---
+- name: Wait for all nodes to become ready
+  ansible.builtin.command: "k3s kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type==\"Ready\")].status}'"
+  register: k3s_verify_kubectl_ready
+  until: (k3s_verify_kubectl_ready.stdout.split() | select('equalto', 'True') | list | length) == (groups['k3s_servers'] | length)
+  retries: 30
+  delay: 10
+  changed_when: false
+
+- name: Verify K3s server version consistency
+  ansible.builtin.command: "k3s kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.kubeletVersion}'"
+  register: k3s_verify_kubectl_versions
+  failed_when: >
+    (k3s_verify_kubectl_versions.stdout.split() | unique | length) != 1
+    or (k3s_version not in k3s_verify_kubectl_versions.stdout)
+  changed_when: false
+
+- name: Verify control-plane and etcd labels exist
+  ansible.builtin.command: "k3s kubectl get nodes -o jsonpath='{.items[*].metadata.labels}'"
+  register: k3s_verify_labels
+  changed_when: false
+  failed_when: "'node-role.kubernetes.io/control-plane' not in k3s_verify_labels.stdout or 'node-role.kubernetes.io/etcd' not in k3s_verify_labels.stdout"
+
+- name: Verify etcd cluster health (member list)
+  ansible.builtin.shell: |
+    etcdctl member list --write-out=json \
+      --endpoints=https://127.0.0.1:2379 \
+      --cacert=/var/lib/rancher/k3s/server/tls/etcd/server-ca.crt \
+      --cert=/var/lib/rancher/k3s/server/tls/etcd/server-client.crt \
+      --key=/var/lib/rancher/k3s/server/tls/etcd/server-client.key
+  register: k3s_verify_etcd_members
+  changed_when: false
+  failed_when: >
+    (k3s_verify_etcd_members.stdout | from_json).members | length != (groups['k3s_servers'] | length)
+    or (k3s_verify_etcd_members.stdout | from_json).members | selectattr('isLearner', 'defined') | selectattr('isLearner', 'equalto', true) | list | length > 0
+
+- name: Verify etcd cluster health (endpoints)
+  ansible.builtin.shell: |
+    etcdctl endpoint health --cluster \
+      --endpoints=https://127.0.0.1:2379 \
+      --cacert=/var/lib/rancher/k3s/server/tls/etcd/server-ca.crt \
+      --cert=/var/lib/rancher/k3s/server/tls/etcd/server-client.crt \
+      --key=/var/lib/rancher/k3s/server/tls/etcd/server-client.key
+  register: k3s_verify_etcd_health
+  changed_when: false
+  failed_when: k3s_verify_etcd_health.rc != 0

@@ -8,7 +8,7 @@ data "aws_caller_identity" "current" {}
 locals {
   # Use custom name if provided, otherwise fallback to default naming convention
   bucket_name = var.custom_bucket_name != null ? var.custom_bucket_name : "${var.project_name}-terraform-state-${data.aws_caller_identity.current.account_id}"
-  
+
   # Common tags merged with user-defined additional tags
   common_tags = merge(
     {

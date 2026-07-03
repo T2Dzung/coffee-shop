@@ -1,0 +1,21 @@
+---
+# Central version contract for the dev platform. Update versions only through a
+# dedicated compatibility review so a cluster rebuild stays reproducible.
+k3s_version: "v1.35.4+k3s1"
+k3s_etcd_snapshot_schedule_cron: "0 */12 * * *"
+k3s_etcd_snapshot_retention: 5
+kubernetes_schema_version: "1.35.4"
+helm_version: "v3.21.0"
+helm_linux_amd64_sha256: "0093eb572e3d2380f094df162ddb525e219249de88957afe24cfbb19632acd36"
+kubeconform_version: "v0.8.0"
+
+# Add-ons are installed in later phases, but their currently approved versions
+# live here to prevent runbooks from silently resolving a moving latest tag.
+gateway_api_crds_version: "v1.5.1"
+cilium_chart_version: "1.19.5"
+argocd_version: "v3.4.2"
+cert_manager_chart_version: "v1.19.4"
+arc_chart_version: "0.14.2"
+actions_runner_version: "2.333.1"
+etcdctl_version: "v3.6.7"
+etcdctl_linux_amd64_sha256: "cf8af880c5a01ee5363cefa14a3e0cb7e5308dcf4ed17a6973099c9a7aee5a9a"

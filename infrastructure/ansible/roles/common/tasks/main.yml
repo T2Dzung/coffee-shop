@@ -14,7 +14,8 @@
       - python3-pip
       - nfs-common
     state: present
-    update_cache: yes
+    update_cache: true
+    cache_valid_time: 3600
 
 - name: Create directory for Docker apt keyring
   ansible.builtin.file:
@@ -30,7 +31,7 @@
 
 - name: Add Docker repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable"
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
     state: present
     filename: docker
 
@@ -43,16 +44,17 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: present
-    update_cache: yes
+    update_cache: true
+    cache_valid_time: 3600
 
 - name: Add ubuntu user to docker group
   ansible.builtin.user:
     name: ubuntu
     groups: docker
-    append: yes
+    append: true
 
 - name: Ensure Docker service is enabled and running
   ansible.builtin.systemd:
     name: docker
     state: started
-    enabled: yes
+    enabled: true

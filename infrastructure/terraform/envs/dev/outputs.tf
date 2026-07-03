@@ -1,30 +1,80 @@
 # ==============================================================================
-# Development Environment Infrastructure Outputs
+# Development Environment Infrastructure Outputs (Phase 1)
 # ==============================================================================
 
-output "dev_primary_instance_public_ip" {
-  description = "The public IP address of the Primary Dev Kubernetes Node EC2 instance"
-  value       = aws_eip.primary_eip.public_ip
+output "cluster_name" {
+  description = "The name of the K3s cluster"
+  value       = var.cluster_name
 }
 
-output "dev_secondary_instances_public_ips" {
-  description = "The public IP addresses of the Secondary Dev Kubernetes Node EC2 instances"
-  value       = module.dev_k8s_secondary[*].public_ip
+output "active_api_endpoint_provider" {
+  description = "The active API endpoint provider"
+  value       = var.active_api_endpoint_provider
 }
 
-output "ssh_connection_command" {
-  description = "Copy-pasteable SSH command to connect to the Primary Dev Kubernetes instance"
-  value       = aws_eip.primary_eip.public_ip != null ? "ssh -i '${var.private_key_path}' ubuntu@${aws_eip.primary_eip.public_ip}" : null
+output "active_api_endpoint" {
+  description = "The public endpoint for API access"
+  value       = local.active_api_endpoint
 }
 
-output "kubeconfig_retrieve_command" {
-  description = "Command to retrieve the kubeconfig file from the Primary Dev instance to your local machine"
-  value       = aws_eip.primary_eip.public_ip != null ? "scp -i '${var.private_key_path}' ubuntu@${aws_eip.primary_eip.public_ip}:/home/ubuntu/.kube/config ./dev-kubeconfig" : null
+output "k3s_registration_endpoint" {
+  description = "The endpoint used for node registration (join)"
+  value       = local.k3s_registration_endpoint
 }
 
-output "dev_cluster_status" {
-  description = "The deployment status of the Dev HA K3s Cluster"
-  value       = aws_eip.primary_eip.public_ip != null ? "Dev HA Cluster deployed. Primary K3s node is bootstrapping, and Secondary nodes are waiting to join. Please wait 3-5 minutes for the entire HA cluster to become ready." : "Deployment in progress."
+output "k3s_tls_sans" {
+  description = "List of all active/migration TLS SANs"
+  value       = local.k3s_tls_sans
+}
+
+output "haproxy_public_ip" {
+  description = "HAProxy EIP public IP"
+  value       = local.haproxy_public_ip
+}
+
+output "haproxy_instance_id" {
+  description = "HAProxy EC2 Instance ID"
+  value       = local.haproxy_instance_id
+}
+
+output "api_nlb_dns_name" {
+  description = "DNS name of the API NLB"
+  value       = local.api_nlb_dns_name
+}
+
+output "api_nlb_target_group_arn" {
+  description = "ARN of the API NLB target group"
+  value       = local.api_nlb_target_group_arn
+}
+
+output "node_instance_ids" {
+  description = "Instance IDs of the K3s nodes"
+  value       = module.k3s_servers[*].instance_id
+}
+
+output "node_private_ips" {
+  description = "Private IPs of the K3s nodes"
+  value       = module.k3s_servers[*].private_ip
+}
+
+output "node_public_ips" {
+  description = "Public IPs of the K3s nodes"
+  value       = module.k3s_servers[*].public_ip
+}
+
+output "vpc_id" {
+  description = "The ID of the dedicated VPC"
+  value       = aws_vpc.main.id
+}
+
+output "public_subnet_ids" {
+  description = "The IDs of the public subnets"
+  value       = aws_subnet.public[*].id
+}
+
+output "availability_zones" {
+  description = "The availability zones used"
+  value       = var.availability_zones
 }
 
 output "ecr_repository_urls" {

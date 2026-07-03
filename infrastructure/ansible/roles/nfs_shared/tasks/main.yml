@@ -1,12 +1,12 @@
 ---
 # ==============================================================================
-# NFS Server Setup (Runs only on K3s Master)
+# NFS Server Setup
 # ==============================================================================
 - name: Install NFS Server on Master Node
   ansible.builtin.apt:
     name: nfs-kernel-server
     state: present
-  when: "'k3s_master' in group_names"
+  when: "'nfs_server' in group_names"
 
 - name: Create Shared Directory on NFS Server
   ansible.builtin.file:
@@ -15,50 +15,94 @@
     owner: nobody
     group: nogroup
     mode: '0777'
-  when: "'k3s_master' in group_names"
+  when: "'nfs_server' in group_names"
 
 - name: Configure NFS Exports
   ansible.builtin.lineinfile:
     path: /etc/exports
-    line: "/mnt/go-cache *(rw,sync,no_subtree_check,no_root_squash)"
+    # The cache is disposable; root_squash prevents a root process on a client
+    # from retaining root identity on the NFS server.
+    line: "/mnt/go-cache *(rw,sync,no_subtree_check,root_squash)"
     state: present
-  register: exports_update
-  when: "'k3s_master' in group_names"
+  register: nfs_shared_exports_update
+  when: "'nfs_server' in group_names"
 
 - name: Apply NFS Exports
   ansible.builtin.command: exportfs -ra
   changed_when: true
-  when: "'k3s_master' in group_names"
+  when:
+    - "'nfs_server' in group_names"
+    - nfs_shared_exports_update.changed
 
 - name: Ensure NFS Server is started and enabled
   ansible.builtin.systemd:
     name: nfs-kernel-server
-    state: restarted
-    enabled: yes
-  when: "'k3s_master' in group_names"
+    state: started
+    enabled: true
+  when: "'nfs_server' in group_names"
 
 
 # ==============================================================================
-# NFS Client Setup (Runs only on K3s Workers)
+# NFS Client Setup
 # ==============================================================================
 - name: Install NFS Client on Worker Nodes
   ansible.builtin.apt:
     name: nfs-common
     state: present
-  when: "'k3s_worker' in group_names"
+  when: "'nfs_clients' in group_names"
 
 - name: Create mount point directory on Workers
   ansible.builtin.file:
     path: /mnt/go-cache
     state: directory
     mode: '0777'
-  when: "'k3s_worker' in group_names"
+  when: "'nfs_clients' in group_names"
 
 - name: Mount NFS Shared Directory and configure fstab
-  ansible.builtin.mount:
+  ansible.posix.mount:
     path: /mnt/go-cache
-    src: "{{ hostvars[groups['k3s_master'][0]]['ansible_default_ipv4']['address'] }}:/mnt/go-cache"
+    src: "{{ hostvars[groups['nfs_server'][0]]['ansible_default_ipv4']['address'] }}:/mnt/go-cache"
     fstype: nfs
     opts: rw,sync,hard,intr
     state: mounted
-  when: "'k3s_worker' in group_names"
+  when: "'nfs_clients' in group_names"
+
+- name: Create the local runtime manifest directory
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/../../k8s/runtime"
+    state: directory
+    mode: "0700"
+  run_once: true
+
+- name: Render the static NFS cache volume from inventory
+  delegate_to: localhost
+  become: false
+  ansible.builtin.template:
+    src: cache-pvc.yaml.j2
+    dest: "{{ playbook_dir }}/../../k8s/runtime/cache-pvc.yaml"
+    mode: "0600"
+  vars:
+    nfs_server_private_ip: "{{ hostvars[groups['nfs_server'][0]]['ansible_default_ipv4']['address'] }}"
+  run_once: true
+
+- name: Ensure the CI namespace exists
+  delegate_to: localhost
+  become: false
+  kubernetes.core.k8s:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    api_version: v1
+    kind: Namespace
+    name: dev-ci
+    state: present
+  run_once: true
+
+- name: Apply the rendered static NFS cache volume
+  delegate_to: localhost
+  become: false
+  kubernetes.core.k8s:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    src: "{{ playbook_dir }}/../../k8s/runtime/cache-pvc.yaml"
+    state: present
+  run_once: true
