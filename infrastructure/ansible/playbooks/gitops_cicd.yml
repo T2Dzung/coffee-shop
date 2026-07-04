@@ -1,0 +1,15 @@
+---
+- name: Phase 3 GitOps and CI/CD Bootstrap
+  hosts: k3s_bootstrap_server
+  run_once: true
+  gather_facts: false
+
+  vars:
+    helm_skip_update: false
+
+  roles:
+    - role: argocd
+      tags: ['argocd']
+
+    - role: arc_runner
+      tags: ['arc_runner']

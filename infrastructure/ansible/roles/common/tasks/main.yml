@@ -12,6 +12,7 @@
       - unzip
       - python3
       - python3-pip
+      - python3-kubernetes
       - nfs-common
     state: present
     update_cache: true

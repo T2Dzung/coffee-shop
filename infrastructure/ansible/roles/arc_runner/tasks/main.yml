@@ -1,0 +1,23 @@
+---
+- name: Create dev-ci namespace for runners
+  kubernetes.core.k8s:
+    name: dev-ci
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Create ARC bootstrap secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: github-actions-token-secret
+        namespace: dev-ci
+      type: Opaque
+      stringData:
+        # Provide this variable via ansible-vault, environment, or --extra-vars
+        github_token: "{{ arc_github_token }}"
+  no_log: true
+  when: arc_github_token is defined and arc_github_token != ''

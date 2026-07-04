@@ -81,3 +81,8 @@ output "ecr_repository_urls" {
   description = "The URLs of the ECR repositories for the microservices"
   value       = { for k, v in aws_ecr_repository.services : k => v.repository_url }
 }
+
+output "github_actions_role_arn" {
+  description = "The ARN of the IAM role for GitHub Actions to assume via OIDC"
+  value       = aws_iam_role.github_actions.arn
+}

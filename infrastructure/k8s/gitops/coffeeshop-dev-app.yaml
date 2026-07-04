@@ -1,16 +1,16 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: go-coffeeshop
+  name: coffeeshop-dev
   namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
     repoURL: https://github.com/T2Dzung/coffee-shop.git
-    # Track the explicit environment branch; HEAD depends on the repository's
-    # mutable default branch and makes reconciliation intent ambiguous.
     targetRevision: main
-    path: infrastructure/k8s/apps
+    path: infrastructure/k8s/gitops/apps/coffeeshop/overlays/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: coffeeshop
