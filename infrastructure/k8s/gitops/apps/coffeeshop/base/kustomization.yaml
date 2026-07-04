@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
   - coffeeshop-namespace.yaml
-  - configmap-secrets.yaml.example
+  - configmap.yaml
   - postgres.yaml
   - rabbitmq.yaml
   - barista.yaml
