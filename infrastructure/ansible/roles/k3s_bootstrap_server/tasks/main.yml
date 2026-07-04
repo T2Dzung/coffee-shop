@@ -25,6 +25,92 @@
   register: k3s_bootstrap_server_install
   changed_when: "'No change' not in k3s_bootstrap_server_install.stdout"
 
+- name: Ensure K3s static manifest directory exists
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/server/manifests
+    state: directory
+    mode: '0700'
+
+- name: Create HelmChartConfig for CoreDNS HA
+  ansible.builtin.copy:
+    dest: /var/lib/rancher/k3s/server/manifests/coredns-ha.yaml
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: coredns
+        namespace: kube-system
+      spec:
+        valuesContent: |-
+          replicaCount: 2
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: k8s-app
+                        operator: In
+                        values:
+                          - kube-dns
+                  topologyKey: kubernetes.io/hostname
+    mode: '0644'
+
+- name: Create HelmChartConfig for metrics-server HA
+  ansible.builtin.copy:
+    dest: /var/lib/rancher/k3s/server/manifests/metrics-server-ha.yaml
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: metrics-server
+        namespace: kube-system
+      spec:
+        valuesContent: |-
+          replicas: 2
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: k8s-app
+                        operator: In
+                        values:
+                          - metrics-server
+                  topologyKey: kubernetes.io/hostname
+    mode: '0644'
+
+- name: Create PDB for CoreDNS
+  ansible.builtin.copy:
+    dest: /var/lib/rancher/k3s/server/manifests/coredns-pdb.yaml
+    content: |
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: coredns-pdb
+        namespace: kube-system
+      spec:
+        minAvailable: 1
+        selector:
+          matchLabels:
+            k8s-app: kube-dns
+    mode: '0644'
+
+- name: Create PDB for metrics-server
+  ansible.builtin.copy:
+    dest: /var/lib/rancher/k3s/server/manifests/metrics-server-pdb.yaml
+    content: |
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: metrics-server-pdb
+        namespace: kube-system
+      spec:
+        minAvailable: 1
+        selector:
+          matchLabels:
+            k8s-app: metrics-server
+    mode: '0644'
+
 - name: Wait for K3s node token to be generated
   ansible.builtin.wait_for:
     path: /var/lib/rancher/k3s/server/node-token

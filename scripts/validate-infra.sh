@@ -42,7 +42,7 @@ yamllint --config-file "${PROJECT_ROOT}/.yamllint.yml" \
   "${ANSIBLE_DIR}" "${K8S_DIR}"
 
 mapfile -d '' manifest_files < <(
-  find "${K8S_DIR}/apps" "${K8S_DIR}/argocd" \
+  find "${K8S_DIR}/apps" "${K8S_DIR}/argocd" "${K8S_DIR}/gateway" "${K8S_DIR}/policies" \
     -type f \( -name '*.yaml' -o -name '*.yml' \) -print0
   printf '%s\0' "${ANSIBLE_DIR}/roles/nfs_shared/templates/cache-pvc.yaml.j2"
 )

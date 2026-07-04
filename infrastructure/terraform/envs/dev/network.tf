@@ -105,7 +105,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_kubelet_self" {
 
 resource "aws_vpc_security_group_ingress_rule" "node_flannel_self" {
   security_group_id            = aws_security_group.k3s_node_sg.id
-  description                  = "Flannel VXLAN (until Phase 2)"
+  description                  = "Cilium VXLAN overlay"
   from_port                    = 8472
   to_port                      = 8472
   ip_protocol                  = "udp"

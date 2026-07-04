@@ -45,6 +45,12 @@ variable "admin_cidrs" {
   type        = list(string)
 }
 
+variable "application_ingress_cidrs" {
+  description = "List of CIDRs allowed to access the application via HTTP/HTTPS. If null, falls back to admin_cidrs."
+  type        = list(string)
+  default     = null
+}
+
 variable "node_count" {
   description = "Number of K3s servers (must be odd and >= 3)"
   type        = number

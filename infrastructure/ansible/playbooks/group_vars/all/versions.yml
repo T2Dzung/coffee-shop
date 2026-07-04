@@ -11,7 +11,7 @@ kubeconform_version: "v0.8.0"
 
 # Add-ons are installed in later phases, but their currently approved versions
 # live here to prevent runbooks from silently resolving a moving latest tag.
-gateway_api_crds_version: "v1.5.1"
+gateway_api_crds_version: "v1.4.1"
 cilium_chart_version: "1.19.5"
 argocd_version: "v3.4.2"
 cert_manager_chart_version: "v1.19.4"

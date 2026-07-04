@@ -24,10 +24,24 @@ frontend k8s_api
     option tcplog
     default_backend k3s_servers
 
+frontend k8s_gateway
+    bind *:80
+    mode tcp
+    option tcplog
+    default_backend k3s_gateway
+
 backend k3s_servers
     mode tcp
     balance roundrobin
     option tcp-check
 {% for host in groups['k3s_servers'] %}
     server {{ hostvars[host]['ec2_tags']['Name'] }} {{ hostvars[host]['ansible_default_ipv4']['address'] }}:6443 check
+{% endfor %}
+
+backend k3s_gateway
+    mode tcp
+    balance roundrobin
+    option tcp-check
+{% for host in groups['k3s_servers'] %}
+    server {{ hostvars[host]['ec2_tags']['Name'] }}-gw {{ hostvars[host]['ansible_default_ipv4']['address'] }}:8080 check
 {% endfor %}

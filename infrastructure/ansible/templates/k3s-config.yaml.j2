@@ -5,6 +5,9 @@ tls-san:
 disable:
   - traefik
   - servicelb
+flannel-backend: "none"
+disable-kube-proxy: true
+disable-network-policy: true
 write-kubeconfig-mode: "0600"
 secrets-encryption: true
 cluster-cidr: 10.42.0.0/16

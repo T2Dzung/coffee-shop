@@ -1,0 +1,92 @@
+---
+- name: Download Gateway API CRDs
+  delegate_to: localhost
+  run_once: true
+  ansible.builtin.get_url:
+    url: "https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_crds_version }}/standard-install.yaml"
+    dest: "/tmp/gateway-api-standard-install.yaml"
+    mode: "0644"
+
+- name: Apply Gateway API CRDs
+  delegate_to: localhost
+  run_once: true
+  kubernetes.core.k8s:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    state: present
+    src: "/tmp/gateway-api-standard-install.yaml"
+
+- name: Download Gateway API TLSRoute CRD
+  delegate_to: localhost
+  run_once: true
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{ gateway_api_crds_version }}/config/crd/experimental/gateway.networking.k8s.io_tlsroutes.yaml"  # yamllint disable-line rule:line-length
+    dest: "/tmp/gateway-api-tlsroutes.yaml"
+    mode: "0644"
+
+- name: Apply Gateway API TLSRoute CRD
+  delegate_to: localhost
+  run_once: true
+  kubernetes.core.k8s:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    state: present
+    src: "/tmp/gateway-api-tlsroutes.yaml"
+
+- name: Add Cilium Helm repository
+  delegate_to: localhost
+  run_once: true
+  kubernetes.core.helm_repository:
+    name: cilium
+    repo_url: "https://helm.cilium.io/"
+
+- name: Deploy Cilium using Helm
+  delegate_to: localhost
+  run_once: true
+  kubernetes.core.helm:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    name: cilium
+    chart_ref: cilium/cilium
+    release_namespace: kube-system
+    chart_version: "{{ cilium_chart_version }}"
+    values:
+      kubeProxyReplacement: true
+      k8sServiceHost: "{{ k3s_registration_endpoint }}"
+      k8sServicePort: 6443
+      ipam:
+        operator:
+          clusterPoolIPv4PodCIDRList: "10.42.0.0/16"
+      gatewayAPI:
+        enabled: true
+        hostNetwork:
+          enabled: true
+
+- name: Wait for Cilium DaemonSet to be ready
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    api_version: apps/v1
+    kind: DaemonSet
+    name: cilium
+    namespace: kube-system
+  register: cilium_ds
+  until: >
+    cilium_ds.resources[0].status.numberReady | default(0) > 0 and
+    cilium_ds.resources[0].status.numberReady == cilium_ds.resources[0].status.desiredNumberScheduled
+  retries: 30
+  delay: 10
+  delegate_to: localhost
+  run_once: true
+
+- name: Wait for Cilium Operator Deployment to be ready
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    api_version: apps/v1
+    kind: Deployment
+    name: cilium-operator
+    namespace: kube-system
+  register: cilium_operator_deploy
+  until: >
+    cilium_operator_deploy.resources[0].status.readyReplicas | default(0) ==
+    cilium_operator_deploy.resources[0].status.replicas | default(1)
+  retries: 30
+  delay: 10
+  delegate_to: localhost
+  run_once: true

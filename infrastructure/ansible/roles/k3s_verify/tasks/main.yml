@@ -44,3 +44,39 @@
   register: k3s_verify_etcd_health
   changed_when: false
   failed_when: k3s_verify_etcd_health.rc != 0
+
+- name: Wait for CoreDNS rollout
+  ansible.builtin.command: k3s kubectl rollout status deployment/coredns -n kube-system --timeout=180s
+  register: k3s_verify_coredns_rollout
+  changed_when: false
+
+- name: Wait for metrics-server rollout
+  ansible.builtin.command: k3s kubectl rollout status deployment/metrics-server -n kube-system --timeout=180s
+  register: k3s_verify_metrics_server_rollout
+  changed_when: false
+
+- name: Verify CoreDNS has two available replicas
+  ansible.builtin.command: >-
+    k3s kubectl get deployment coredns -n kube-system
+    -o jsonpath={.status.availableReplicas}
+  register: k3s_verify_coredns_replicas
+  changed_when: false
+  failed_when: k3s_verify_coredns_replicas.stdout | int < 2
+
+- name: Verify metrics-server has two available replicas
+  ansible.builtin.command: >-
+    k3s kubectl get deployment metrics-server -n kube-system
+    -o jsonpath={.status.availableReplicas}
+  register: k3s_verify_metrics_server_replicas
+  changed_when: false
+  failed_when: k3s_verify_metrics_server_replicas.stdout | int < 2
+
+- name: Verify CoreDNS PDB exists
+  ansible.builtin.command: k3s kubectl get pdb coredns-pdb -n kube-system
+  register: k3s_verify_coredns_pdb
+  changed_when: false
+
+- name: Verify metrics-server PDB exists
+  ansible.builtin.command: k3s kubectl get pdb metrics-server-pdb -n kube-system
+  register: k3s_verify_metrics_server_pdb
+  changed_when: false

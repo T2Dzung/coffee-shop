@@ -38,6 +38,14 @@ resource "aws_security_group" "haproxy_sg" {
     cidr_blocks = var.admin_cidrs
   }
 
+  # HTTP Gateway via EIP
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = var.application_ingress_cidrs != null ? var.application_ingress_cidrs : var.admin_cidrs
+  }
+
   # K3s Node SG join via private IP
   ingress {
     from_port       = 6443
@@ -50,6 +58,14 @@ resource "aws_security_group" "haproxy_sg" {
   egress {
     from_port       = 6443
     to_port         = 6443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.k3s_node_sg.id]
+  }
+
+  # Outbound HTTP Gateway proxy to nodes
+  egress {
+    from_port       = 8080
+    to_port         = 8080
     protocol        = "tcp"
     security_groups = [aws_security_group.k3s_node_sg.id]
   }
@@ -135,6 +151,16 @@ resource "aws_vpc_security_group_ingress_rule" "node_api_haproxy_ingress" {
   description                  = "Allow API traffic from HAProxy"
   from_port                    = 6443
   to_port                      = 6443
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.haproxy_sg[0].id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "node_http_haproxy_ingress" {
+  count                        = var.create_haproxy_api_endpoint ? 1 : 0
+  security_group_id            = aws_security_group.k3s_node_sg.id
+  description                  = "Allow HTTP Gateway traffic from HAProxy"
+  from_port                    = 8080
+  to_port                      = 8080
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.haproxy_sg[0].id
 }
