@@ -1,6 +1,10 @@
 githubConfigUrl: "https://github.com/T2Dzung/coffee-shop"
 githubConfigSecret: "github-actions-token-secret"  # Provided by Ansible arc_runner role
 
+controllerServiceAccount:
+  name: arc-system-gha-rs-controller
+  namespace: arc-systems
+
 minRunners: 2
 maxRunners: 7
 
