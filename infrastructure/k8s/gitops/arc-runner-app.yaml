@@ -15,7 +15,7 @@ spec:
         valueFiles:
           - $values/infrastructure/k8s/gitops/addons/arc/runner-values.yaml
     - repoURL: https://github.com/T2Dzung/coffee-shop.git
-      targetRevision: main
+      targetRevision: feat/k3s-ha
       ref: values
   destination:
     server: https://kubernetes.default.svc
