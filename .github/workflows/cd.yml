@@ -145,6 +145,15 @@ jobs:
           severity: 'CRITICAL'
           cache: 'false'
 
+      - name: Validate AWS OIDC Role Secret
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$AWS_ROLE_ARN" ]; then
+            echo "::error title=Missing GitHub secret::Set repository secret AWS_ROLE_ARN to arn:aws:iam::423623841278:role/coffeeshop-dev-github-actions-role"
+            exit 1
+          fi
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
