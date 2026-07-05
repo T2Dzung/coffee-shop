@@ -22,5 +22,5 @@ spec:
     namespace: dev-ci
   syncPolicy:
     automated:
-      prune: true
+      prune: false
       selfHeal: true
