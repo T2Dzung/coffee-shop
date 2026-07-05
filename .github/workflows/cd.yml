@@ -15,7 +15,7 @@ jobs:
   # 1. Path Filtering for Monorepo Optimization
   detect-changes:
     name: Detect Changes
-    runs-on: coffeeshop-runner-v2
+    runs-on: coffeeshop-runner-v3
     outputs:
       services: ${{ steps.set-matrix.outputs.services }}
     steps:
@@ -89,7 +89,7 @@ jobs:
   build-push-deploy:
     name: Build, Push & Deploy
     needs: [detect-changes]
-    runs-on: coffeeshop-runner-v2
+    runs-on: coffeeshop-runner-v3
     permissions:
       contents: write
       id-token: write
@@ -212,7 +212,7 @@ jobs:
   deploy-status:
     name: Deploy Status
     needs: build-push-deploy
-    runs-on: coffeeshop-runner-v2
+    runs-on: coffeeshop-runner-v3
     if: always() && !cancelled()
     steps:
       - name: Verify Deploy Status & Set Notification Details
