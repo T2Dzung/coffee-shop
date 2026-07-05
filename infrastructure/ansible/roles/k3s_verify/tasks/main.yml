@@ -6,7 +6,7 @@
   retries: 30
   delay: 10
   changed_when: false
-  
+
 - name: Scale CoreDNS to 2 replicas for HA
   ansible.builtin.command: k3s kubectl patch deployment coredns -n kube-system -p '{"spec":{"replicas":2}}'
   changed_when: false

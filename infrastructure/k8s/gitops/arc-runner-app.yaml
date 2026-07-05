@@ -22,8 +22,8 @@ spec:
     namespace: dev-ci
   syncPolicy:
     automated:
-      prune: false
-      selfHeal: true
+      prune: true
+      selfHeal: false
     syncOptions:
       - RespectIgnoreDifferences=true
   ignoreDifferences:

@@ -31,8 +31,6 @@
     state: directory
     mode: '0700'
 
-
-
 - name: Create PDB for CoreDNS
   ansible.builtin.copy:
     dest: /var/lib/rancher/k3s/server/manifests/coredns-pdb.yaml

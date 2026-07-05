@@ -117,6 +117,7 @@ fi
 cd "${ANSIBLE_DIR}"
 
 for attempt in $(seq 1 30); do
+  # shellcheck disable=SC2016
   if ansible all --module-name ansible.builtin.raw --args 'cloud-init status --wait; STATUS=$?; [ $STATUS -eq 0 ] || [ $STATUS -eq 2 ]' \
       --private-key "${ANSIBLE_PRIVATE_KEY_FILE}"; then
     break

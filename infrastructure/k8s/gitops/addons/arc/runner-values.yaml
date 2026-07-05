@@ -38,8 +38,8 @@ template:
 
     containers:
       - name: runner
-        image: ghcr.io/actions/actions-runner:2.333.1
-        imagePullPolicy: IfNotPresent
+        image: ghcr.io/actions/actions-runner:latest
+        imagePullPolicy: Always
         command: ["/home/runner/run.sh"]
         env:
           - name: DOCKER_HOST
