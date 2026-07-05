@@ -2,7 +2,7 @@ name: CD — Build, Push & Deploy (GitOps)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ feat/k3s-ha ]
 
 concurrency:
   group: cd-${{ github.ref }}
@@ -186,7 +186,7 @@ jobs:
             
             # Use kustomize to update image URL safely in the dev overlay
             cd infrastructure/k8s/gitops/apps/coffeeshop/overlays/dev
-            kustomize edit set image go-coffeeshop-${{ matrix.service }}=${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
+            kustomize edit set image ${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}=${{ steps.login-ecr.outputs.registry }}/go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
             cd -
             
             git add infrastructure/k8s/gitops/apps/coffeeshop/overlays/dev/kustomization.yaml

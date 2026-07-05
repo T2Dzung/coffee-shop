@@ -3,7 +3,7 @@
   ansible.builtin.apt:
     name: python3-kubernetes
     state: present
-    update_cache: yes
+    update_cache: true
   become: true
 
 - name: Create argocd namespace

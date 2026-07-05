@@ -34,17 +34,17 @@
   roles:
     - k3s_join_server
 
-- name: Verify K3s Cluster Status
-  hosts: k3s_bootstrap_server
-  become: true
-  roles:
-    - k3s_verify
-
 - name: Setup Cilium and Gateway API
   hosts: k3s_bootstrap_server
   become: false
   roles:
     - cilium
+
+- name: Verify K3s Cluster Status
+  hosts: k3s_bootstrap_server
+  become: true
+  roles:
+    - k3s_verify
 
 - name: Setup ECR Registry Authentication
   hosts: k3s_servers
