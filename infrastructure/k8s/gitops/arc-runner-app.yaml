@@ -24,3 +24,12 @@ spec:
     automated:
       prune: false
       selfHeal: true
+    syncOptions:
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: actions.github.com
+      kind: AutoscalingRunnerSet
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
