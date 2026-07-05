@@ -1,0 +1,62 @@
+---
+- name: Install AWS CLI
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+    update_cache: yes
+
+- name: Create ECR Token Refresher Script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/refresh-ecr-token.sh
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      # Script dynamically refreshes AWS ECR authorization credentials for K3s containerd runtime.
+      set -e
+
+      # Fetch metadata token (IMDSv2)
+      IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+      REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+      export AWS_DEFAULT_REGION=$REGION
+
+      ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+      PASSWORD=$(aws ecr get-login-password --region ${REGION})
+
+      mkdir -p /etc/rancher/k3s
+      cat <<EOF > /etc/rancher/k3s/registries.yaml
+      configs:
+        "${ECR_URL}":
+          auth:
+            username: AWS
+            password: "${PASSWORD}"
+      EOF
+
+      echo "ECR Token updated for registry: ${ECR_URL}"
+
+      # Apply changes dynamically by restarting K3s/K3s-Agent
+      if systemctl is-active --quiet k3s; then
+        systemctl restart k3s
+        echo "Restarted K3s master control plane"
+      elif systemctl is-active --quiet k3s-agent; then
+        systemctl restart k3s-agent
+        echo "Restarted K3s worker agent"
+      fi
+
+- name: Run ECR Token Refresher script once immediately
+  ansible.builtin.shell: /usr/local/bin/refresh-ecr-token.sh
+  register: script_run
+  changed_when: true
+
+- name: Print ECR script output
+  ansible.builtin.debug:
+    var: script_run.stdout
+
+- name: Configure periodic cron job to refresh ECR token (every 6 hours)
+  ansible.builtin.cron:
+    name: "Refresh AWS ECR containerd registry credentials"
+    minute: "0"
+    hour: "*/6"
+    job: "/usr/local/bin/refresh-ecr-token.sh > /dev/null 2>&1"

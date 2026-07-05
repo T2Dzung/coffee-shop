@@ -30,8 +30,10 @@ go.work
 *.env
 
 .terraform
-.terraform.lock.hcl
 *tfstate*
+**/terraform.tfvars
+**/terraform.tfvars.json
+
 
 # IDE settings
 .idea/

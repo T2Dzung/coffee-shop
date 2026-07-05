@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# NFS Server Setup (Runs only on K3s Master)
+# ==============================================================================
+- name: Install NFS Server on Master Node
+  ansible.builtin.apt:
+    name: nfs-kernel-server
+    state: present
+  when: "'k3s_master' in group_names"
+
+- name: Create Shared Directory on NFS Server
+  ansible.builtin.file:
+    path: /mnt/go-cache
+    state: directory
+    owner: nobody
+    group: nogroup
+    mode: '0777'
+  when: "'k3s_master' in group_names"
+
+- name: Configure NFS Exports
+  ansible.builtin.lineinfile:
+    path: /etc/exports
+    line: "/mnt/go-cache *(rw,sync,no_subtree_check,no_root_squash)"
+    state: present
+  register: exports_update
+  when: "'k3s_master' in group_names"
+
+- name: Apply NFS Exports
+  ansible.builtin.command: exportfs -ra
+  changed_when: true
+  when: "'k3s_master' in group_names"
+
+- name: Ensure NFS Server is started and enabled
+  ansible.builtin.systemd:
+    name: nfs-kernel-server
+    state: restarted
+    enabled: yes
+  when: "'k3s_master' in group_names"
+
+
+# ==============================================================================
+# NFS Client Setup (Runs only on K3s Workers)
+# ==============================================================================
+- name: Install NFS Client on Worker Nodes
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+  when: "'k3s_worker' in group_names"
+
+- name: Create mount point directory on Workers
+  ansible.builtin.file:
+    path: /mnt/go-cache
+    state: directory
+    mode: '0777'
+  when: "'k3s_worker' in group_names"
+
+- name: Mount NFS Shared Directory and configure fstab
+  ansible.builtin.mount:
+    path: /mnt/go-cache
+    src: "{{ hostvars[groups['k3s_master'][0]]['ansible_default_ipv4']['address'] }}:/mnt/go-cache"
+    fstype: nfs
+    opts: rw,sync,hard,intr
+    state: mounted
+  when: "'k3s_worker' in group_names"

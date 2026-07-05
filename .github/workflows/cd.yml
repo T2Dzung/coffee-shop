@@ -1,13 +1,8 @@
 name: CD — Build, Push & Deploy (GitOps)
 
-# ============================================================================
-# SECURITY: This workflow runs on self-hosted runner (EC2) and is ONLY triggered
-# by push events on trusted branches. Never triggered by pull_request.
-# Self-hosted runner leverages EC2 IAM Instance Profile for AWS access (zero secrets).
-# ============================================================================
 on:
   push:
-    branches: [ main, "feat/*" ]
+    branches: [ main ]
 
 concurrency:
   group: cd-${{ github.ref }}

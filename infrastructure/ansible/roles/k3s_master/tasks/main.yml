@@ -1,0 +1,74 @@
+---
+- name: Check if K3s is already installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s.service
+  register: k3s_service
+
+- name: Install K3s on Primary Control Plane Node
+  ansible.builtin.shell: |
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--cluster-init --tls-san {{ ansible_host }} --tls-san {{ ansible_default_ipv4.address }} --disable traefik --write-kubeconfig-mode 644" sh -
+  when: not k3s_service.stat.exists
+
+- name: Wait for K3s node token to be generated
+  ansible.builtin.wait_for:
+    path: /var/lib/rancher/k3s/server/node-token
+    timeout: 60
+
+- name: Read K3s token from Master
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: k3s_token_slurp
+
+- name: Set K3s Token as fact for cluster access
+  ansible.builtin.set_fact:
+    k3s_token: "{{ k3s_token_slurp.content | b64decode | trim }}"
+
+- name: Create kube directory for ubuntu user
+  ansible.builtin.file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0700'
+
+- name: Copy K3s kubeconfig to user's kube config directory
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /home/ubuntu/.kube/config
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+
+- name: Add KUBECONFIG env to .bashrc
+  ansible.builtin.lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'export KUBECONFIG=/home/ubuntu/.kube/config'
+    state: present
+
+- name: Check if Helm is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/helm
+  register: helm_binary
+
+- name: Install Helm v3
+  ansible.builtin.shell: |
+    curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    chmod 700 get_helm.sh
+    ./get_helm.sh
+    rm get_helm.sh
+  when: not helm_binary.stat.exists
+
+- name: Fetch kubeconfig file back to localhost
+  ansible.builtin.fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "../terraform/envs/dev/dev-kubeconfig"
+    flat: yes
+
+- name: Replace 127.0.0.1 with EIP Public IP in local kubeconfig
+  delegate_to: localhost
+  become: no
+  ansible.builtin.replace:
+    path: "../terraform/envs/dev/dev-kubeconfig"
+    regexp: '127\.0\.0\.1'
+    replace: "{{ ansible_host }}"

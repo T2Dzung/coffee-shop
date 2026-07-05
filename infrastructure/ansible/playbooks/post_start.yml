@@ -1,0 +1,44 @@
+---
+- name: Post-start Cluster Recovery Playbook
+  hosts: all
+  become: yes
+  tasks:
+    - name: Gather system facts
+      ansible.builtin.setup:
+
+    - name: Refresh AWS ECR Token
+      ansible.builtin.shell: |
+        /usr/local/bin/refresh-ecr-token.sh
+      register: ecr_refresh
+      changed_when: true
+      ignore_errors: yes
+
+    - name: Remount NFS Shared Directory
+      ansible.builtin.mount:
+        path: /mnt/go-cache
+        state: mounted
+      when: "'k3s_worker' in group_names"
+      ignore_errors: yes
+
+    - name: Restart K3s Agent on workers
+      ansible.builtin.systemd:
+        name: k3s-agent
+        state: restarted
+      when: "'k3s_worker' in group_names"
+
+    - name: Restart K3s Server on master
+      ansible.builtin.systemd:
+        name: k3s
+        state: restarted
+      when: "'k3s_master' in group_names"
+
+    - name: Verify K3s cluster nodes
+      ansible.builtin.command: kubectl get nodes
+      register: nodes_output
+      when: "'k3s_master' in group_names"
+      changed_when: false
+
+    - name: Print cluster nodes status
+      ansible.builtin.debug:
+        var: nodes_output.stdout_lines
+      when: "'k3s_master' in group_names"

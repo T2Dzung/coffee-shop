@@ -1,0 +1,39 @@
+---
+- name: Check if K3s worker agent is already installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s-agent.service
+  register: k3s_agent_service
+
+- name: Set facts for K3s Master private IP and Token
+  ansible.builtin.set_fact:
+    master_private_ip: "{{ hostvars[groups['k3s_master'][0]]['ansible_default_ipv4']['address'] }}"
+    master_token: "{{ hostvars[groups['k3s_master'][0]]['k3s_token'] }}"
+
+- name: Install K3s Worker and join cluster
+  ansible.builtin.shell: |
+    curl -sfL https://get.k3s.io | K3S_URL="https://{{ master_private_ip }}:6443" K3S_TOKEN="{{ master_token }}" INSTALL_K3S_EXEC="--disable traefik --write-kubeconfig-mode 644" sh -
+  when: not k3s_agent_service.stat.exists
+
+- name: Create kube directory for ubuntu user on worker
+  ansible.builtin.file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0700'
+
+- name: Copy K3s kubeconfig to worker user kube config
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /home/ubuntu/.kube/config
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+  ignore_errors: yes  # k3s.yaml might only exist on control plane, or agent has it. On K3s agent it might not exist at /etc/rancher/k3s/k3s.yaml
+
+- name: Add KUBECONFIG env to .bashrc on worker
+  ansible.builtin.lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'export KUBECONFIG=/home/ubuntu/.kube/config'
+    state: present
