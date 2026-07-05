@@ -26,7 +26,8 @@ install -d -m 0700 "${TF_PLAN_DIR}"
 
 : "${ANSIBLE_PRIVATE_KEY_FILE:?Set ANSIBLE_PRIVATE_KEY_FILE to a key stored under the WSL filesystem}"
 : "${AWS_DEFAULT_REGION:=ap-southeast-1}"
-export AWS_DEFAULT_REGION ANSIBLE_PRIVATE_KEY_FILE
+: "${ANSIBLE_VAULT_PASSWORD_FILE:=${HOME}/.vault-pass}"
+export AWS_DEFAULT_REGION ANSIBLE_PRIVATE_KEY_FILE ANSIBLE_VAULT_PASSWORD_FILE
 
 export ANSIBLE_INVENTORY="${ANSIBLE_DIR}/inventory/aws_ec2.yml"
 export ANSIBLE_HOST_KEY_CHECKING=True
@@ -116,7 +117,7 @@ fi
 cd "${ANSIBLE_DIR}"
 
 for attempt in $(seq 1 30); do
-  if ansible all --module-name ansible.builtin.raw --args 'cloud-init status --wait' \
+  if ansible all --module-name ansible.builtin.raw --args 'cloud-init status --wait; STATUS=$?; [ $STATUS -eq 0 ] || [ $STATUS -eq 2 ]' \
       --private-key "${ANSIBLE_PRIVATE_KEY_FILE}"; then
     break
   fi
@@ -141,5 +142,10 @@ ansible-playbook \
   --extra-vars "k3s_registration_endpoint=${K3S_REGISTRATION_ENDPOINT}" \
   --extra-vars "{\"k3s_tls_sans\": ${K3S_TLS_SANS}}" \
   playbooks/site.yml
+
+ansible-playbook \
+  --inventory inventory/aws_ec2.yml \
+  --private-key "${ANSIBLE_PRIVATE_KEY_FILE}" \
+  playbooks/gitops_cicd.yml
 
 KUBECONFIG="${HOME}/.kube/coffeeshop-dev.yaml" kubectl get nodes --output wide

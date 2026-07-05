@@ -31,53 +31,7 @@
     state: directory
     mode: '0700'
 
-- name: Create HelmChartConfig for CoreDNS HA
-  ansible.builtin.copy:
-    dest: /var/lib/rancher/k3s/server/manifests/coredns-ha.yaml
-    content: |
-      apiVersion: helm.cattle.io/v1
-      kind: HelmChartConfig
-      metadata:
-        name: coredns
-        namespace: kube-system
-      spec:
-        valuesContent: |-
-          replicaCount: 2
-          affinity:
-            podAntiAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                - labelSelector:
-                    matchExpressions:
-                      - key: k8s-app
-                        operator: In
-                        values:
-                          - kube-dns
-                  topologyKey: kubernetes.io/hostname
-    mode: '0644'
 
-- name: Create HelmChartConfig for metrics-server HA
-  ansible.builtin.copy:
-    dest: /var/lib/rancher/k3s/server/manifests/metrics-server-ha.yaml
-    content: |
-      apiVersion: helm.cattle.io/v1
-      kind: HelmChartConfig
-      metadata:
-        name: metrics-server
-        namespace: kube-system
-      spec:
-        valuesContent: |-
-          replicas: 2
-          affinity:
-            podAntiAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                - labelSelector:
-                    matchExpressions:
-                      - key: k8s-app
-                        operator: In
-                        values:
-                          - metrics-server
-                  topologyKey: kubernetes.io/hostname
-    mode: '0644'
 
 - name: Create PDB for CoreDNS
   ansible.builtin.copy:

@@ -6,6 +6,14 @@
   retries: 30
   delay: 10
   changed_when: false
+  
+- name: Scale CoreDNS to 2 replicas for HA
+  ansible.builtin.command: k3s kubectl patch deployment coredns -n kube-system -p '{"spec":{"replicas":2}}'
+  changed_when: false
+
+- name: Scale metrics-server to 2 replicas for HA
+  ansible.builtin.command: k3s kubectl patch deployment metrics-server -n kube-system -p '{"spec":{"replicas":2}}'
+  changed_when: false
 
 - name: Verify K3s server version consistency
   ansible.builtin.command: "k3s kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.kubeletVersion}'"
@@ -60,6 +68,9 @@
     k3s kubectl get deployment coredns -n kube-system
     -o jsonpath={.status.availableReplicas}
   register: k3s_verify_coredns_replicas
+  until: k3s_verify_coredns_replicas.stdout | int >= 2
+  retries: 30
+  delay: 10
   changed_when: false
   failed_when: k3s_verify_coredns_replicas.stdout | int < 2
 
@@ -68,6 +79,9 @@
     k3s kubectl get deployment metrics-server -n kube-system
     -o jsonpath={.status.availableReplicas}
   register: k3s_verify_metrics_server_replicas
+  until: k3s_verify_metrics_server_replicas.stdout | int >= 2
+  retries: 30
+  delay: 10
   changed_when: false
   failed_when: k3s_verify_metrics_server_replicas.stdout | int < 2
 
