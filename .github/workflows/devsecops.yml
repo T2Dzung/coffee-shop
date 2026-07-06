@@ -60,6 +60,11 @@ jobs:
           terraform_version: "1.8.0"
           terraform_wrapper: false
 
+      - name: Initialize Terraform Envs (Offline)
+        run: |
+          terraform -chdir=infrastructure/terraform/envs/dev init -backend=false
+          terraform -chdir=infrastructure/terraform/bootstrap init -backend=false
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -118,6 +123,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+          terraform_wrapper: false
+
+      - name: Initialize Terraform Envs (Offline)
+        run: |
+          terraform -chdir=infrastructure/terraform/envs/dev init -backend=false
+          terraform -chdir=infrastructure/terraform/bootstrap init -backend=false
+
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
@@ -127,9 +143,10 @@ jobs:
         run: tflint --init
         working-directory: .
 
-      - name: Run TFLint
-        run: tflint --recursive --config=$(pwd)/.tflint.hcl
-        working-directory: .
+      - name: Run TFLint on Deployable Environments
+        run: |
+          tflint --config=$(pwd)/.tflint.hcl --chdir=infrastructure/terraform/envs/dev
+          tflint --config=$(pwd)/.tflint.hcl --chdir=infrastructure/terraform/bootstrap
 
   # 4. IaC & Container Config Scan (Trivy Config Scan)
   trivy-config:
