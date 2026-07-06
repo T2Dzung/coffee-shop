@@ -163,6 +163,7 @@ jobs:
       - name: Run Trivy Vulnerability Scanner (IaC / Config Mode)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          trivy-version: 'v0.55.2'
           scan-type: 'config'
           hide-progress: false
           exit-code: '1'
