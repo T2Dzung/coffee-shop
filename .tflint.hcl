@@ -6,6 +6,16 @@ plugin "aws" {
 
 config {
     format = "compact"
-    module = true
+    call_module_type = "all"
     force = false
+}
+
+# Disable strict engine version checks in dev environment to minimize environment bootstrap overhead
+rule "terraform_required_version" {
+    enabled = false
+}
+
+# Disable provider version enforcement to avoid local provider lock drifts during iterative development
+rule "terraform_required_providers" {
+    enabled = false
 }

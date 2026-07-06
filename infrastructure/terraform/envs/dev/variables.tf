@@ -102,12 +102,6 @@ variable "key_name" {
   type        = string
 }
 
-variable "private_key_path" {
-  description = "Path to the private key for SSH commands"
-  type        = string
-  default     = null
-}
-
 variable "create_haproxy_api_endpoint" {
   description = "Create HAProxy EC2 fallback endpoint"
   type        = bool
