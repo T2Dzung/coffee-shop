@@ -61,6 +61,8 @@ jobs:
           terraform_wrapper: false
 
       - name: Initialize Terraform Envs (Offline)
+        env:
+          TF_DATA_DIR: /home/runner/.cache/go-coffeeshop/terraform/dev
         run: |
           terraform -chdir=infrastructure/terraform/envs/dev init -backend=false
           terraform -chdir=infrastructure/terraform/bootstrap init -backend=false
