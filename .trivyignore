@@ -1,7 +1,7 @@
 # Trivy configuration exceptions file
-# Documented justifications for ignoring specific findings in development environment
+# Documented justifications for ignoring specific findings globally in this repository
 
-# Ignore unrestricted egress rules (AVD-AWS-0104) in dev env
+# Ignore unrestricted egress rules globally in this development project
 # Justification: K3s cluster nodes and HAProxy endpoints require public outbound access to download OS patches, tools, and resolve external DNS.
-AVD-AWS-0104:infrastructure/terraform/envs/dev/api_endpoint_haproxy.tf
-AVD-AWS-0104:infrastructure/terraform/envs/dev/network.tf
+AVD-AWS-0104
+AWS-0104

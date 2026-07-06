@@ -63,7 +63,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: 'infrastructure/ansible/requirements-controller.txt'
 
@@ -128,7 +128,7 @@ jobs:
         working-directory: .
 
       - name: Run TFLint
-        run: tflint --recursive
+        run: tflint --recursive --config=$(pwd)/.tflint.hcl
         working-directory: .
 
   # 4. IaC & Container Config Scan (Trivy Config Scan)
