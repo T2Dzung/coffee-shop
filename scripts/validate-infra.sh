@@ -53,6 +53,8 @@ mapfile -d '' manifest_files < <(
 kubeconform \
   -kubernetes-version "${SCHEMA_VERSION}" \
   -ignore-missing-schemas \
+  -schema-location 'default' \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
   -strict \
   -summary \
   "${manifest_files[@]}"
@@ -60,12 +62,16 @@ kubeconform \
 kubectl kustomize "${K8S_DIR}/gitops/apps/coffeeshop/overlays/dev" | kubeconform \
   -kubernetes-version "${SCHEMA_VERSION}" \
   -ignore-missing-schemas \
+  -schema-location 'default' \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
   -strict \
   -summary
 
 kubectl kustomize "${K8S_DIR}/gitops/addons/arc/hardening" | kubeconform \
   -kubernetes-version "${SCHEMA_VERSION}" \
   -ignore-missing-schemas \
+  -schema-location 'default' \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
   -strict \
   -summary
 

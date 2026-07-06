@@ -1,0 +1,8 @@
+# Trivy ignore file
+# Format:
+# AVS-0001
+# CVE-2023-1234
+#
+# Example:
+# # Ignore S3 bucket public access block warning for test fixtures
+# AVD-AWS-0086

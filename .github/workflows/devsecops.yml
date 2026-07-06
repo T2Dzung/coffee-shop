@@ -1,0 +1,221 @@
+name: DevSecOps — Infrastructure & Security Gate
+
+on:
+  push:
+    branches: [ feat/k3s-ha ]
+  pull_request:
+    branches: [ main, feat/k3s-ha ]
+  workflow_dispatch:
+
+concurrency:
+  group: devsecops-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: dummy
+  AWS_SECRET_ACCESS_KEY: dummy
+
+jobs:
+  # 1. Path Filtering to optimize pipeline execution
+  detect-changes:
+    name: Detect Infra/Security Changes
+    runs-on: ubuntu-latest
+    outputs:
+      infra-changed: ${{ steps.filter.outputs.infra }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Filter Paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            infra:
+              - '.github/workflows/**'
+              - 'docker/**'
+              - 'infrastructure/**'
+              - 'scripts/**'
+              - '.yamllint.yml'
+              - '.tflint.hcl'
+              - '.trivyignore'
+              - '.gitleaks.toml'
+              - 'go.mod'
+              - 'go.sum'
+
+  # 2. Infra Correctness Validation (Offline checks)
+  infra-correctness:
+    name: Infra Validation (Correctness)
+    needs: [detect-changes]
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.infra-changed == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+          terraform_wrapper: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.35.4'
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Install Ansible, Ansible-Lint, and Yamllint
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible ansible-lint yamllint
+          if [ -f infrastructure/ansible/requirements-controller.txt ]; then
+            pip install -r infrastructure/ansible/requirements-controller.txt
+          fi
+
+      - name: Install Ansible Galaxy Collections
+        run: |
+          if [ -f infrastructure/ansible/requirements.yml ]; then
+            ansible-galaxy collection install -r infrastructure/ansible/requirements.yml
+          fi
+
+      - name: Install Kubeconform
+        run: |
+          curl -L -s https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Verify Tools Installation
+        run: |
+          terraform version
+          ansible --version
+          ansible-lint --version
+          yamllint --version
+          kubeconform -v
+          kubectl version --client
+          shellcheck --version
+
+      - name: Run Local Validation Script
+        run: bash scripts/validate-infra.sh
+
+  # 3. Terraform Linting with AWS Ruleset
+  tflint:
+    name: Terraform Lint (TFLint)
+    needs: [detect-changes]
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.infra-changed == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.51.1
+
+      - name: Initialize TFLint AWS Plugin
+        run: tflint --init
+        working-directory: .
+
+      - name: Run TFLint
+        run: tflint --recursive
+        working-directory: .
+
+  # 4. IaC & Container Config Scan (Trivy Config Scan)
+  trivy-config:
+    name: Trivy Config Scan
+    needs: [detect-changes]
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.infra-changed == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Run Trivy Vulnerability Scanner (IaC / Config Mode)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'config'
+          hide-progress: false
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL'
+          scan-ref: '.'
+          trivyignore: '.trivyignore'
+
+  # 5. Secret Scan with Gitleaks (PR Diff Only)
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    needs: [detect-changes]
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.infra-changed == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # Gitleaks needs history to run on PR diff
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 6. Unified DevSecOps Status Check for Branch Protection
+  devsecops-status:
+    name: DevSecOps Status
+    needs: [detect-changes, infra-correctness, tflint, trivy-config, secret-scan]
+    runs-on: ubuntu-latest
+    if: always() && !cancelled()
+    steps:
+      - name: Verify DevSecOps Results
+        id: status_check
+        run: |
+          DETECT_RESULT="${{ needs.detect-changes.result }}"
+          CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
+          
+          # Fail early if detect-changes job failed or was cancelled
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "Error: The pre-requisite job 'detect-changes' failed or was cancelled."
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          
+          # If no infra changes were detected, this workflow is skipped and counts as pass
+          if [ "$CHANGED" != "true" ]; then
+            echo "No infra changes detected. Skipping checks."
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          INFRA="${{ needs.infra-correctness.result }}"
+          TFLINT="${{ needs.tflint.result }}"
+          TRIVY="${{ needs.trivy-config.result }}"
+          SECRETS="${{ needs.secret-scan.result }}"
+
+          echo "Infra Validation: $INFRA"
+          echo "TFLint: $TFLINT"
+          echo "Trivy Config: $TRIVY"
+          echo "Secret Scan: $SECRETS"
+
+          if [ "$INFRA" = "failure" ] || [ "$INFRA" = "cancelled" ] || \
+             [ "$TFLINT" = "failure" ] || [ "$TFLINT" = "cancelled" ] || \
+             [ "$TRIVY" = "failure" ] || [ "$TRIVY" = "cancelled" ] || \
+             [ "$SECRETS" = "failure" ] || [ "$SECRETS" = "cancelled" ]; then
+            echo "One or more required DevSecOps checks failed."
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "All DevSecOps checks passed."
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enforce Pipeline Result
+        run: |
+          exit ${{ steps.status_check.outputs.exit_code }}
