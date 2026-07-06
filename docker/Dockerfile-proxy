@@ -1,9 +1,11 @@
 FROM gcr.io/distroless/static-debian12:nonroot
 
+WORKDIR /app
+
 EXPOSE 5000
 
 # Copy configuration and the pre-built binary directly from the host workspace
-COPY ./cmd/proxy/config.yml /config.yml
-COPY ./bin/proxy /app
+COPY ./cmd/proxy/config.yml ./config.yml
+COPY ./bin/proxy ./app-service
 
-ENTRYPOINT ["/app"]
+ENTRYPOINT ["./app-service"]

@@ -1,8 +1,10 @@
 FROM gcr.io/distroless/static-debian12:nonroot
 
-# Copy configuration, migrations and the pre-built binary directly from the host workspace
-COPY ./cmd/barista/config.yml /config.yml
-COPY ./db/migrations /db/migrations
-COPY ./bin/barista /app
+WORKDIR /app
 
-ENTRYPOINT ["/app"]
+# Copy configuration, migrations and the pre-built binary directly from the host workspace
+COPY ./cmd/barista/config.yml ./config.yml
+COPY ./db/migrations ./db/migrations
+COPY ./bin/barista ./app-service
+
+ENTRYPOINT ["./app-service"]
