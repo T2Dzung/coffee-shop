@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Copy configuration, migrations and the pre-built binary directly from the host workspace
 COPY ./cmd/barista/config.yml ./config.yml
-COPY ./db/migrations /db/migrations
+COPY ./db/migrations ./db/migrations
 COPY ./bin/barista ./app-service
 
 ENTRYPOINT ["./app-service"]
