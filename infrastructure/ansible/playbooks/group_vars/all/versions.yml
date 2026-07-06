@@ -16,6 +16,7 @@ cilium_chart_version: "1.19.5"
 argocd_version: "v3.4.2"
 cert_manager_chart_version: "v1.19.4"
 arc_chart_version: "0.14.2"
-actions_runner_version: "2.333.1"
+# Production must replace this exception with automated, tested version
+actions_runner_version: "latest"
 etcdctl_version: "v3.6.7"
 etcdctl_linux_amd64_sha256: "cf8af880c5a01ee5363cefa14a3e0cb7e5308dcf4ed17a6973099c9a7aee5a9a"

@@ -1,0 +1,15 @@
+---
+# Copy these variable names into the encrypted vault.yml with:
+# ansible-vault edit playbooks/group_vars/all/vault.yml
+# Never commit real values from this example file.
+arc_github_token: REPLACE_WITH_GITHUB_TOKEN
+coffeeshop_pg_password: REPLACE_WITH_POSTGRES_PASSWORD
+# PG_URL is the migration base URL. Do not append sslmode here because the
+# current migration binary appends its own query parameter.
+coffeeshop_pg_url: REPLACE_WITH_POSTGRES_MIGRATION_URL
+# Keep credentials consistent across password, URL and DSN variables. URI
+# encode special characters where the selected connection-string format needs it.
+coffeeshop_pg_dsn_url: REPLACE_WITH_POSTGRES_APPLICATION_DSN
+coffeeshop_rabbitmq_user: REPLACE_WITH_RABBITMQ_USER
+coffeeshop_rabbitmq_password: REPLACE_WITH_RABBITMQ_PASSWORD
+coffeeshop_rabbitmq_url: REPLACE_WITH_RABBITMQ_URL

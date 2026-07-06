@@ -1,0 +1,56 @@
+---
+- name: Resolve Coffee Shop application secret inputs
+  ansible.builtin.set_fact:
+    coffeeshop_secrets_resolved_pg_password: >-
+      {{ coffeeshop_pg_password | default(lookup('env', 'COFFEESHOP_PG_PASSWORD'), true) }}
+    coffeeshop_secrets_resolved_pg_url: >-
+      {{ coffeeshop_pg_url | default(lookup('env', 'COFFEESHOP_PG_URL'), true) }}
+    coffeeshop_secrets_resolved_pg_dsn_url: >-
+      {{ coffeeshop_pg_dsn_url | default(lookup('env', 'COFFEESHOP_PG_DSN_URL'), true) }}
+    coffeeshop_secrets_resolved_rabbitmq_user: >-
+      {{ coffeeshop_rabbitmq_user | default(lookup('env', 'COFFEESHOP_RABBITMQ_USER'), true) }}
+    coffeeshop_secrets_resolved_rabbitmq_password: >-
+      {{ coffeeshop_rabbitmq_password | default(lookup('env', 'COFFEESHOP_RABBITMQ_PASSWORD'), true) }}
+    coffeeshop_secrets_resolved_rabbitmq_url: >-
+      {{ coffeeshop_rabbitmq_url | default(lookup('env', 'COFFEESHOP_RABBITMQ_URL'), true) }}
+  no_log: true
+
+- name: Require Coffee Shop application secrets before GitOps bootstrap
+  ansible.builtin.assert:
+    that:
+      - coffeeshop_secrets_resolved_pg_password | length > 0
+      - coffeeshop_secrets_resolved_pg_url | length > 0
+      - coffeeshop_secrets_resolved_pg_dsn_url | length > 0
+      - coffeeshop_secrets_resolved_rabbitmq_user | length > 0
+      - coffeeshop_secrets_resolved_rabbitmq_password | length > 0
+      - coffeeshop_secrets_resolved_rabbitmq_url | length > 0
+    fail_msg: >-
+      Define the coffeeshop application secret variables in Ansible Vault or
+      provide the documented COFFEESHOP_* environment variables.
+  no_log: true
+
+- name: Create Coffee Shop namespace before ArgoCD reconciliation
+  kubernetes.core.k8s:
+    name: coffeeshop
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Create Coffee Shop application bootstrap secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: coffeeshop-secret
+        namespace: coffeeshop
+      type: Opaque
+      stringData:
+        PG_PASSWORD: "{{ coffeeshop_secrets_resolved_pg_password }}"
+        PG_URL: "{{ coffeeshop_secrets_resolved_pg_url }}"
+        PG_DSN_URL: "{{ coffeeshop_secrets_resolved_pg_dsn_url }}"
+        RABBITMQ_DEFAULT_USER: "{{ coffeeshop_secrets_resolved_rabbitmq_user }}"
+        RABBITMQ_DEFAULT_PASS: "{{ coffeeshop_secrets_resolved_rabbitmq_password }}"
+        RABBITMQ_URL: "{{ coffeeshop_secrets_resolved_rabbitmq_url }}"
+  no_log: true

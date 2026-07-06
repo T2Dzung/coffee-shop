@@ -12,6 +12,12 @@ maxRunners: 7
 
 template:
   spec:
+    # Outbound-only access: disables SA token mount to reduce attack surface
+    automountServiceAccountToken: false
+    hostNetwork: false
+    hostPID: false
+    hostIPC: false
+
     securityContext:
       fsGroup: 1000
 
@@ -24,7 +30,7 @@ template:
           - name: DOCKER_TLS_CERTDIR
             value: ""
         securityContext:
-          privileged: true  # Kept as fallback in Phase 3
+          privileged: true  # Required for DinD socket execution
         resources:
           limits:
             cpu: "1"
@@ -41,6 +47,11 @@ template:
         image: ghcr.io/actions/actions-runner:latest
         imagePullPolicy: Always
         command: ["/home/runner/run.sh"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         env:
           - name: DOCKER_HOST
             value: "tcp://localhost:2375"
@@ -57,6 +68,6 @@ template:
 
     volumes:
       - name: go-cache
-        emptyDir: {}  # Changed from PVC to emptyDir for Phase 3 (Fix Pending issue)
+        emptyDir: {}  # Use emptyDir for build speed & avoiding PVC mount delay
       - name: docker-storage
         emptyDir: {}

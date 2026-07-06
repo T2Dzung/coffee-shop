@@ -44,7 +44,7 @@ yamllint --config-file "${PROJECT_ROOT}/.yamllint.yml" \
   "${ANSIBLE_DIR}" "${K8S_DIR}"
 
 mapfile -d '' manifest_files < <(
-  find "${K8S_DIR}/gateway" "${K8S_DIR}/policies" "${K8S_DIR}/gitops" \
+  find "${K8S_DIR}/bootstrap" "${K8S_DIR}/gateway" "${K8S_DIR}/policies" "${K8S_DIR}/gitops" \
     -type f \( -name '*.yaml' -o -name '*.yml' \) \
     ! -name '*values.yaml' \
     -print0
@@ -63,10 +63,21 @@ kubectl kustomize "${K8S_DIR}/gitops/apps/coffeeshop/overlays/dev" | kubeconform
   -strict \
   -summary
 
+kubectl kustomize "${K8S_DIR}/gitops/addons/arc/hardening" | kubeconform \
+  -kubernetes-version "${SCHEMA_VERSION}" \
+  -ignore-missing-schemas \
+  -strict \
+  -summary
+
 shellcheck "${PROJECT_ROOT}/scripts/"*.sh
 
 if ! grep -Fxq '/infrastructure/k8s/gitops/apps/coffeeshop/base/secrets.yaml' "${PROJECT_ROOT}/.gitignore"; then
   echo "The runtime Kubernetes secret manifest is not ignored." >&2
+  exit 1
+fi
+
+if find "${K8S_DIR}/gitops" -maxdepth 1 -type f -name 'root-app.y*ml' | grep -q .; then
+  echo "The root application must stay outside the directory it manages." >&2
   exit 1
 fi
 

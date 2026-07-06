@@ -8,8 +8,13 @@
     helm_skip_update: false
 
   roles:
-    - role: argocd
-      tags: ['argocd']
+    # Bootstrap secrets and namespaces before ArgoCD creates workloads that
+    # consume them. This removes the race that left application pods degraded.
+    - role: coffeeshop_secrets
+      tags: ['coffeeshop_secrets']
 
     - role: arc_runner
       tags: ['arc_runner']
+
+    - role: argocd
+      tags: ['argocd']
