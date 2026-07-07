@@ -142,6 +142,8 @@ jobs:
           tflint_version: v0.51.1
 
       - name: Initialize TFLint AWS Plugin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: tflint --init
         working-directory: .
 
