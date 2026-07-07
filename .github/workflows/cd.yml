@@ -137,7 +137,7 @@ jobs:
         env:
           TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
         with:
-          version: 'v0.55.2'
+          version: 'v0.72.0'
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'
           exit-code: '1'
