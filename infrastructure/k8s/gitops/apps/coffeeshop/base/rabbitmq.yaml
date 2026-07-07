@@ -36,19 +36,14 @@ spec:
             - containerPort: 15672
               name: management
           livenessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - -q
-                - ping
+            tcpSocket:
+              port: 5672
             initialDelaySeconds: 20
             periodSeconds: 10
           readinessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - -q
-                - ping
+            httpGet:
+              path: /api/healthbeats/check/local
+              port: 15672
             initialDelaySeconds: 10
             periodSeconds: 5
 

@@ -121,6 +121,15 @@ resource "aws_vpc_security_group_ingress_rule" "node_nfs_self" {
   referenced_security_group_id = aws_security_group.k3s_node_sg.id
 }
 
+resource "aws_vpc_security_group_ingress_rule" "node_exporter_self" {
+  security_group_id            = aws_security_group.k3s_node_sg.id
+  description                  = "Prometheus Node Exporter metrics scraping"
+  from_port                    = 9100
+  to_port                      = 9100
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.k3s_node_sg.id
+}
+
 resource "aws_vpc_security_group_egress_rule" "node_egress_all_ipv4" {
   security_group_id = aws_security_group.k3s_node_sg.id
   description       = "Allow all outbound IPv4"
