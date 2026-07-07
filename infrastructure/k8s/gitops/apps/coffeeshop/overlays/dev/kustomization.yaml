@@ -12,7 +12,7 @@ images:
   newTag: 2e4515b67ac9492fca738211ba69cef99296733a
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
-  newTag: 67443c9d05a7ea4b40d4f32094cb9245acd3c3ec
+  newTag: 7b696b06692c4d5b2f094bae17720e18a2fc3821
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
   newTag: 67443c9d05a7ea4b40d4f32094cb9245acd3c3ec
