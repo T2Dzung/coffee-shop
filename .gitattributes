@@ -1,0 +1,16 @@
+# Set default behavior to automatically normalize line endings to LF on commit
+* text=auto
+
+# Force files that must execute or validate in Linux/CI environments to use LF
+*.sh text eol=lf
+*.tf text eol=lf
+*.tfvars text eol=lf
+*.tfvars.example text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.hcl text eol=lf
+*.json text eol=lf
+Dockerfile* text eol=lf
+.trivyignore text eol=lf
+.gitleaks.toml text eol=lf
