@@ -42,8 +42,8 @@ spec:
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /api/healthbeats/check/local
-              port: 15672
+              path: /metrics
+              port: 15692
             initialDelaySeconds: 10
             periodSeconds: 5
 
