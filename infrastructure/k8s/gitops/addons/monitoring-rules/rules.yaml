@@ -1,0 +1,87 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+    role: alert-rules
+spec:
+  groups:
+    - name: cilium-alerts
+      rules:
+        - alert: CiliumDaemonSetUnavailable
+          expr: >-
+            (kube_daemonset_status_number_ready{daemonset="cilium", namespace="kube-system"}
+            / kube_daemonset_status_desired_number_scheduled{daemonset="cilium", namespace="kube-system"}) < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cilium DaemonSet is not fully available"
+            description: "Cilium DaemonSet has ready replicas less than desired scheduled replicas on nodes."
+
+        - alert: CiliumOperatorUnavailable
+          expr: kube_deployment_status_replicas_available{deployment="cilium-operator", namespace="kube-system"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cilium Operator is unavailable"
+            description: "Cilium Operator deployment has no available replicas."
+
+    - name: argocd-alerts
+      rules:
+        - alert: ArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status="OutOfSync"} > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ArgoCD application is out of sync"
+            description: "ArgoCD application {{ $labels.name }} has sync status OutOfSync."
+
+        - alert: ArgoCDAppDegraded
+          expr: argocd_app_info{health_status="Degraded"} > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "ArgoCD application is degraded"
+            description: "ArgoCD application {{ $labels.name }} is in Degraded state."
+
+    - name: ci-runner-alerts
+      rules:
+        - alert: RunnerPodsUnavailable
+          expr: >-
+            sum(kube_pod_status_phase{namespace="dev-ci", phase="Failed"}) > 0
+            or sum(kube_pod_container_status_waiting_reason{namespace="dev-ci", reason="CrashLoopBackOff"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CI Runner pods are failing or in CrashLoopBackOff"
+            description: "Pods in namespace dev-ci have failed or are experiencing CrashLoopBackOff."
+
+    - name: application-alerts
+      rules:
+        - alert: CoffeeShopAppUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="coffeeshop"} == 0 and kube_deployment_spec_replicas{namespace="coffeeshop"} > 0
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CoffeeShop microservice deployment is unavailable"
+            description: "Deployment {{ $labels.deployment }} in coffeeshop namespace has 0 available replicas."
+
+        - alert: CoffeeShopPodCrashLoop
+          expr: >-
+            sum by (pod, namespace) (
+              increase(kube_pod_container_status_restarts_total{namespace="coffeeshop"}[5m])
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CoffeeShop pod is restarting frequently"
+            description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} restarted more than 2 times in the last 5 minutes."

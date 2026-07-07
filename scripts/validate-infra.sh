@@ -75,6 +75,15 @@ kubectl kustomize "${K8S_DIR}/gitops/addons/arc/hardening" | kubeconform \
   -strict \
   -summary
 
+kubectl kustomize "${K8S_DIR}/gitops/addons/monitoring-rules" | kubeconform \
+  -kubernetes-version "${SCHEMA_VERSION}" \
+  -ignore-missing-schemas \
+  -schema-location 'default' \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+  -strict \
+  -summary
+
+
 shellcheck "${PROJECT_ROOT}/scripts/"*.sh
 
 if ! grep -Fxq '/infrastructure/k8s/gitops/apps/coffeeshop/base/secrets.yaml' "${PROJECT_ROOT}/.gitignore"; then
@@ -84,6 +93,16 @@ fi
 
 if find "${K8S_DIR}/gitops" -maxdepth 1 -type f -name 'root-app.y*ml' | grep -q .; then
   echo "The root application must stay outside the directory it manages." >&2
+  exit 1
+fi
+
+# Validate version consistency for kube-prometheus-stack between Ansible and GitOps
+VERSION_IN_ANSIBLE=$(grep 'kube_prometheus_stack_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+VERSION_IN_GITOPS=$(grep 'chart: kube-prometheus-stack' -A 1 "${K8S_DIR}/gitops/monitoring-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+
+if [ "${VERSION_IN_ANSIBLE}" != "${VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for kube-prometheus-stack chart." >&2
+  echo "Ansible version: '${VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${VERSION_IN_GITOPS}'" >&2
   exit 1
 fi
 

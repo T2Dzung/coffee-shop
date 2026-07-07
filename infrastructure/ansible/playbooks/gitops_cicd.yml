@@ -13,6 +13,9 @@
     - role: coffeeshop_secrets
       tags: ['coffeeshop_secrets']
 
+    - role: monitoring_secrets
+      tags: ['monitoring_secrets']
+
     - role: arc_runner
       tags: ['arc_runner']
 

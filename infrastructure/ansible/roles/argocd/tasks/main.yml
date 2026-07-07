@@ -31,6 +31,21 @@
       configs:
         params:
           server.insecure: true # We terminate TLS at Gateway if needed
+      controller:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+      server:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+      repoServer:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
 
 - name: Apply root App-of-Apps
   kubernetes.core.k8s:
