@@ -160,16 +160,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
-      - name: Install Trivy
-        run: |
-          wget -q https://github.com/aquasecurity/trivy/releases/download/v0.55.2/trivy_0.55.2_Linux-64bit.tar.gz
-          tar -xzf trivy_0.55.2_Linux-64bit.tar.gz trivy
-          sudo mv trivy /usr/local/bin/
-          rm trivy_0.55.2_Linux-64bit.tar.gz
-
       - name: Run Trivy Vulnerability Scanner (IaC / Config Mode)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: 'v0.55.2'
           scan-type: 'config'
           hide-progress: false
           exit-code: '1'
@@ -177,7 +171,6 @@ jobs:
           severity: 'CRITICAL'
           scan-ref: '.'
           trivyignores: '.trivyignore'
-          skip-setup-trivy: true
 
   # 5. Secret Scan with Gitleaks (PR Diff Only)
   secret-scan:
