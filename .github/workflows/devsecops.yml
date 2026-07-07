@@ -162,7 +162,10 @@ jobs:
 
       - name: Install Trivy
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.55.2
+          wget -q https://github.com/aquasecurity/trivy/releases/download/v0.55.2/trivy_0.55.2_Linux-64bit.tar.gz
+          tar -xzf trivy_0.55.2_Linux-64bit.tar.gz trivy
+          sudo mv trivy /usr/local/bin/
+          rm trivy_0.55.2_Linux-64bit.tar.gz
 
       - name: Run Trivy Vulnerability Scanner (IaC / Config Mode)
         uses: aquasecurity/trivy-action@v0.36.0
