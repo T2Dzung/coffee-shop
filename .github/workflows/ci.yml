@@ -147,6 +147,10 @@ jobs:
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.55.2
+
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -156,6 +160,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL'
+          skip-setup-trivy: true
 
   # 4. Unified Status Check for Branch Protection
   ci-status:

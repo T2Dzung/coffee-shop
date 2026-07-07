@@ -132,12 +132,15 @@ jobs:
           tags: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           load: true
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.55.2
+
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@v0.36.0
         env:
           TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
         with:
-          version: 'v0.55.2'
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
           format: 'table'
           exit-code: '1'
@@ -145,6 +148,7 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL'
           cache: 'false'
+          skip-setup-trivy: true
 
       - name: Validate AWS OIDC Role Secret
         env:
