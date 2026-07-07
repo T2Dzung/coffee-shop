@@ -18,7 +18,7 @@ images:
   newTag: 3d95d60e8d12b3807e15528958063a06ed9fb508
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
-  newTag: 3d95d60e8d12b3807e15528958063a06ed9fb508
+  newTag: a7f077935231dfb2f49e456e9ae0328595cc1be7
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
   newTag: a7f077935231dfb2f49e456e9ae0328595cc1be7
