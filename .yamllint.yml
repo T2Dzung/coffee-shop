@@ -5,6 +5,8 @@ ignore: |
   infrastructure/k8s/apps/configmap-secrets.yaml
   **/kustomization.yaml
   **/kustomization.yml
+  **/templates/*.yaml
+  **/templates/*.yml
 
 rules:
   document-start: disable

@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coffeeshop-postgres
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/T2Dzung/coffee-shop.git
+    targetRevision: feat/k3s-ha
+    path: infrastructure/k8s/gitops/apps/coffeeshop-postgres
+    helm:
+      parameters:
+        - name: backup.bucketName
+          value: "{{ coffeeshop_postgres_app_backup_bucket_name }}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: coffeeshop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true

@@ -135,6 +135,13 @@ ACTIVE_API_ENDPOINT=$(terraform -chdir="${DEV_TF_DIR}" output -raw active_api_en
 K3S_REGISTRATION_ENDPOINT=$(terraform -chdir="${DEV_TF_DIR}" output -raw k3s_registration_endpoint)
 K3S_TLS_SANS=$(terraform -chdir="${DEV_TF_DIR}" output -json k3s_tls_sans)
 
+POSTGRES_BACKUP_BUCKET=$(terraform -chdir="${DEV_TF_DIR}" output -raw postgres_backup_bucket_name)
+POSTGRES_BACKUP_ACCESS_KEY=$(terraform -chdir="${DEV_TF_DIR}" output -raw postgres_backup_iam_access_key_id)
+POSTGRES_BACKUP_SECRET_KEY=$(terraform -chdir="${DEV_TF_DIR}" output -raw postgres_backup_iam_secret_access_key)
+export POSTGRES_BACKUP_BUCKET_NAME="${POSTGRES_BACKUP_BUCKET}"
+export POSTGRES_BACKUP_IAM_ACCESS_KEY_ID="${POSTGRES_BACKUP_ACCESS_KEY}"
+export POSTGRES_BACKUP_IAM_SECRET_ACCESS_KEY="${POSTGRES_BACKUP_SECRET_KEY}"
+
 ansible-playbook \
   --inventory inventory/aws_ec2.yml \
   --private-key "${ANSIBLE_PRIVATE_KEY_FILE}" \

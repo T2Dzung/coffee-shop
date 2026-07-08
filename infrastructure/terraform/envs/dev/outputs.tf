@@ -96,3 +96,19 @@ output "longhorn_data_mount_path" {
   description = "Path where Longhorn volumes will be mounted on the nodes"
   value       = "/var/lib/longhorn"
 }
+
+output "postgres_backup_bucket_name" {
+  description = "Name of the S3 bucket for PostgreSQL backups"
+  value       = aws_s3_bucket.postgres_backup.id
+}
+
+output "postgres_backup_iam_access_key_id" {
+  description = "IAM access key ID for PostgreSQL S3 backups"
+  value       = aws_iam_access_key.postgres_backup.id
+}
+
+output "postgres_backup_iam_secret_access_key" {
+  description = "IAM secret access key for PostgreSQL S3 backups"
+  value       = aws_iam_access_key.postgres_backup.secret
+  sensitive   = true
+}

@@ -6,9 +6,11 @@ ANSIBLE_DIR="${PROJECT_ROOT}/infrastructure/ansible"
 DEV_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/envs/dev"
 K8S_DIR="${PROJECT_ROOT}/infrastructure/k8s"
 SCHEMA_VERSION="1.35.4"
+VENV_DIR="${CONTROL_VENV_DIR:-${HOME}/.venvs/go-coffeeshop-platform}"
 : "${TF_DATA_DIR:=${HOME}/.cache/go-coffeeshop/terraform/dev}"
 export TF_DATA_DIR
 install -d -m 0700 "${TF_DATA_DIR}"
+export PATH="${HOME}/.local/bin:${VENV_DIR}/bin:${PATH}"
 
 # Keep lint ignore paths deterministic regardless of the caller's directory.
 cd "${PROJECT_ROOT}"
@@ -22,7 +24,7 @@ require_command() {
   }
 }
 
-for command_name in terraform ansible-playbook ansible-lint yamllint kubeconform kubectl shellcheck; do
+for command_name in terraform ansible-playbook ansible-lint yamllint kubeconform kubectl shellcheck helm; do
   require_command "${command_name}"
 done
 
@@ -48,6 +50,8 @@ mapfile -d '' manifest_files < <(
   find "${K8S_DIR}/bootstrap" "${K8S_DIR}/gateway" "${K8S_DIR}/policies" "${K8S_DIR}/gitops" \
     -type f \( -name '*.yaml' -o -name '*.yml' \) \
     ! -name '*values.yaml' \
+    ! -name 'Chart.yaml' \
+    ! -path '*/templates/*' \
     -print0
 )
 kubeconform \
@@ -114,6 +118,41 @@ if [ "${LONGHORN_VERSION_IN_ANSIBLE}" != "${LONGHORN_VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for longhorn chart." >&2
   echo "Ansible version: '${LONGHORN_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${LONGHORN_VERSION_IN_GITOPS}'" >&2
   exit 1
+fi
+
+# Validate version consistency for cloudnative-pg between Ansible and GitOps.
+# CNPG uses separate Helm chart and operator app versions; ArgoCD must pin the chart version.
+CNPG_VERSION_IN_ANSIBLE=$(grep 'cloudnativepg_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+CNPG_VERSION_IN_GITOPS=$(grep 'chart: cloudnative-pg' -A 1 "${K8S_DIR}/gitops/cloudnativepg-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+
+if [ "${CNPG_VERSION_IN_ANSIBLE}" != "${CNPG_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for cloudnative-pg chart." >&2
+  echo "Ansible chart version: '${CNPG_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${CNPG_VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+# Validate version consistency for Barman Cloud Plugin between Ansible and GitOps.
+BARMAN_VERSION_IN_ANSIBLE=$(grep 'barman_cloud_plugin_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+BARMAN_VERSION_IN_GITOPS=$(grep 'chart: plugin-barman-cloud' -A 1 "${K8S_DIR}/gitops/barman-cloud-plugin-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+
+if [ "${BARMAN_VERSION_IN_ANSIBLE}" != "${BARMAN_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for Barman Cloud Plugin chart." >&2
+  echo "Ansible chart version: '${BARMAN_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${BARMAN_VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+# Validate local coffeeshop-postgres helm chart template rendering.
+# The production chart intentionally requires backup.bucketName, which is supplied
+# by Ansible from Terraform output when creating the ArgoCD Application.
+if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-postgres" ]; then
+  helm template "${K8S_DIR}/gitops/apps/coffeeshop-postgres" \
+    --set backup.bucketName=coffeeshop-static-validation-bucket | kubeconform \
+    -kubernetes-version "${SCHEMA_VERSION}" \
+    -ignore-missing-schemas \
+    -schema-location 'default' \
+    -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+    -strict \
+    -summary
 fi
 
 echo "Infrastructure validation completed successfully."

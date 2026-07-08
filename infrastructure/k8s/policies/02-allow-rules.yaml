@@ -93,3 +93,22 @@ spec:
         - ports:
             - port: "5672"
               protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-postgres-egress-s3
+  namespace: coffeeshop
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  egress:
+    - toFQDNs:
+        - matchPattern: "*.s3.amazonaws.com"
+        - matchPattern: "*.s3.ap-southeast-1.amazonaws.com"
+        - matchPattern: "s3.ap-southeast-1.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

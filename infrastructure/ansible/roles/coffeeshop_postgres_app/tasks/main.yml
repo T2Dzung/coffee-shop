@@ -1,0 +1,62 @@
+---
+- name: Resolve coffeeshop-postgres ArgoCD Application inputs
+  ansible.builtin.set_fact:
+    coffeeshop_postgres_app_backup_bucket_name: >-
+      {{
+        postgres_backup_bucket_name
+        | default(
+            coffeeshop_secrets_resolved_postgres_backup_bucket_name
+            | default(lookup('env', 'POSTGRES_BACKUP_BUCKET_NAME'), true),
+            true
+          )
+      }}
+
+- name: Require PostgreSQL backup bucket before creating coffeeshop-postgres app
+  ansible.builtin.assert:
+    that:
+      - coffeeshop_postgres_app_backup_bucket_name | length > 0
+    fail_msg: >-
+      postgres_backup_bucket_name or POSTGRES_BACKUP_BUCKET_NAME is required before
+      creating the coffeeshop-postgres ArgoCD Application.
+
+- name: Wait for CloudNativePG operator ArgoCD app to be healthy
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: cloudnativepg
+    namespace: argocd
+  register: coffeeshop_postgres_app_cloudnativepg_status
+  until: >
+    coffeeshop_postgres_app_cloudnativepg_status.resources | length == 1 and
+    coffeeshop_postgres_app_cloudnativepg_status.resources[0].status.sync.status | default('') == 'Synced' and
+    coffeeshop_postgres_app_cloudnativepg_status.resources[0].status.health.status | default('') == 'Healthy'
+  retries: 60
+  delay: 10
+  delegate_to: localhost
+  run_once: true
+
+- name: Wait for Barman Cloud Plugin ArgoCD app to be healthy
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: barman-cloud-plugin
+    namespace: argocd
+  register: coffeeshop_postgres_app_barman_cloud_plugin_status
+  until: >
+    coffeeshop_postgres_app_barman_cloud_plugin_status.resources | length == 1 and
+    coffeeshop_postgres_app_barman_cloud_plugin_status.resources[0].status.sync.status | default('') == 'Synced' and
+    coffeeshop_postgres_app_barman_cloud_plugin_status.resources[0].status.health.status | default('') == 'Healthy'
+  retries: 60
+  delay: 10
+  delegate_to: localhost
+  run_once: true
+
+- name: Create coffeeshop-postgres ArgoCD Application
+  kubernetes.core.k8s:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    state: present
+    definition: "{{ lookup('template', 'coffeeshop-postgres-app.yaml.j2') | from_yaml }}"
+  delegate_to: localhost
+  run_once: true
