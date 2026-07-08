@@ -6,19 +6,19 @@ resources:
 images:
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
-  newTag: 5aaf2282b09de1324a5b16f170ba622e06237f38
+  newTag: e8f3f80940485f9c3b5e3b54e71a816bd78db3e6
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
-  newTag: 5aaf2282b09de1324a5b16f170ba622e06237f38
+  newTag: e8f3f80940485f9c3b5e3b54e71a816bd78db3e6
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
-  newTag: 5aaf2282b09de1324a5b16f170ba622e06237f38
+  newTag: e8f3f80940485f9c3b5e3b54e71a816bd78db3e6
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
-  newTag: 5aaf2282b09de1324a5b16f170ba622e06237f38
+  newTag: e8f3f80940485f9c3b5e3b54e71a816bd78db3e6
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
-  newTag: 5aaf2282b09de1324a5b16f170ba622e06237f38
+  newTag: e8f3f80940485f9c3b5e3b54e71a816bd78db3e6
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
-  newTag: 5aaf2282b09de1324a5b16f170ba622e06237f38
+  newTag: e8f3f80940485f9c3b5e3b54e71a816bd78db3e6
