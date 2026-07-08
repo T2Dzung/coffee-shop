@@ -85,3 +85,32 @@ spec:
           annotations:
             summary: "CoffeeShop pod is restarting frequently"
             description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} restarted more than 2 times in the last 5 minutes."
+
+    - name: longhorn-alerts
+      rules:
+        - alert: LonghornVolumeDegraded
+          expr: longhorn_volume_state{state="degraded"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Longhorn volume is degraded"
+            description: "Longhorn volume {{ $labels.volume }} is in degraded state."
+
+        - alert: LonghornVolumeFault
+          expr: longhorn_volume_state{state="fault"} > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Longhorn volume has faulted"
+            description: "Longhorn volume {{ $labels.volume }} has faulted and cannot read/write."
+
+        - alert: LonghornNodeDiskPressure
+          expr: longhorn_node_disk_usage_bytes / longhorn_node_disk_capacity_bytes > 0.90
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Longhorn node disk usage is high"
+            description: "Longhorn disk on node {{ $labels.node }} is over 90% capacity."

@@ -1,0 +1,162 @@
+---
+# ==============================================================================
+# Longhorn Storage Host Prerequisites (Phase 4 - Safeguarded)
+# ==============================================================================
+
+- name: Execute Longhorn host setup
+  when: longhorn_prereqs_data_volume_enabled | bool
+  block:
+    - name: Install required storage packages
+      ansible.builtin.apt:
+        name:
+          - open-iscsi
+          - nfs-common
+          - dmsetup
+          - cryptsetup
+          - util-linux
+        state: present
+        update_cache: true
+
+    - name: Ensure iscsid service is started and enabled
+      ansible.builtin.systemd:
+        name: iscsid
+        state: started
+        enabled: true
+
+    - name: Check whether Longhorn data path is already mounted
+      ansible.builtin.command: findmnt -n --target /var/lib/longhorn --output SOURCE,FSTYPE
+      register: longhorn_prereqs_existing_mount
+      failed_when: false
+      changed_when: false
+
+    - name: Validate existing Longhorn data mount
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        SOURCE=$(findmnt -n --target /var/lib/longhorn --output SOURCE)
+        FSTYPE=$(findmnt -n --target /var/lib/longhorn --output FSTYPE)
+        SIZE=$(lsblk -bno SIZE "$SOURCE" | head -n 1)
+
+        TARGET_SIZE=$(( {{ longhorn_prereqs_data_volume_size | int }} * 1024 * 1024 * 1024 ))
+        MIN_SIZE=$((TARGET_SIZE - 500000000))
+        MAX_SIZE=$((TARGET_SIZE + 500000000))
+
+        test "$FSTYPE" = "ext4"
+        test "$SIZE" -ge "$MIN_SIZE"
+        test "$SIZE" -le "$MAX_SIZE"
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: longhorn_prereqs_existing_mount.rc == 0
+
+    - name: Detect block device for Longhorn data disk (strict size verification)
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        TARGET_SIZE=$(( {{ longhorn_prereqs_data_volume_size | int }} * 1024 * 1024 * 1024 ))
+        MIN_SIZE=$((TARGET_SIZE - 500000000))
+        MAX_SIZE=$((TARGET_SIZE + 500000000))
+
+        is_safe_raw_disk() {
+          dev="$1"
+          [ -b "$dev" ] || return 1
+
+          size=$(lsblk -bno SIZE "$dev" | head -n 1)
+          mountpoint=$(lsblk -bno MOUNTPOINT "$dev" | head -n 1)
+          fstype=$(lsblk -bno FSTYPE "$dev" | head -n 1)
+          child_count=$(lsblk -n "$dev" | wc -l)
+
+          [ "$size" -ge "$MIN_SIZE" ] || return 1
+          [ "$size" -le "$MAX_SIZE" ] || return 1
+          [ -z "$mountpoint" ] || return 1
+          [ -z "$fstype" ] || return 1
+          [ "$child_count" -eq 1 ] || return 1
+        }
+
+        # Find raw, unpartitioned, unmounted block devices with no filesystem
+        # that match the expected Terraform-managed EBS volume size.
+        candidates=""
+        while read -r name; do
+          dev="/dev/$name"
+          if is_safe_raw_disk "$dev"; then
+            candidates="${candidates}${dev}"$'\n'
+          fi
+        done < <(lsblk -dnbo NAME)
+
+        count=$(echo "$candidates" | grep -c -v '^$' || true)
+
+        if [ "$count" -eq 1 ]; then
+          echo "$candidates" | grep -v '^$'
+        elif [ "$count" -gt 1 ]; then
+          echo "MULTIPLE_CANDIDATES"
+        else
+          # Fallback to check default device nodes only if they are still safe,
+          # raw disks. This avoids formatting an unrelated existing filesystem.
+          if is_safe_raw_disk /dev/sdf; then
+            echo "/dev/sdf"
+          elif is_safe_raw_disk /dev/xvdf; then
+            echo "/dev/xvdf"
+          else
+            echo ""
+          fi
+        fi
+      args:
+        executable: /bin/bash
+      register: longhorn_prereqs_disk_detect
+      changed_when: false
+      when: longhorn_prereqs_existing_mount.rc != 0
+
+    - name: Fail if multiple candidate disks of the same size are found
+      ansible.builtin.fail:
+        msg: "Safety Check Failed: Multiple unmounted disks of size {{ longhorn_prereqs_data_volume_size }}GiB found. Cannot decide safely."
+      when:
+        - longhorn_prereqs_existing_mount.rc != 0
+        - longhorn_prereqs_disk_detect.stdout == "MULTIPLE_CANDIDATES"
+
+    - name: Fail if Longhorn data disk not detected
+      ansible.builtin.fail:
+        msg: "Dedicated EBS volume for Longhorn data (size: {{ longhorn_prereqs_data_volume_size }}GiB) was not found on the host system."
+      when:
+        - longhorn_prereqs_existing_mount.rc != 0
+        - longhorn_prereqs_disk_detect.stdout == "" or longhorn_prereqs_disk_detect.stdout == "MULTIPLE_CANDIDATES"
+
+    - name: Set disk device path fact
+      ansible.builtin.set_fact:
+        longhorn_prereqs_disk_device: "{{ longhorn_prereqs_disk_detect.stdout }}"
+      when: longhorn_prereqs_existing_mount.rc != 0
+
+    - name: Check filesystem of detected disk
+      ansible.builtin.command: "blkid -o value -s TYPE {{ longhorn_prereqs_disk_device }}"
+      register: longhorn_prereqs_disk_fs_type
+      failed_when: false
+      changed_when: false
+      when: longhorn_prereqs_existing_mount.rc != 0
+
+    - name: Create ext4 filesystem on Longhorn disk if empty
+      ansible.builtin.command: "mkfs.ext4 {{ longhorn_prereqs_disk_device }}"
+      when:
+        - longhorn_prereqs_existing_mount.rc != 0
+        - longhorn_prereqs_disk_fs_type.stdout == ""
+      changed_when: true
+
+    - name: Get UUID of Longhorn disk
+      ansible.builtin.command: "blkid -o value -s UUID {{ longhorn_prereqs_disk_device }}"
+      register: longhorn_prereqs_disk_uuid
+      changed_when: false
+      when: longhorn_prereqs_existing_mount.rc != 0
+
+    - name: Ensure Longhorn data directory exists
+      ansible.builtin.file:
+        path: /var/lib/longhorn
+        state: directory
+        mode: '0750'
+      when: longhorn_prereqs_existing_mount.rc != 0
+
+    - name: Mount and persist Longhorn disk in fstab
+      ansible.posix.mount:
+        path: /var/lib/longhorn
+        src: "UUID={{ longhorn_prereqs_disk_uuid.stdout }}"
+        fstype: ext4
+        opts: defaults,noatime
+        state: mounted
+      when: longhorn_prereqs_existing_mount.rc != 0

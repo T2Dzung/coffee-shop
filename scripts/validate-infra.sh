@@ -33,6 +33,7 @@ ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playboo
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/post_start.yml"
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/backup_baseline.yml"
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/gitops_cicd.yml"
+ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/phase4_cleanup_nfs.yml"
 (
   cd "${ANSIBLE_DIR}"
   # Explicit globs prevent a false pass where ansible-lint treats the current
@@ -103,6 +104,16 @@ VERSION_IN_GITOPS=$(grep 'chart: kube-prometheus-stack' -A 1 "${K8S_DIR}/gitops/
 if [ "${VERSION_IN_ANSIBLE}" != "${VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for kube-prometheus-stack chart." >&2
   echo "Ansible version: '${VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+# Validate version consistency for longhorn between Ansible and GitOps
+LONGHORN_VERSION_IN_ANSIBLE=$(grep 'longhorn_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+LONGHORN_VERSION_IN_GITOPS=$(grep 'chart: longhorn' -A 1 "${K8S_DIR}/gitops/longhorn-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+
+if [ "${LONGHORN_VERSION_IN_ANSIBLE}" != "${LONGHORN_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for longhorn chart." >&2
+  echo "Ansible version: '${LONGHORN_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${LONGHORN_VERSION_IN_GITOPS}'" >&2
   exit 1
 fi
 

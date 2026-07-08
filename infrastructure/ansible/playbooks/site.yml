@@ -53,8 +53,8 @@
   roles:
     - ecr_auth
 
-- name: Setup NFS Shared Storage
+- name: Setup Longhorn Storage Prerequisites
   hosts: k3s_servers
   become: true
   roles:
-    - nfs_shared
+    - longhorn_prereqs

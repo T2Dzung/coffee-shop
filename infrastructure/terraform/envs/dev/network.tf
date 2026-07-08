@@ -112,14 +112,14 @@ resource "aws_vpc_security_group_ingress_rule" "node_flannel_self" {
   referenced_security_group_id = aws_security_group.k3s_node_sg.id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "node_nfs_self" {
-  security_group_id            = aws_security_group.k3s_node_sg.id
-  description                  = "Transitional NFSv4 cache"
-  from_port                    = 2049
-  to_port                      = 2049
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.k3s_node_sg.id
-}
+# resource "aws_vpc_security_group_ingress_rule" "node_nfs_self" {
+#   security_group_id            = aws_security_group.k3s_node_sg.id
+#   description                  = "Transitional NFSv4 cache"
+#   from_port                    = 2049
+#   to_port                      = 2049
+#   ip_protocol                  = "tcp"
+#   referenced_security_group_id = aws_security_group.k3s_node_sg.id
+# }
 
 resource "aws_vpc_security_group_ingress_rule" "node_exporter_self" {
   security_group_id            = aws_security_group.k3s_node_sg.id

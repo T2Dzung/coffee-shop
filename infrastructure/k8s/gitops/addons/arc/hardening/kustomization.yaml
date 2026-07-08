@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - resource-guardrails.yaml
   - network-policy.yaml
+  - longhorn-cache-pvc.yaml

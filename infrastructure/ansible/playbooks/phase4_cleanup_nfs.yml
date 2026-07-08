@@ -1,0 +1,163 @@
+---
+# ==============================================================================
+# Phase 4 — NFS Shared Storage Cleanup Playbook
+# ==============================================================================
+
+- name: Clean up NFS mounts and services on hosts
+  hosts: k3s_servers
+  become: true
+
+  tasks:
+    - name: Check if NFS mountpoint exists
+      ansible.builtin.command: mountpoint -q /mnt/go-cache
+      register: nfs_mounted
+      failed_when: false
+      changed_when: false
+
+    - name: Unmount NFS cache directory on client nodes
+      ansible.posix.mount:
+        path: /mnt/go-cache
+        state: unmounted
+      when: nfs_mounted.rc == 0
+
+    - name: Remove NFS mount from /etc/fstab on client nodes
+      ansible.posix.mount:
+        path: /mnt/go-cache
+        state: absent
+
+    - name: Delete mount directory on clients
+      ansible.builtin.file:
+        path: /mnt/go-cache
+        state: absent
+
+    - name: Stop and disable NFS server on server node
+      ansible.builtin.systemd:
+        name: nfs-kernel-server
+        state: stopped
+        enabled: false
+      when: "'nfs_server' in group_names"
+      failed_when: false
+
+    - name: Uninstall NFS kernel server
+      ansible.builtin.apt:
+        name: nfs-kernel-server
+        state: absent
+      when: "'nfs_server' in group_names"
+      failed_when: false
+
+    - name: Remove NFS Export configuration
+      ansible.builtin.lineinfile:
+        path: /etc/exports
+        line: "/mnt/go-cache *(rw,sync,no_subtree_check,root_squash)"
+        state: absent
+      when: "'nfs_server' in group_names"
+
+    - name: Remove NFS Shared Directory on server node
+      ansible.builtin.file:
+        path: /mnt/go-cache
+        state: absent
+      when: "'nfs_server' in group_names"
+
+- name: Delete static NFS cache resources in Kubernetes
+  hosts: k3s_bootstrap_server
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Get info of the old NFS PVC  # noqa run-once
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: go-modules-cache-pvc
+        namespace: dev-ci
+      register: pvc_info
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Check pods mounting the old PVC  # noqa run-once
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+        api_version: v1
+        kind: Pod
+        namespace: dev-ci
+      register: pods_info
+      when:
+        - pvc_info.resources is defined
+        - pvc_info.resources | length > 0
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Initialize active pod list using the old PVC  # noqa run-once
+      ansible.builtin.set_fact:
+        active_pods: []
+      when:
+        - pvc_info.resources is defined
+        - pvc_info.resources | length > 0
+        - pods_info.resources is defined
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Add pods still mounting the old NFS PVC to the safety list  # noqa run-once
+      ansible.builtin.set_fact:
+        active_pods: "{{ active_pods + [item.metadata.name] }}"
+      loop: "{{ pods_info.resources | default([]) }}"
+      vars:
+        pod_pvc_claims: >-
+          {{
+            item.spec.volumes | default([])
+            | selectattr('persistentVolumeClaim', 'defined')
+            | map(attribute='persistentVolumeClaim.claimName')
+            | list
+          }}
+      when:
+        - pvc_info.resources is defined
+        - pvc_info.resources | length > 0
+        - "'go-modules-cache-pvc' in pod_pvc_claims"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fail if there are active pods using the old PVC  # noqa run-once
+      ansible.builtin.fail:
+        msg: "Safety Guard Triggered: Cannot delete PVC. Pods still mounting 'go-modules-cache-pvc': {{ active_pods }}"
+      when:
+        - pvc_info.resources is defined
+        - pvc_info.resources | length > 0
+        - active_pods is defined
+        - active_pods | length > 0
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Delete static NFS cache PVC  # noqa run-once
+      kubernetes.core.k8s:
+        kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: go-modules-cache-pvc
+        namespace: dev-ci
+        state: absent
+      when:
+        - pvc_info.resources is defined
+        - pvc_info.resources | length > 0
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Delete static NFS cache PV  # noqa run-once
+      kubernetes.core.k8s:
+        kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+        api_version: v1
+        kind: PersistentVolume
+        name: go-modules-cache-pv
+        state: absent
+      when:
+        - pvc_info.resources is defined
+        - pvc_info.resources | length > 0
+      delegate_to: localhost
+      become: false
+      run_once: true

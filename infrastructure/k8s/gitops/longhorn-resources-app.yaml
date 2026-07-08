@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: arc-runner-hardening
+  name: longhorn-resources
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -10,10 +10,8 @@ spec:
   source:
     repoURL: https://github.com/T2Dzung/coffee-shop.git
     targetRevision: feat/k3s-ha
-    path: infrastructure/k8s/gitops/addons/arc/hardening
+    path: infrastructure/k8s/gitops/addons/longhorn/resources
   destination:
     server: https://kubernetes.default.svc
-    namespace: dev-ci
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
+    namespace: kube-system
+  syncPolicy: {}

@@ -68,6 +68,7 @@ template:
 
     volumes:
       - name: go-cache
-        emptyDir: {}  # Use emptyDir for build speed & avoiding PVC mount delay
+        persistentVolumeClaim:
+          claimName: go-modules-cache-longhorn-pvc
       - name: docker-storage
         emptyDir: {}

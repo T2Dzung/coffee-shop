@@ -86,3 +86,13 @@ output "github_actions_role_arn" {
   description = "The ARN of the IAM role for GitHub Actions to assume via OIDC"
   value       = aws_iam_role.github_actions.arn
 }
+
+output "longhorn_data_volume_ids" {
+  description = "EBS volume IDs allocated for Longhorn data"
+  value       = aws_ebs_volume.longhorn[*].id
+}
+
+output "longhorn_data_mount_path" {
+  description = "Path where Longhorn volumes will be mounted on the nodes"
+  value       = "/var/lib/longhorn"
+}

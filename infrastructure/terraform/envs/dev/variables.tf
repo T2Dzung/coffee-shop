@@ -146,3 +146,39 @@ variable "haproxy_root_volume_size" {
     error_message = "haproxy_root_volume_size must be null or at least 8 GiB."
   }
 }
+
+variable "longhorn_data_volume_enabled" {
+  description = "Enable dedicated EBS volume for Longhorn data"
+  type        = bool
+  default     = true
+}
+
+variable "longhorn_data_volume_size" {
+  description = "Size of Longhorn dedicated volume in GiB"
+  type        = number
+  default     = 30
+}
+
+variable "longhorn_data_volume_type" {
+  description = "Type of Longhorn dedicated volume"
+  type        = string
+  default     = "gp3"
+}
+
+variable "longhorn_data_volume_iops" {
+  description = "IOPS for Longhorn dedicated gp3 volume"
+  type        = number
+  default     = 3000
+}
+
+variable "longhorn_data_volume_throughput" {
+  description = "Throughput for Longhorn dedicated gp3 volume in MiB/s"
+  type        = number
+  default     = 125
+}
+
+variable "longhorn_data_device_name" {
+  description = "Device name to attach the Longhorn volume to the EC2 instances"
+  type        = string
+  default     = "/dev/sdf"
+}

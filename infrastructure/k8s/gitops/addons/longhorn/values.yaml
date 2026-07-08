@@ -1,0 +1,11 @@
+defaultSettings:
+  defaultDataPath: /var/lib/longhorn
+  replicaCount: 3
+
+persistence:
+  defaultClass: false
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true

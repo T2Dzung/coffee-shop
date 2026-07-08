@@ -8,15 +8,6 @@
         name: haproxy
         state: started
 
-- name: Recover NFS Server
-  hosts: nfs_server
-  become: true
-  tasks:
-    - name: Ensure NFS server is running
-      ansible.builtin.systemd:
-        name: nfs-kernel-server
-        state: started
-
 - name: Recover K3s Servers
   hosts: k3s_servers
   become: true
@@ -32,18 +23,6 @@
       ansible.builtin.systemd:
         name: k3s
         state: started
-
-- name: Recover NFS Clients
-  hosts: nfs_clients
-  become: true
-  tasks:
-    - name: Remount the NFS shared directory
-      ansible.posix.mount:
-        path: /mnt/go-cache
-        src: "{{ hostvars[groups['nfs_server'][0]]['ansible_default_ipv4']['address'] }}:/mnt/go-cache"
-        fstype: nfs
-        opts: rw,sync,hard,intr
-        state: mounted
 
 - name: Verify cluster
   hosts: k3s_bootstrap_server

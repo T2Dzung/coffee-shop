@@ -21,9 +21,6 @@ spec:
     server: https://kubernetes.default.svc
     namespace: dev-ci
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: false
     syncOptions:
       - RespectIgnoreDifferences=true
   ignoreDifferences:
