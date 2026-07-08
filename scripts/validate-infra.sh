@@ -49,7 +49,6 @@ mapfile -d '' manifest_files < <(
     -type f \( -name '*.yaml' -o -name '*.yml' \) \
     ! -name '*values.yaml' \
     -print0
-  printf '%s\0' "${ANSIBLE_DIR}/roles/nfs_shared/templates/cache-pvc.yaml.j2"
 )
 kubeconform \
   -kubernetes-version "${SCHEMA_VERSION}" \

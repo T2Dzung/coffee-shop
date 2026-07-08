@@ -41,7 +41,6 @@ module "k3s_servers" {
     Name         = "${var.cluster_name}-server-${count.index + 1}"
     K8sRole      = "server"
     K3sBootstrap = count.index == 0 ? "true" : "false"
-    NfsRole      = count.index == 0 ? "server" : "client"
     NodeIndex    = tostring(count.index + 1)
     Cluster      = var.cluster_name
   }

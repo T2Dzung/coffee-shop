@@ -13,8 +13,6 @@ groups:
   haproxy: ec2_tags.K8sRole == 'haproxy'
   k3s_bootstrap_server: ec2_tags.K3sBootstrap == 'true'
   k3s_join_servers: ec2_tags.K3sBootstrap == 'false'
-  nfs_server: ec2_tags.NfsRole == 'server'
-  nfs_clients: ec2_tags.NfsRole == 'client'
 compose:
   # Use private IP inside cluster communication
   private_ip: private_ip_address

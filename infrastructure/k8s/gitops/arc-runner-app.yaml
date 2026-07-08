@@ -1,6 +1,8 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
   name: arc-runner-coffeeshop
   namespace: argocd
   finalizers:
@@ -21,6 +23,9 @@ spec:
     server: https://kubernetes.default.svc
     namespace: dev-ci
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
     syncOptions:
       - RespectIgnoreDifferences=true
   ignoreDifferences:

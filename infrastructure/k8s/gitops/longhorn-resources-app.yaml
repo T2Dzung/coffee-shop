@@ -1,6 +1,8 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
   name: longhorn-resources
   namespace: argocd
   finalizers:
@@ -14,4 +16,7 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system
-  syncPolicy: {}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

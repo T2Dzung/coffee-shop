@@ -30,19 +30,17 @@
         path: /mnt/go-cache
         state: absent
 
-    - name: Stop and disable NFS server on server node
+    - name: Stop and disable legacy NFS server if present
       ansible.builtin.systemd:
         name: nfs-kernel-server
         state: stopped
         enabled: false
-      when: "'nfs_server' in group_names"
       failed_when: false
 
     - name: Uninstall NFS kernel server
       ansible.builtin.apt:
         name: nfs-kernel-server
         state: absent
-      when: "'nfs_server' in group_names"
       failed_when: false
 
     - name: Remove NFS Export configuration
@@ -50,13 +48,12 @@
         path: /etc/exports
         line: "/mnt/go-cache *(rw,sync,no_subtree_check,root_squash)"
         state: absent
-      when: "'nfs_server' in group_names"
+      failed_when: false
 
-    - name: Remove NFS Shared Directory on server node
+    - name: Remove legacy NFS shared directory if present
       ansible.builtin.file:
         path: /mnt/go-cache
         state: absent
-      when: "'nfs_server' in group_names"
 
 - name: Delete static NFS cache resources in Kubernetes
   hosts: k3s_bootstrap_server
