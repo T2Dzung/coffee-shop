@@ -5,6 +5,13 @@ defaultSettings:
 persistence:
   defaultClass: false
 
+# Longhorn's pre-upgrade Helm hook can deadlock during GitOps-driven initial
+# installs because Argo CD treats the hook as a PreSync job before the chart's
+# service account exists. Longhorn explicitly recommends disabling this checker
+# for Argo CD/GitOps installs.
+preUpgradeChecker:
+  jobEnabled: false
+
 metrics:
   enabled: true
   serviceMonitor:
