@@ -21,4 +21,4 @@ images:
   newTag: 9865dddfa41bac06413e3266a1818a2f344cc193
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
-  newTag: a0b902336f679a3419f19f365977b95a7720e154
+  newTag: 9865dddfa41bac06413e3266a1818a2f344cc193
