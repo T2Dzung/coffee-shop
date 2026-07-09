@@ -6,6 +6,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV_DIR="${CONTROL_VENV_DIR:-${HOME}/.venvs/go-coffeeshop-platform}"
 export PATH="${HOME}/.local/bin:${VENV_DIR}/bin:${PATH}"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/coffeeshop-dev.yaml}"
+: "${TF_DATA_DIR:=${HOME}/.cache/go-coffeeshop/terraform/dev}"
+export TF_DATA_DIR
 
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300s}"
 VERIFY_GITOPS="${VERIFY_GITOPS:-true}"
@@ -125,9 +127,11 @@ if kubectl get crd rabbitmqclusters.rabbitmq.com >/dev/null 2>&1; then
       fi
     fi
 
-    # 2. Check replicas count
-    ready_replicas="$(kubectl get rabbitmqcluster coffeeshop-rabbitmq -n coffeeshop -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo '0')"
-    total_replicas="$(kubectl get rabbitmqcluster coffeeshop-rabbitmq -n coffeeshop -o jsonpath='{.spec.replicas}' 2>/dev/null || echo '3')"
+    # 2. Check replicas count from the underlying StatefulSet managed by the Operator
+    ready_replicas="$(kubectl get statefulset coffeeshop-rabbitmq-server -n coffeeshop -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo '0')"
+    total_replicas="$(kubectl get statefulset coffeeshop-rabbitmq-server -n coffeeshop -o jsonpath='{.spec.replicas}' 2>/dev/null || echo '3')"
+    [[ -z "${ready_replicas}" ]] && ready_replicas="0"
+    [[ -z "${total_replicas}" ]] && total_replicas="3"
     if [[ "${ready_replicas}" != "${total_replicas}" ]]; then
       record_failure "RabbitMQ cluster has ${ready_replicas}/${total_replicas} replicas ready"
     fi
@@ -147,13 +151,18 @@ if kubectl get crd rabbitmqclusters.rabbitmq.com >/dev/null 2>&1; then
       queues_info="$(kubectl exec coffeeshop-rabbitmq-server-0 -n coffeeshop -- rabbitmqctl list_queues name type 2>/dev/null || true)"
       if [[ -n "${queues_info}" ]]; then
         printf '%s\n' "${queues_info}" > "${EVIDENCE_DIR}/rabbitmq-queues.txt"
-        if grep -q "orders-queue" <<< "${queues_info}"; then
-          queue_type="$(awk '$1=="orders-queue" {print $2}' <<< "${queues_info}")"
-          if [[ "${queue_type}" != "quorum" ]]; then
-            record_failure "Queue orders-queue is of type '${queue_type}' but must be 'quorum'"
+        queue_checked=0
+        for q in counter-order-queue barista-order-queue kitchen-order-queue; do
+          if grep -q "${q}" <<< "${queues_info}"; then
+            queue_type="$(awk -v q_name="${q}" '$1==q_name {print $2}' <<< "${queues_info}")"
+            queue_checked=$((queue_checked + 1))
+            if [[ "${queue_type}" != "quorum" ]]; then
+              record_failure "Queue ${q} is of type '${queue_type}' but must be 'quorum'"
+            fi
           fi
-        else
-          echo "Queue orders-queue not declared yet."
+        done
+        if ((queue_checked == 0)); then
+          record_failure "None of the coffeeshop queues (counter, barista, kitchen) were found in RabbitMQ"
         fi
       fi
     else
@@ -171,8 +180,9 @@ if [[ "${VERIFY_HTTP}" == "true" ]]; then
         record_failure "HTTP /healthz smoke failed for ${active_endpoint}"
       fi
     else
-      echo "Terraform active_api_endpoint output is empty; skipping HTTP smoke." \
+      echo "Terraform active_api_endpoint output is empty." \
         > "${EVIDENCE_DIR}/http-healthz.txt"
+      record_failure "Terraform active_api_endpoint output is empty while VERIFY_HTTP=true"
     fi
   else
     echo "terraform or curl not found; skipping HTTP smoke." > "${EVIDENCE_DIR}/http-healthz.txt"
