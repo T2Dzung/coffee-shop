@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download the pinned RabbitMQ Cluster Operator manifest into the GitOps tree.
+"""Vendor the pinned RabbitMQ Cluster Operator manifest into the GitOps tree.
 
 The operator manifest is vendored so ArgoCD can sync without reaching GitHub.
 The version defaults to infrastructure/ansible/playbooks/group_vars/all/versions.yml
@@ -15,7 +15,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VERSIONS_FILE = PROJECT_ROOT / "infrastructure/ansible/playbooks/group_vars/all/versions.yml"
 DESTINATION = PROJECT_ROOT / "infrastructure/k8s/gitops/addons/rabbitmq-operator/cluster-operator.yaml"
 

@@ -8,13 +8,15 @@ storage:
   storageClass: longhorn-rabbitmq
   size: 5Gi
 
+# Dev profile: keep requests low enough for the EC2/K3s lab cluster while
+# keeping RabbitMQ memory request equal to limit as required by the Operator. Prod should revisit this from real load metrics.
 resources:
   requests:
-    cpu: 1000m
-    memory: 2Gi
+    cpu: 250m
+    memory: 1Gi
   limits:
     cpu: 1000m
-    memory: 2Gi
+    memory: 1Gi
 
 podDisruptionBudget:
   enabled: true

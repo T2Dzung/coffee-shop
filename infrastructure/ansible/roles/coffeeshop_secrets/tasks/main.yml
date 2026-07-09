@@ -99,10 +99,41 @@
       metadata:
         name: coffeeshop-rabbitmq-default-user
         namespace: coffeeshop
+        annotations:
+          argocd.argoproj.io/compare-options: IgnoreExtraneous
+          argocd.argoproj.io/sync-options: Prune=false
       type: Opaque
       stringData:
         username: "{{ coffeeshop_secrets_resolved_rabbitmq_user }}"
         password: "{{ coffeeshop_secrets_resolved_rabbitmq_password }}"
+        default_user.conf: |
+          default_user = {{ coffeeshop_secrets_resolved_rabbitmq_user }}
+          default_pass = {{ coffeeshop_secrets_resolved_rabbitmq_password }}
+  no_log: true
+
+- name: Read RabbitMQ default-user secret metadata
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: coffeeshop-rabbitmq-default-user
+    namespace: coffeeshop
+  register: coffeeshop_secrets_rabbitmq_default_user_secret_info
+  no_log: true
+
+- name: Remove ArgoCD tracking label from RabbitMQ bootstrap secret
+  kubernetes.core.k8s_json_patch:
+    api_version: v1
+    kind: Secret
+    name: coffeeshop-rabbitmq-default-user
+    namespace: coffeeshop
+    patch:
+      - op: remove
+        path: /metadata/labels/argocd.argoproj.io~1instance
+  when:
+    - coffeeshop_secrets_rabbitmq_default_user_secret_info.resources | length > 0
+    - >-
+      (coffeeshop_secrets_rabbitmq_default_user_secret_info.resources[0].metadata.labels | default({}))
+      .get('argocd.argoproj.io/instance') is not none
   no_log: true
 
 - name: Create CloudNativePG postgres basic-auth secret

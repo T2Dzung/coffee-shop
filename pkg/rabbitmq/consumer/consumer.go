@@ -21,8 +21,6 @@ const (
 	_queueExclusive  = false
 	_queueNoWait     = false
 
-	_quorumInitialGroupSize int32 = 3
-
 	_prefetchCount  = 5
 	_prefetchSize   = 0
 	_prefetchGlobal = false
@@ -136,8 +134,7 @@ func (c *consumer) createChannel() (*amqp.Channel, error) {
 		_queueExclusive,
 		_queueNoWait,
 		amqp.Table{
-			"x-queue-type":                 "quorum",
-			"x-quorum-initial-group-size": _quorumInitialGroupSize,
+			"x-queue-type": "quorum",
 		},
 	)
 	if err != nil {
