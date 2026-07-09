@@ -7,9 +7,11 @@ DEV_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/envs/dev"
 K8S_DIR="${PROJECT_ROOT}/infrastructure/k8s"
 SCHEMA_VERSION="1.35.4"
 VENV_DIR="${CONTROL_VENV_DIR:-${HOME}/.venvs/go-coffeeshop-platform}"
+KUBECONFORM_CACHE_DIR="${KUBECONFORM_CACHE_DIR:-${HOME}/.cache/go-coffeeshop/kubeconform}"
+KUBECONFORM_CONCURRENCY="${KUBECONFORM_CONCURRENCY:-2}"
 : "${TF_DATA_DIR:=${HOME}/.cache/go-coffeeshop/terraform/dev}"
 export TF_DATA_DIR
-install -d -m 0700 "${TF_DATA_DIR}"
+install -d -m 0700 "${TF_DATA_DIR}" "${KUBECONFORM_CACHE_DIR}"
 export PATH="${HOME}/.local/bin:${VENV_DIR}/bin:${PATH}"
 
 # Keep lint ignore paths deterministic regardless of the caller's directory.
@@ -27,6 +29,17 @@ require_command() {
 for command_name in terraform ansible-playbook ansible-lint yamllint kubeconform kubectl shellcheck helm; do
   require_command "${command_name}"
 done
+
+KUBECONFORM_COMMON_ARGS=(
+  -kubernetes-version "${SCHEMA_VERSION}"
+  -cache "${KUBECONFORM_CACHE_DIR}"
+  -n "${KUBECONFORM_CONCURRENCY}"
+  -ignore-missing-schemas
+  -schema-location 'default'
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+  -strict
+  -summary
+)
 
 terraform -chdir="${PROJECT_ROOT}/infrastructure/terraform" fmt -check -recursive
 terraform -chdir="${DEV_TF_DIR}" validate -no-color
@@ -55,37 +68,17 @@ mapfile -d '' manifest_files < <(
     -print0
 )
 kubeconform \
-  -kubernetes-version "${SCHEMA_VERSION}" \
-  -ignore-missing-schemas \
-  -schema-location 'default' \
-  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-  -strict \
-  -summary \
+  "${KUBECONFORM_COMMON_ARGS[@]}" \
   "${manifest_files[@]}"
 
 kubectl kustomize "${K8S_DIR}/gitops/apps/coffeeshop/overlays/dev" | kubeconform \
-  -kubernetes-version "${SCHEMA_VERSION}" \
-  -ignore-missing-schemas \
-  -schema-location 'default' \
-  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-  -strict \
-  -summary
+  "${KUBECONFORM_COMMON_ARGS[@]}"
 
 kubectl kustomize "${K8S_DIR}/gitops/addons/arc/hardening" | kubeconform \
-  -kubernetes-version "${SCHEMA_VERSION}" \
-  -ignore-missing-schemas \
-  -schema-location 'default' \
-  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-  -strict \
-  -summary
+  "${KUBECONFORM_COMMON_ARGS[@]}"
 
 kubectl kustomize "${K8S_DIR}/gitops/addons/monitoring-rules" | kubeconform \
-  -kubernetes-version "${SCHEMA_VERSION}" \
-  -ignore-missing-schemas \
-  -schema-location 'default' \
-  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-  -strict \
-  -summary
+  "${KUBECONFORM_COMMON_ARGS[@]}"
 
 
 shellcheck "${PROJECT_ROOT}/scripts/"*.sh
@@ -147,12 +140,7 @@ fi
 if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-postgres" ]; then
   helm template "${K8S_DIR}/gitops/apps/coffeeshop-postgres" \
     --set backup.bucketName=coffeeshop-static-validation-bucket | kubeconform \
-    -kubernetes-version "${SCHEMA_VERSION}" \
-    -ignore-missing-schemas \
-    -schema-location 'default' \
-    -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-    -strict \
-    -summary
+    "${KUBECONFORM_COMMON_ARGS[@]}"
 fi
 
 echo "Infrastructure validation completed successfully."

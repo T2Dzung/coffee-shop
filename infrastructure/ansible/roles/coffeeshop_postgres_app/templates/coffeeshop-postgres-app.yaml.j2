@@ -18,6 +18,36 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: coffeeshop
+  ignoreDifferences:
+    # CloudNativePG admission/operator default these fields into Cluster.spec.
+    # They are intentionally not authored in the small application chart, but
+    # without ignoring them ArgoCD keeps the Cluster OutOfSync after reconciliation.
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      jsonPointers:
+        - /spec/affinity
+        - /spec/bootstrap/initdb/encoding
+        - /spec/bootstrap/initdb/localeCType
+        - /spec/bootstrap/initdb/localeCollate
+        - /spec/enablePDB
+        - /spec/failoverDelay
+        - /spec/logLevel
+        - /spec/maxSyncReplicas
+        - /spec/minSyncReplicas
+        - /spec/monitoring
+        - /spec/plugins/0/enabled
+        - /spec/postgresGID
+        - /spec/postgresUID
+        - /spec/postgresql
+        - /spec/primaryUpdateMethod
+        - /spec/probes
+        - /spec/replicationSlots
+        - /spec/resources
+        - /spec/smartShutdownTimeout
+        - /spec/startDelay
+        - /spec/stopDelay
+        - /spec/storage/resizeInUseVolumes
+        - /spec/switchoverDelay
   syncPolicy:
     automated:
       prune: true

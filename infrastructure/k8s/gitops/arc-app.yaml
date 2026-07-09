@@ -14,6 +14,14 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: arc-systems
+  ignoreDifferences:
+    # ArgoCD 2.11 structured-merge diff is triggered by ServerSideApply=true.
+    # Kubernetes 1.33+ may expose Deployment.status.terminatingReplicas before
+    # ArgoCD's typed schema knows that field, causing ComparisonError.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status/terminatingReplicas
   syncPolicy:
     automated:
       prune: true
