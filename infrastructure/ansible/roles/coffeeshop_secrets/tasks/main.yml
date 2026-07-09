@@ -28,14 +28,12 @@
     coffeeshop_secrets_resolved_pg_url: >-
       {{
         coffeeshop_secrets_raw_pg_url
-        | regex_replace('@postgres([:/?]|$)', '@' ~ coffeeshop_secrets_postgres_rw_host ~ '\\1')
-        | regex_replace('host=postgres([ ]|$)', 'host=' ~ coffeeshop_secrets_postgres_rw_host ~ '\\1')
+        | regex_replace('@postgres([:/?]|$)', '@' ~ coffeeshop_secrets_postgres_rw_host ~ '\g<1>')
       }}
     coffeeshop_secrets_resolved_pg_dsn_url: >-
       {{
         coffeeshop_secrets_raw_pg_dsn_url
-        | regex_replace('@postgres([:/?]|$)', '@' ~ coffeeshop_secrets_postgres_rw_host ~ '\\1')
-        | regex_replace('host=postgres([ ]|$)', 'host=' ~ coffeeshop_secrets_postgres_rw_host ~ '\\1')
+        | regex_replace('host=postgres([ ]|$)', 'host=' ~ coffeeshop_secrets_postgres_rw_host ~ '\g<1>')
       }}
   no_log: true
 
