@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  name: rabbitmq-operator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/T2Dzung/coffee-shop.git
+    targetRevision: feat/k3s-ha
+    path: infrastructure/k8s/gitops/addons/rabbitmq-operator
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rabbitmq-system
+  ignoreDifferences:
+    # Avoid noisy ArgoCD comparison errors when the live Deployment status
+    # contains Kubernetes fields that are not present in older ArgoCD OpenAPI schemas.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status/terminatingReplicas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

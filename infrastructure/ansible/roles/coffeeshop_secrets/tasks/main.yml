@@ -13,7 +13,7 @@
       {{ coffeeshop_rabbitmq_user | default(lookup('env', 'COFFEESHOP_RABBITMQ_USER'), true) }}
     coffeeshop_secrets_resolved_rabbitmq_password: >-
       {{ coffeeshop_rabbitmq_password | default(lookup('env', 'COFFEESHOP_RABBITMQ_PASSWORD'), true) }}
-    coffeeshop_secrets_resolved_rabbitmq_url: >-
+    coffeeshop_secrets_raw_rabbitmq_url: >-
       {{ coffeeshop_rabbitmq_url | default(lookup('env', 'COFFEESHOP_RABBITMQ_URL'), true) }}
     coffeeshop_secrets_resolved_postgres_backup_bucket_name: >-
       {{ postgres_backup_bucket_name | default(lookup('env', 'POSTGRES_BACKUP_BUCKET_NAME'), true) }}
@@ -23,7 +23,7 @@
       {{ postgres_backup_iam_secret_access_key | default(lookup('env', 'POSTGRES_BACKUP_IAM_SECRET_ACCESS_KEY'), true) }}
   no_log: true
 
-- name: Derive Coffee Shop PostgreSQL connection strings for the CNPG read-write service
+- name: Derive Coffee Shop connection strings for CNPG and RabbitMQ HA
   ansible.builtin.set_fact:
     coffeeshop_secrets_resolved_pg_url: >-
       {{
@@ -34,6 +34,11 @@
       {{
         coffeeshop_secrets_raw_pg_dsn_url
         | regex_replace('host=postgres([ ]|$)', 'host=' ~ coffeeshop_secrets_postgres_rw_host ~ '\g<1>')
+      }}
+    coffeeshop_secrets_resolved_rabbitmq_url: >-
+      {{
+        coffeeshop_secrets_raw_rabbitmq_url
+        | regex_replace('@rabbitmq([.:/?]|$)', '@coffeeshop-rabbitmq\g<1>')
       }}
   no_log: true
 
@@ -48,6 +53,7 @@
       - coffeeshop_secrets_resolved_rabbitmq_user | length > 0
       - coffeeshop_secrets_resolved_rabbitmq_password | length > 0
       - coffeeshop_secrets_resolved_rabbitmq_url | length > 0
+      - "'coffeeshop-rabbitmq' in coffeeshop_secrets_resolved_rabbitmq_url"
       - coffeeshop_secrets_resolved_postgres_backup_bucket_name | length > 0
       - coffeeshop_secrets_resolved_postgres_backup_access_key | length > 0
       - coffeeshop_secrets_resolved_postgres_backup_secret_key | length > 0
@@ -82,6 +88,21 @@
         RABBITMQ_DEFAULT_USER: "{{ coffeeshop_secrets_resolved_rabbitmq_user }}"
         RABBITMQ_DEFAULT_PASS: "{{ coffeeshop_secrets_resolved_rabbitmq_password }}"
         RABBITMQ_URL: "{{ coffeeshop_secrets_resolved_rabbitmq_url }}"
+  no_log: true
+
+- name: Create RabbitMQ default-user secret for Operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: coffeeshop-rabbitmq-default-user
+        namespace: coffeeshop
+      type: Opaque
+      stringData:
+        username: "{{ coffeeshop_secrets_resolved_rabbitmq_user }}"
+        password: "{{ coffeeshop_secrets_resolved_rabbitmq_password }}"
   no_log: true
 
 - name: Create CloudNativePG postgres basic-auth secret

@@ -82,6 +82,12 @@ func (p *publisher) Publish(ctx context.Context, body []byte, contentType string
 	}
 	defer ch.Close()
 
+	if err := ch.Confirm(false); err != nil {
+		return errors.Wrap(err, "ConfirmMode")
+	}
+
+	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+
 	slog.Info("publish message", "exchange", p.exchangeName, "routing_key", p.bindingKey)
 
 	if err := ch.PublishWithContext(
@@ -100,6 +106,20 @@ func (p *publisher) Publish(ctx context.Context, body []byte, contentType string
 		},
 	); err != nil {
 		return errors.Wrap(err, "ch.Publish")
+	}
+
+	select {
+	case confirm, ok := <-confirms:
+		if !ok {
+			return errors.New("channel closed before publish confirmation received")
+		}
+		if !confirm.Ack {
+			return errors.New("message nacked by broker")
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		return errors.New("timeout waiting for publish confirmation")
 	}
 
 	return nil

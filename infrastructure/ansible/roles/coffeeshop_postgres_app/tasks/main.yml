@@ -29,7 +29,7 @@
   register: coffeeshop_postgres_app_cloudnativepg_status
   until: >
     coffeeshop_postgres_app_cloudnativepg_status.resources | length == 1 and
-    coffeeshop_postgres_app_cloudnativepg_status.resources[0].status.sync.status | default('') in ['Synced', 'Unknown'] and
+    coffeeshop_postgres_app_cloudnativepg_status.resources[0].status.sync.status | default('') == 'Synced' and
     coffeeshop_postgres_app_cloudnativepg_status.resources[0].status.health.status | default('') == 'Healthy'
   retries: 60
   delay: 10
@@ -46,7 +46,7 @@
   register: coffeeshop_postgres_app_barman_cloud_plugin_status
   until: >
     coffeeshop_postgres_app_barman_cloud_plugin_status.resources | length == 1 and
-    coffeeshop_postgres_app_barman_cloud_plugin_status.resources[0].status.sync.status | default('') in ['Synced', 'Unknown'] and
+    coffeeshop_postgres_app_barman_cloud_plugin_status.resources[0].status.sync.status | default('') == 'Synced' and
     coffeeshop_postgres_app_barman_cloud_plugin_status.resources[0].status.health.status | default('') == 'Healthy'
   retries: 60
   delay: 10

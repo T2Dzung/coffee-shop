@@ -24,3 +24,6 @@
 
     - role: coffeeshop_postgres_app
       tags: ['coffeeshop_postgres_app']
+
+    - role: coffeeshop_rabbitmq_app
+      tags: ['coffeeshop_rabbitmq_app']

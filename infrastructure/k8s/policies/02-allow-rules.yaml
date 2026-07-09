@@ -89,6 +89,8 @@ spec:
     - toEndpoints:
         - matchLabels:
             app: rabbitmq
+        - matchLabels:
+            app.kubernetes.io/name: coffeeshop-rabbitmq
       toPorts:
         - ports:
             - port: "5672"

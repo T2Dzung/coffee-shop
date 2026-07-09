@@ -1,0 +1,25 @@
+---
+- name: Wait for RabbitMQ operator ArgoCD app to be healthy
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: rabbitmq-operator
+    namespace: argocd
+  register: coffeeshop_rabbitmq_app_operator_status
+  until: >
+    coffeeshop_rabbitmq_app_operator_status.resources | length == 1 and
+    coffeeshop_rabbitmq_app_operator_status.resources[0].status.sync.status | default('') == 'Synced' and
+    coffeeshop_rabbitmq_app_operator_status.resources[0].status.health.status | default('') == 'Healthy'
+  retries: 60
+  delay: 10
+  delegate_to: localhost
+  run_once: true
+
+- name: Create coffeeshop-rabbitmq ArgoCD Application
+  kubernetes.core.k8s:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    state: present
+    definition: "{{ lookup('template', 'coffeeshop-rabbitmq-app.yaml.j2') | from_yaml }}"
+  delegate_to: localhost
+  run_once: true

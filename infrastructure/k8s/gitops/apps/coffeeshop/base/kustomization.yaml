@@ -5,7 +5,6 @@ resources:
   - coffeeshop-namespace.yaml
   - configmap.yaml
   - postgres.yaml
-  - rabbitmq.yaml
   - barista.yaml
   - counter.yaml
   - kitchen.yaml

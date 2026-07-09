@@ -1,0 +1,6 @@
+apiVersion: v2
+name: coffeeshop-rabbitmq
+description: A Helm chart for CoffeeShop RabbitMQ HA Cluster
+type: application
+version: 0.1.0
+appVersion: "operator-default"

@@ -1,0 +1,21 @@
+replicas: 3
+
+# Empty means RabbitMQ Cluster Operator default. Set only when a custom/private
+# registry image is intentionally required.
+image: ""
+
+storage:
+  storageClass: longhorn-rabbitmq
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
