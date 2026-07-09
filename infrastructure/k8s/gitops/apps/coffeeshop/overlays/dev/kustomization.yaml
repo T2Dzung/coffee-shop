@@ -6,7 +6,7 @@ resources:
 images:
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
-  newTag: 9865dddfa41bac06413e3266a1818a2f344cc193
+  newTag: dd8adcd90df663fc78ff1e96f1457a5f8272ec90
 - name: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
   newTag: dd8adcd90df663fc78ff1e96f1457a5f8272ec90
