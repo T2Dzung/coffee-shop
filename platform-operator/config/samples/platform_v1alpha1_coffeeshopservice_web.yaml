@@ -1,0 +1,60 @@
+apiVersion: platform.t2dzung.github.io/v1alpha1
+kind: CoffeeShopService
+metadata:
+  name: web
+  namespace: coffeeshop
+spec:
+  managementPolicy: Observe
+  image:
+    repository: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
+    tag: 9865dddfa41bac06413e3266a1818a2f344cc193
+  replicas: 2
+  ports:
+    - name: http
+      containerPort: 8888
+  service:
+    enabled: true
+    ports:
+      - name: http
+        port: 8888
+        targetPort: http
+  env:
+    - name: REVERSE_PROXY_URL
+      value: /api
+    - name: WEB_PORT
+      valueFrom:
+        configMapKeyRef:
+          name: coffeeshop-config
+          key: WEB_PORT
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  probes:
+    startup:
+      tcpSocket:
+        port: http
+      periodSeconds: 2
+      failureThreshold: 30
+    readiness:
+      httpGet:
+        path: /
+        port: http
+      periodSeconds: 5
+      failureThreshold: 3
+    liveness:
+      tcpSocket:
+        port: http
+      periodSeconds: 10
+      failureThreshold: 3
+  availability:
+    pdb:
+      enabled: true
+      minAvailable: 1
+    topologySpread:
+      enabled: true
+  networkPolicy:
+    enabled: false

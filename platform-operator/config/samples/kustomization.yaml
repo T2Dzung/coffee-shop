@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- platform_v1alpha1_coffeeshopservice_web.yaml
+- platform_v1alpha1_coffeeshopservice_proxy.yaml
+- platform_v1alpha1_coffeeshopservice_worker.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

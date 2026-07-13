@@ -1,0 +1,18 @@
+apiVersion: platform.t2dzung.github.io/v1alpha1
+kind: CoffeeShopService
+metadata:
+  name: invalid-pdb-single-replica
+  namespace: default
+spec:
+  managementPolicy: Observe
+  image:
+    repository: registry.example/worker
+    tag: v1
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 128Mi}
+  availability:
+    pdb:
+      enabled: true
+      minAvailable: 1
