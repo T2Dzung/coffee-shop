@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	platformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-operator/api/v1alpha1"
+	"github.com/T2Dzung/coffee-shop/platform-operator/internal/resource"
 )
 
 func validService(name string) *platformv1alpha1.CoffeeShopService {
@@ -71,6 +72,18 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 	ctx := context.Background()
 
 	AfterEach(func() {
+		// Clean up child resources (envtest has no GC)
+		deployList := &appsv1.DeploymentList{}
+		Expect(k8sClient.List(ctx, deployList)).To(Succeed())
+		for i := range deployList.Items {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &deployList.Items[i]))).To(Succeed())
+		}
+		svcList := &corev1.ServiceList{}
+		Expect(k8sClient.List(ctx, svcList)).To(Succeed())
+		for i := range svcList.Items {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &svcList.Items[i]))).To(Succeed())
+		}
+		// Clean up CRs
 		list := &platformv1alpha1.CoffeeShopServiceList{}
 		Expect(k8sClient.List(ctx, list)).To(Succeed())
 		for i := range list.Items {
@@ -114,23 +127,176 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 		Entry("single replica PDB", "test/fixtures/invalid/pdb-single-replica.yaml"),
 	)
 
-	It("keeps the Phase 6.1 reconciler read-only", func() {
-		service := validService("read-only-gate")
-		Expect(k8sClient.Create(ctx, service)).To(Succeed())
+	Context("Observe-only status pipeline (Slice 6.2.1)", func() {
+		It("reports missing children without mutating them", func() {
+			service := validService("observe-missing")
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
 
-		reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
-		result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(BeZero())
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
 
-		deployment := &appsv1.Deployment{}
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, clientKey(service), deployment))).To(BeTrue())
-		kubernetesService := &corev1.Service{}
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, clientKey(service), kubernetesService))).To(BeTrue())
+			// Verify: Child resources are not created
+			deployment := &appsv1.Deployment{}
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, clientKey(service), deployment))).To(BeTrue())
+			kubernetesService := &corev1.Service{}
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, clientKey(service), kubernetesService))).To(BeTrue())
 
-		stored := &platformv1alpha1.CoffeeShopService{}
-		Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
-		Expect(stored.Status).To(BeZero())
+			// Verify: Status is updated correctly
+			stored := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
+			Expect(stored.Status.ObservedGeneration).To(Equal(service.Generation))
+			Expect(stored.Status.DesiredReplicas).To(Equal(service.Spec.Replicas))
+			Expect(stored.Status.ReadyReplicas).To(Equal(int32(0)))
+
+			// Kiểm tra conditions
+			var readyCond, workloadCond, serviceCond *metav1.Condition
+			for i := range stored.Status.Conditions {
+				c := &stored.Status.Conditions[i]
+				switch c.Type {
+				case "Ready":
+					readyCond = c
+				case "WorkloadReady":
+					workloadCond = c
+				case "GuardrailsReady":
+					serviceCond = c
+				}
+			}
+
+			Expect(readyCond).NotTo(BeNil())
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal("ObserveOnly"))
+
+			Expect(workloadCond).NotTo(BeNil())
+			Expect(workloadCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(workloadCond.Reason).To(Equal("WorkloadMissing"))
+
+			Expect(serviceCond).NotTo(BeNil())
+			Expect(serviceCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(serviceCond.Reason).To(Equal("ServiceMissing"))
+		})
+
+		It("observes existing available resources, updates status, and performs zero writes on secondary reconcile", func() {
+			service := validService("observe-existing")
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			// Manually create desired Deployment and Service
+			// Build deployment
+			desiredDeploy, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Create(ctx, desiredDeploy)).To(Succeed())
+
+			// Mock deployment status to be ready
+			desiredDeploy.Status.Replicas = 2
+			desiredDeploy.Status.ReadyReplicas = 2
+			desiredDeploy.Status.AvailableReplicas = 2
+			Expect(k8sClient.Status().Update(ctx, desiredDeploy)).To(Succeed())
+
+			// Build service
+			desiredSvc, err := resource.BuildService(service)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Create(ctx, desiredSvc)).To(Succeed())
+
+			// First reconcile
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Save resource versions of deployment, service, and parent status
+			storedDeploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedDeploy)).To(Succeed())
+			deployRV := storedDeploy.ResourceVersion
+
+			storedSvc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedSvc)).To(Succeed())
+			svcRV := storedSvc.ResourceVersion
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			parentRV := storedParent.ResourceVersion
+
+			// Verify status
+			Expect(storedParent.Status.ReadyReplicas).To(Equal(int32(2)))
+			
+			var workloadCond, serviceCond *metav1.Condition
+			for i := range storedParent.Status.Conditions {
+				c := &storedParent.Status.Conditions[i]
+				if c.Type == "WorkloadReady" {
+					workloadCond = c
+				} else if c.Type == "GuardrailsReady" {
+					serviceCond = c
+				}
+			}
+			Expect(workloadCond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(workloadCond.Reason).To(Equal("WorkloadAvailable"))
+			Expect(serviceCond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(serviceCond.Reason).To(Equal("ServiceAvailable"))
+
+			// Second reconcile (no changes)
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify: resourceVersion of child and parent remains unchanged (zero writes)
+			Expect(k8sClient.Get(ctx, clientKey(service), storedDeploy)).To(Succeed())
+			Expect(storedDeploy.ResourceVersion).To(Equal(deployRV))
+
+			Expect(k8sClient.Get(ctx, clientKey(service), storedSvc)).To(Succeed())
+			Expect(storedSvc.ResourceVersion).To(Equal(svcRV))
+
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			Expect(storedParent.ResourceVersion).To(Equal(parentRV))
+		})
+
+		It("detects drift on child objects but does not mutate them", func() {
+			service := validService("observe-drift")
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			// Tạo Deployment bị drift (ví dụ image khác)
+			desiredDeploy, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			// Create drifted Deployment (e.g. different image)
+			desiredDeploy.Spec.Template.Spec.Containers[0].Image = "registry.example/drifted:v2.0.0"
+			Expect(k8sClient.Create(ctx, desiredDeploy)).To(Succeed())
+
+			// Create drifted Service (e.g. different port)
+			desiredSvc, err := resource.BuildService(service)
+			Expect(err).NotTo(HaveOccurred())
+			desiredSvc.Spec.Ports[0].Port = 9999
+			Expect(k8sClient.Create(ctx, desiredSvc)).To(Succeed())
+
+			// Reconcile
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify: Child resource is not mutated
+			storedDeploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedDeploy)).To(Succeed())
+			Expect(storedDeploy.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.example/drifted:v2.0.0"))
+
+			storedSvc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedSvc)).To(Succeed())
+			Expect(storedSvc.Spec.Ports[0].Port).To(Equal(int32(9999)))
+
+			// Verify: Status reports drift
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+
+			var workloadCond, serviceCond *metav1.Condition
+			for i := range storedParent.Status.Conditions {
+				c := &storedParent.Status.Conditions[i]
+				if c.Type == "WorkloadReady" {
+					workloadCond = c
+				} else if c.Type == "GuardrailsReady" {
+					serviceCond = c
+				}
+			}
+			Expect(workloadCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(workloadCond.Reason).To(Equal("WorkloadDrifted"))
+
+			Expect(serviceCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(serviceCond.Reason).To(Equal("ServiceDrifted"))
+		})
 	})
 
 	DescribeTable("rejects invalid cross-field input",
