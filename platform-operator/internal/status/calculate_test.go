@@ -337,14 +337,35 @@ func TestCalculateManageStatus_ApplyConflictError(t *testing.T) {
 			LiveDeployment:   &appsv1.Deployment{},
 			ServiceEnabled:   true,
 		},
-		ApplyError: "apply conflict on fields replicas",
+		ApplyError:       "apply conflict on fields replicas",
+		ApplyErrorReason: ReasonApplyConflict,
 	}
 
 	delta := CalculateManageStatus(svc, input)
 
 	ready := findCondition(delta, ConditionReady)
-	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "ApplyConflict" {
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonApplyConflict {
 		t.Errorf("Ready condition = %+v, want False/ApplyConflict", ready)
+	}
+}
+
+func TestCalculateManageStatus_GenericApplyFailure(t *testing.T) {
+	svc := makeService(2, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment:   &appsv1.Deployment{},
+			ServiceEnabled:   true,
+		},
+		ApplyError:       "api server timeout",
+		ApplyErrorReason: ReasonApplyFailed,
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonApplyFailed {
+		t.Errorf("Ready condition = %+v, want False/ApplyFailed", ready)
 	}
 }
 

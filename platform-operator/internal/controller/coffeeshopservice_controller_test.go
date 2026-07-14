@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -29,6 +30,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -523,6 +525,266 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 		})
 	})
 
+	Context("Manage-mode SSA convergence and cleanup (Slice 6.2.3)", func() {
+		It("updates operator-owned fields while preserving external metadata and an injected sidecar", func() {
+			service := validService("manage-preserve")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			request := reconcile.Request{NamespacedName: clientKey(service)}
+			_, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			applyExternalDeploymentFields(service, "test-sidecar-injector", map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{"example.com/owner": "platform-team"},
+					"labels":      map[string]any{"example.com/tier": "edge"},
+				},
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []any{map[string]any{
+								"name":  "mesh-sidecar",
+								"image": "registry.example/mesh:v1",
+							}},
+						},
+					},
+				},
+			})
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			storedParent.Spec.Image.Tag = "v2.0.0"
+			storedParent.Spec.Replicas = 3
+			storedParent.Spec.Ports[0].ContainerPort = 8080
+			storedParent.Spec.Service.Ports[0].Port = 8080
+			Expect(k8sClient.Update(ctx, storedParent)).To(Succeed())
+
+			_, err = reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deployment)).To(Succeed())
+			Expect(*deployment.Spec.Replicas).To(Equal(int32(3)))
+			Expect(deployment.Annotations).To(HaveKeyWithValue("example.com/owner", "platform-team"))
+			Expect(deployment.Labels).To(HaveKeyWithValue("example.com/tier", "edge"))
+
+			var mainContainer, sidecar *corev1.Container
+			for i := range deployment.Spec.Template.Spec.Containers {
+				container := &deployment.Spec.Template.Spec.Containers[i]
+				switch container.Name {
+				case service.Name:
+					mainContainer = container
+				case "mesh-sidecar":
+					sidecar = container
+				}
+			}
+			Expect(mainContainer).NotTo(BeNil())
+			Expect(mainContainer.Image).To(Equal("registry.example/web:v2.0.0"))
+			Expect(mainContainer.Ports).To(ContainElement(corev1.ContainerPort{
+				Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP,
+			}))
+			Expect(sidecar).NotTo(BeNil())
+			Expect(sidecar.Image).To(Equal("registry.example/mesh:v1"))
+		})
+
+		It("repairs drift written by the operator field manager", func() {
+			service := validService("manage-self-heal")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			request := reconcile.Request{NamespacedName: clientKey(service)}
+			_, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			drifted, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			drifted.Spec.Template.Spec.Containers[0].Image = "registry.example/web:drifted"
+			Expect(applyObject(ctx, k8sClient, reconciler.Scheme(), service, drifted)).To(Succeed())
+
+			_, err = reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.example/web:v1.0.0"))
+		})
+
+		It("does not force an external image owner and emits one event for a persistent conflict", func() {
+			service := validService("manage-apply-conflict")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			fakeRecorder := record.NewFakeRecorder(4)
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient, Recorder: fakeRecorder}
+			request := reconcile.Request{NamespacedName: clientKey(service)}
+			_, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			applyExternalDeploymentFields(service, "external-image-manager", map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []any{map[string]any{
+								"name":  service.Name,
+								"image": "registry.example/web:external",
+							}},
+						},
+					},
+				},
+			})
+
+			result, firstErr := reconciler.Reconcile(ctx, request)
+			Expect(firstErr).To(HaveOccurred())
+			Expect(apierrors.IsConflict(firstErr)).To(BeTrue())
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.example/web:external"))
+			Expect(managedFieldManagers(deployment)).To(ContainElements(FieldManager, "external-image-manager"))
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			ready := findMetav1Condition(storedParent.Status.Conditions, status.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Reason).To(Equal(status.ReasonApplyConflict))
+
+			_, secondErr := reconciler.Reconcile(ctx, request)
+			Expect(secondErr).To(HaveOccurred())
+			Expect(apierrors.IsConflict(secondErr)).To(BeTrue())
+			Eventually(fakeRecorder.Events).Should(Receive(ContainSubstring("Warning ApplyConflict")))
+			Consistently(fakeRecorder.Events).ShouldNot(Receive())
+		})
+
+		It("preserves API-allocated Service fields while updating an operator-owned port", func() {
+			service := validService("manage-service-allocated")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			request := reconcile.Request{NamespacedName: clientKey(service)}
+			_, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			before := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), before)).To(Succeed())
+			clusterIP := before.Spec.ClusterIP
+			clusterIPs := append([]string(nil), before.Spec.ClusterIPs...)
+			ipFamilies := append([]corev1.IPFamily(nil), before.Spec.IPFamilies...)
+			ipFamilyPolicy := before.Spec.IPFamilyPolicy
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			storedParent.Spec.Service.Ports[0].Port = 8080
+			Expect(k8sClient.Update(ctx, storedParent)).To(Succeed())
+			_, err = reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			after := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), after)).To(Succeed())
+			Expect(after.Spec.Ports[0].Port).To(Equal(int32(8080)))
+			Expect(after.Spec.ClusterIP).To(Equal(clusterIP))
+			Expect(after.Spec.ClusterIPs).To(Equal(clusterIPs))
+			Expect(after.Spec.IPFamilies).To(Equal(ipFamilies))
+			Expect(after.Spec.IPFamilyPolicy).To(Equal(ipFamilyPolicy))
+		})
+
+		It("deletes an owned Service when service management is disabled", func() {
+			service := validService("manage-delete-owned-service")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			request := reconcile.Request{NamespacedName: clientKey(service)}
+			_, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			storedParent.Spec.Service.Enabled = false
+			Expect(k8sClient.Update(ctx, storedParent)).To(Succeed())
+			_, err = reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			serviceResource := &corev1.Service{}
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, clientKey(service), serviceResource))).To(BeTrue())
+		})
+
+		It("does not delete an unowned Service when service management is disabled", func() {
+			service := validService("manage-preserve-unowned-service")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			service.Spec.Service.Enabled = false
+
+			unownedService := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: service.Name, Namespace: service.Namespace},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "external"},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 9000}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, unownedService)).To(Succeed())
+			serviceRV := unownedService.ResourceVersion
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			preserved := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), preserved)).To(Succeed())
+			Expect(preserved.ResourceVersion).To(Equal(serviceRV))
+			Expect(preserved.OwnerReferences).To(BeEmpty())
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			ready := findMetav1Condition(storedParent.Status.Conditions, status.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Reason).To(Equal(status.ReasonOwnershipConflict))
+		})
+
+		It("does not prune an owned Service when the primary Deployment has an ownership conflict", func() {
+			service := validService("manage-block-prune")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			service.Spec.Service.Enabled = false
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			unownedDeployment, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Create(ctx, unownedDeployment)).To(Succeed())
+
+			ownedService := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            service.Name,
+					Namespace:       service.Namespace,
+					OwnerReferences: []metav1.OwnerReference{DesiredOwnerReference(service)},
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": service.Name},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 8888}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ownedService)).To(Succeed())
+			serviceRV := ownedService.ResourceVersion
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			preservedService := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), preservedService)).To(Succeed())
+			Expect(preservedService.ResourceVersion).To(Equal(serviceRV))
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			ready := findMetav1Condition(storedParent.Status.Conditions, status.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Reason).To(Equal(status.ReasonOwnershipConflict))
+		})
+	})
+
 	DescribeTable("rejects invalid cross-field input",
 		func(caseName string, mutate func(*platformv1alpha1.CoffeeShopService)) {
 			service := validService(fmt.Sprintf("invalid-%s", caseName))
@@ -573,6 +835,48 @@ func findMetav1Condition(conditions []metav1.Condition, conditionType string) *m
 		}
 	}
 	return nil
+}
+
+func managedFieldManagers(object metav1.Object) []string {
+	managers := make([]string, 0, len(object.GetManagedFields()))
+	for _, entry := range object.GetManagedFields() {
+		managers = append(managers, entry.Manager)
+	}
+	return managers
+}
+
+// applyExternalDeploymentFields uses SSA with a distinct field manager to model
+// a mutating webhook, platform tool, or human-owned field set. ForceOwnership is
+// intentionally test-fixture-only: steady-state operator code never forces.
+func applyExternalDeploymentFields(
+	service *platformv1alpha1.CoffeeShopService,
+	fieldManager string,
+	fields map[string]any,
+) {
+	object := map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name":      service.Name,
+			"namespace": service.Namespace,
+		},
+	}
+	for key, value := range fields {
+		if key == "metadata" {
+			metadata := object["metadata"].(map[string]any)
+			maps.Copy(metadata, value.(map[string]any))
+			continue
+		}
+		object[key] = value
+	}
+
+	configuration := &unstructured.Unstructured{Object: object}
+	Expect(k8sClient.Apply(
+		ctx,
+		client.ApplyConfigurationFromUnstructured(configuration),
+		client.FieldOwner(fieldManager),
+		client.ForceOwnership,
+	)).To(Succeed())
 }
 
 func readServiceYAML(relativePath string) *platformv1alpha1.CoffeeShopService {

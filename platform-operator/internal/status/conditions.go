@@ -17,6 +17,8 @@ const (
 
 	ReasonInvalidSpec         = "InvalidSpec"
 	ReasonOwnershipConflict   = "OwnershipConflict"
+	ReasonApplyConflict       = "ApplyConflict"
+	ReasonApplyFailed         = "ApplyFailed"
 	ReasonWorkloadUnavailable = "WorkloadUnavailable"
 )
 

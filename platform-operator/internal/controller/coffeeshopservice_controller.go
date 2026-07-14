@@ -128,8 +128,15 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 
 	serviceDisabled := service.Spec.Service == nil || !service.Spec.Service.Enabled
 
-	// Cleanup Service if disabled and exists
-	if serviceDisabled && obs.ServiceExists {
+	// Apply the desired set before pruning. A primary Deployment conflict or
+	// apply failure blocks Service deletion, preventing a partial mutation that
+	// could remove networking while the workload identity is unresolved.
+	applyResult, applyErr = ApplyDesiredChildren(ctx, r.Client, r.Scheme(), service, obs)
+	r.recordApplyOwnershipConflicts(service, applyResult)
+
+	// Cleanup a disabled Service only after the desired Deployment converged
+	// without an ownership conflict.
+	if applyErr == nil && applyResult != nil && !applyResult.HasConflict() && serviceDisabled && obs.ServiceExists {
 		deleted, conflict, err := DeleteOwnedService(ctx, r.Client, service, obs)
 		if err != nil {
 			applyErr = err
@@ -138,19 +145,6 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 			pruneConflict = conflict
 			if conflict != "" && r.Recorder != nil {
 				r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Service deletion blocked by collision: %s", conflict)
-			}
-		}
-	}
-
-	// Apply desired resources (if no pruning conflict or apply error so far)
-	if applyErr == nil && pruneConflict == "" {
-		applyResult, applyErr = ApplyDesiredChildren(ctx, r.Client, r.Scheme(), service, obs)
-		if applyResult != nil && r.Recorder != nil {
-			if applyResult.DeploymentConflict != "" {
-				r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Deployment apply blocked by collision: %s", applyResult.DeploymentConflict)
-			}
-			if applyResult.ServiceConflict != "" {
-				r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Service apply blocked by collision: %s", applyResult.ServiceConflict)
 			}
 		}
 	}
@@ -191,9 +185,15 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 	manageInput.PruneConflict = pruneConflict
 	if applyErr != nil {
 		manageInput.ApplyError = applyErr.Error()
+		manageInput.ApplyErrorReason = status.ReasonApplyFailed
+		if apierrors.IsConflict(applyErr) {
+			manageInput.ApplyErrorReason = status.ReasonApplyConflict
+		}
 	}
 
 	delta := status.CalculateManageStatus(service, manageInput)
+
+	recordApplyFailure := applyErr != nil && r.Recorder != nil && readyReasonChanged(service, manageInput.ApplyErrorReason)
 
 	statusResult, statusErr := r.applyStatusDelta(ctx, service, delta)
 	if statusErr != nil {
@@ -201,6 +201,12 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 	}
 
 	if applyErr != nil {
+		// Emit only after the failure condition is persisted. Returning applyErr
+		// delegates retry timing to the workqueue rate limiter; the unchanged
+		// condition suppresses duplicate Events on persistent retries.
+		if recordApplyFailure {
+			r.Recorder.Eventf(service, "Warning", manageInput.ApplyErrorReason, "Child reconciliation failed: %v", applyErr)
+		}
 		return ctrl.Result{}, applyErr
 	}
 
@@ -210,6 +216,31 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 	}
 
 	return statusResult, nil
+}
+
+func (r *CoffeeShopServiceReconciler) recordApplyOwnershipConflicts(
+	service *platformv1alpha1.CoffeeShopService,
+	result *ApplyResult,
+) {
+	if result == nil || r.Recorder == nil {
+		return
+	}
+	if result.DeploymentConflict != "" {
+		r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Deployment apply blocked by collision: %s", result.DeploymentConflict)
+	}
+	if result.ServiceConflict != "" {
+		r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Service apply blocked by collision: %s", result.ServiceConflict)
+	}
+}
+
+func readyReasonChanged(service *platformv1alpha1.CoffeeShopService, reason string) bool {
+	for i := range service.Status.Conditions {
+		condition := service.Status.Conditions[i]
+		if condition.Type == status.ConditionReady {
+			return condition.Status != metav1.ConditionFalse || condition.Reason != reason
+		}
+	}
+	return true
 }
 
 // applyStatusDelta applies a StatusDelta to the CoffeeShopService and patches

@@ -194,7 +194,8 @@ type ManageInput struct {
 	PruneConflict      OwnershipResult
 
 	// Transient or permanent apply errors.
-	ApplyError string
+	ApplyError       string
+	ApplyErrorReason string
 }
 
 // CalculateManageStatus computes the status delta in Manage mode.
@@ -252,7 +253,10 @@ func CalculateManageStatus(service *platformv1alpha1.CoffeeShopService, input *M
 		readyCond.Message = "One or more child resources are blocked by ownership conflicts"
 	case input.ApplyError != "":
 		readyCond.Status = metav1.ConditionFalse
-		readyCond.Reason = "ApplyConflict"
+		readyCond.Reason = input.ApplyErrorReason
+		if readyCond.Reason == "" {
+			readyCond.Reason = ReasonApplyFailed
+		}
 		readyCond.Message = input.ApplyError
 	case workloadCond.Status == metav1.ConditionFalse:
 		readyCond.Status = metav1.ConditionFalse
