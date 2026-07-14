@@ -19,11 +19,15 @@ package controller
 import (
 	"context"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	platformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-operator/api/v1alpha1"
@@ -281,11 +285,33 @@ func (r *CoffeeShopServiceReconciler) applyStatusDelta(ctx context.Context, serv
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager registers the primary resource watch.
+// SetupWithManager registers parent, owned-child, and collision-recovery
+// watches. All watches are event-driven; the controller uses no fixed polling.
 func (r *CoffeeShopServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("coffeeshopservice")
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&platformv1alpha1.CoffeeShopService{}).
+		For(
+			&platformv1alpha1.CoffeeShopService{},
+			builder.WithPredicates(ParentGenerationPredicate()),
+		).
+		Owns(
+			&appsv1.Deployment{},
+			builder.WithPredicates(RelevantChildChangePredicate()),
+		).
+		Owns(
+			&corev1.Service{},
+			builder.WithPredicates(RelevantChildChangePredicate()),
+		).
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.mapDeletedCollisionToParent),
+			builder.WithPredicates(CollisionDeletePredicate()),
+		).
+		Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(r.mapDeletedCollisionToParent),
+			builder.WithPredicates(CollisionDeletePredicate()),
+		).
 		Named("coffeeshopservice").
 		Complete(r)
 }
