@@ -5,6 +5,35 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - platform.t2dzung.github.io
   resources:
   - coffeeshopservices
@@ -12,3 +41,10 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - platform.t2dzung.github.io
+  resources:
+  - coffeeshopservices/status
+  verbs:
+  - get
+  - patch

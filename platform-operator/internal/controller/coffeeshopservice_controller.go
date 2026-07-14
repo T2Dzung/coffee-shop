@@ -21,6 +21,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -33,12 +34,16 @@ import (
 // CoffeeShopServiceReconciler reconciles a CoffeeShopService object.
 type CoffeeShopServiceReconciler struct {
 	client.Client
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=platform.t2dzung.github.io,resources=coffeeshopservices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=platform.t2dzung.github.io,resources=coffeeshopservices/status,verbs=get;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// Delete is required by OwnerReferencesPermissionEnforcement when the manager
+// sets metadata.ownerReferences; the reconciler does not directly delete Deployments.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the main execution loop of the controller.
 func (r *CoffeeShopServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -58,9 +63,8 @@ func (r *CoffeeShopServiceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return r.reconcileObserve(ctx, service)
 	}
 
-	// Manage mode deferred for Slice 6.2.2+
-	log.V(1).Info("Reconciliation in Manage mode is deferred to Slice 6.2.2")
-	return ctrl.Result{}, nil
+	log.V(1).Info("Reconciling in Manage mode")
+	return r.reconcileManage(ctx, service)
 }
 
 // reconcileObserve implements the Observe-only pipeline:
@@ -96,6 +100,116 @@ func (r *CoffeeShopServiceReconciler) reconcileObserve(ctx context.Context, serv
 
 	// 4. Patch status only when semantically changed
 	return r.applyStatusDelta(ctx, service, delta)
+}
+
+// reconcileManage implements the Manage (reconciliation) pipeline:
+// 1. Defensive validation
+// 2. Get live children
+// 3. Perform ownership checks and mutation (create/reconcile child or delete service)
+// 4. Map outcomes to status and patch parent CR status
+func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, service *platformv1alpha1.CoffeeShopService) (ctrl.Result, error) {
+	// 1. Defensive validation
+	if err := resource.Validate(service); err != nil {
+		delta := status.CalculateInvalidSpecStatus(service, err.Error())
+		return r.applyStatusDelta(ctx, service, delta)
+	}
+
+	// 2. Observe live state
+	obs, err := ObserveLiveState(ctx, r, service)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 3. Reconcile child mutations with safety checks
+	var applyResult *ApplyResult
+	var pruneConflict status.OwnershipResult
+	var serviceDeleted bool
+	var applyErr error
+
+	serviceDisabled := service.Spec.Service == nil || !service.Spec.Service.Enabled
+
+	// Cleanup Service if disabled and exists
+	if serviceDisabled && obs.ServiceExists {
+		deleted, conflict, err := DeleteOwnedService(ctx, r.Client, service, obs)
+		if err != nil {
+			applyErr = err
+		} else {
+			serviceDeleted = deleted
+			pruneConflict = conflict
+			if conflict != "" && r.Recorder != nil {
+				r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Service deletion blocked by collision: %s", conflict)
+			}
+		}
+	}
+
+	// Apply desired resources (if no pruning conflict or apply error so far)
+	if applyErr == nil && pruneConflict == "" {
+		applyResult, applyErr = ApplyDesiredChildren(ctx, r.Client, r.Scheme(), service, obs)
+		if applyResult != nil && r.Recorder != nil {
+			if applyResult.DeploymentConflict != "" {
+				r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Deployment apply blocked by collision: %s", applyResult.DeploymentConflict)
+			}
+			if applyResult.ServiceConflict != "" {
+				r.Recorder.Eventf(service, "Warning", "OwnershipConflict", "Service apply blocked by collision: %s", applyResult.ServiceConflict)
+			}
+		}
+	}
+
+	// 4. Update parent Status to reflect the outcomes
+	obsInput := &status.ObservationInput{
+		DeploymentExists:  obs.DeploymentExists,
+		DeploymentDrifted: obs.DeploymentDrifted,
+		LiveDeployment:    obs.Deployment,
+		ServiceExists:     obs.ServiceExists,
+		ServiceDrifted:    obs.ServiceDrifted,
+		LiveService:       obs.Service,
+		ServiceEnabled:    !serviceDisabled,
+	}
+
+	// If child mutations were applied successfully, we optimistically reflect the new existence in status calculation
+	// to avoid status lag, but we still rely on the actual live status for readiness fields.
+	if applyResult != nil {
+		if applyResult.DeploymentApplied {
+			obsInput.DeploymentExists = true
+		}
+		if applyResult.ServiceApplied {
+			obsInput.ServiceExists = true
+		}
+	}
+	if serviceDeleted {
+		obsInput.ServiceExists = false
+		obsInput.LiveService = nil
+	}
+
+	manageInput := &status.ManageInput{
+		Obs: obsInput,
+	}
+	if applyResult != nil {
+		manageInput.DeploymentConflict = applyResult.DeploymentConflict
+		manageInput.ServiceConflict = applyResult.ServiceConflict
+	}
+	manageInput.PruneConflict = pruneConflict
+	if applyErr != nil {
+		manageInput.ApplyError = applyErr.Error()
+	}
+
+	delta := status.CalculateManageStatus(service, manageInput)
+
+	statusResult, statusErr := r.applyStatusDelta(ctx, service, delta)
+	if statusErr != nil {
+		return ctrl.Result{}, statusErr
+	}
+
+	if applyErr != nil {
+		return ctrl.Result{}, applyErr
+	}
+
+	// If there's an ownership conflict, return success (no requeue) and wait for user correction
+	if manageInput.DeploymentConflict != "" || manageInput.ServiceConflict != "" || manageInput.PruneConflict != "" {
+		return ctrl.Result{}, nil
+	}
+
+	return statusResult, nil
 }
 
 // applyStatusDelta applies a StatusDelta to the CoffeeShopService and patches
@@ -138,6 +252,7 @@ func (r *CoffeeShopServiceReconciler) applyStatusDelta(ctx context.Context, serv
 
 // SetupWithManager registers the primary resource watch.
 func (r *CoffeeShopServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("coffeeshopservice")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&platformv1alpha1.CoffeeShopService{}).
 		Named("coffeeshopservice").

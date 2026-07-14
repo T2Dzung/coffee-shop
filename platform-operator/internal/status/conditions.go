@@ -14,6 +14,10 @@ const (
 	ConditionWorkloadReady    = "WorkloadReady"
 	ConditionGuardrailsReady  = "GuardrailsReady"
 	ConditionPolicyConfigured = "PolicyConfigured"
+
+	ReasonInvalidSpec         = "InvalidSpec"
+	ReasonOwnershipConflict   = "OwnershipConflict"
+	ReasonWorkloadUnavailable = "WorkloadUnavailable"
 )
 
 // SetCondition applies Kubernetes condition semantics and reports whether status

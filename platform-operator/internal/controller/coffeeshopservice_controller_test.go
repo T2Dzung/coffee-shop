@@ -29,12 +29,14 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	platformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-operator/api/v1alpha1"
 	"github.com/T2Dzung/coffee-shop/platform-operator/internal/resource"
+	"github.com/T2Dzung/coffee-shop/platform-operator/internal/status"
 )
 
 func validService(name string) *platformv1alpha1.CoffeeShopService {
@@ -150,18 +152,9 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 			Expect(stored.Status.ReadyReplicas).To(Equal(int32(0)))
 
 			// Kiểm tra conditions
-			var readyCond, workloadCond, serviceCond *metav1.Condition
-			for i := range stored.Status.Conditions {
-				c := &stored.Status.Conditions[i]
-				switch c.Type {
-				case "Ready":
-					readyCond = c
-				case "WorkloadReady":
-					workloadCond = c
-				case "GuardrailsReady":
-					serviceCond = c
-				}
-			}
+			readyCond := findMetav1Condition(stored.Status.Conditions, status.ConditionReady)
+			workloadCond := findMetav1Condition(stored.Status.Conditions, status.ConditionWorkloadReady)
+			serviceCond := findMetav1Condition(stored.Status.Conditions, status.ConditionGuardrailsReady)
 
 			Expect(readyCond).NotTo(BeNil())
 			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
@@ -217,16 +210,9 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 
 			// Verify status
 			Expect(storedParent.Status.ReadyReplicas).To(Equal(int32(2)))
-			
-			var workloadCond, serviceCond *metav1.Condition
-			for i := range storedParent.Status.Conditions {
-				c := &storedParent.Status.Conditions[i]
-				if c.Type == "WorkloadReady" {
-					workloadCond = c
-				} else if c.Type == "GuardrailsReady" {
-					serviceCond = c
-				}
-			}
+
+			workloadCond := findMetav1Condition(storedParent.Status.Conditions, status.ConditionWorkloadReady)
+			serviceCond := findMetav1Condition(storedParent.Status.Conditions, status.ConditionGuardrailsReady)
 			Expect(workloadCond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(workloadCond.Reason).To(Equal("WorkloadAvailable"))
 			Expect(serviceCond.Status).To(Equal(metav1.ConditionTrue))
@@ -282,20 +268,258 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 			storedParent := &platformv1alpha1.CoffeeShopService{}
 			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
 
-			var workloadCond, serviceCond *metav1.Condition
-			for i := range storedParent.Status.Conditions {
-				c := &storedParent.Status.Conditions[i]
-				if c.Type == "WorkloadReady" {
-					workloadCond = c
-				} else if c.Type == "GuardrailsReady" {
-					serviceCond = c
-				}
-			}
+			workloadCond := findMetav1Condition(storedParent.Status.Conditions, status.ConditionWorkloadReady)
+			serviceCond := findMetav1Condition(storedParent.Status.Conditions, status.ConditionGuardrailsReady)
 			Expect(workloadCond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(workloadCond.Reason).To(Equal("WorkloadDrifted"))
 
 			Expect(serviceCond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(serviceCond.Reason).To(Equal("ServiceDrifted"))
+		})
+	})
+
+	Context("Manage-mode ownership safety and creation (Slice 6.2.2)", func() {
+		It("creates absent Deployment and Service with correct controller ownerReference", func() {
+			service := validService("manage-absent")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify Deployment creation and ownerReference
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deploy)).To(Succeed())
+			Expect(deploy.OwnerReferences).To(HaveLen(1))
+			ownerRef := deploy.OwnerReferences[0]
+			Expect(ownerRef.Kind).To(Equal("CoffeeShopService"))
+			Expect(ownerRef.Name).To(Equal(service.Name))
+			Expect(ownerRef.UID).To(Equal(service.UID))
+			Expect(*ownerRef.Controller).To(BeTrue())
+			Expect(ownerRef.BlockOwnerDeletion).To(BeNil())
+
+			// Verify Service creation and ownerReference
+			svc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), svc)).To(Succeed())
+			Expect(svc.OwnerReferences).To(HaveLen(1))
+			Expect(svc.OwnerReferences[0].UID).To(Equal(service.UID))
+
+			// Verify status
+			stored := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
+
+			readyCond := findMetav1Condition(stored.Status.Conditions, status.ConditionReady)
+			workloadCond := findMetav1Condition(stored.Status.Conditions, status.ConditionWorkloadReady)
+			serviceCond := findMetav1Condition(stored.Status.Conditions, status.ConditionGuardrailsReady)
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal(status.ReasonWorkloadUnavailable)) // deployment readyReplicas = 0
+			Expect(workloadCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(workloadCond.Reason).To(Equal(status.ReasonWorkloadUnavailable))
+			Expect(serviceCond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(serviceCond.Reason).To(Equal("ServiceAvailable"))
+		})
+
+		It("reconciles children that already have the current parent UID", func() {
+			service := validService("manage-owned")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			ownerRef := DesiredOwnerReference(service)
+			deploy, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			deploy.OwnerReferences = []metav1.OwnerReference{ownerRef}
+			Expect(k8sClient.Create(ctx, deploy)).To(Succeed())
+
+			svc, err := resource.BuildService(service)
+			Expect(err).NotTo(HaveOccurred())
+			svc.OwnerReferences = []metav1.OwnerReference{ownerRef}
+			Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			storedDeploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedDeploy)).To(Succeed())
+			Expect(storedDeploy.OwnerReferences).To(HaveLen(1))
+			Expect(storedDeploy.OwnerReferences[0].UID).To(Equal(service.UID))
+
+			storedSvc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedSvc)).To(Succeed())
+			Expect(storedSvc.OwnerReferences).To(HaveLen(1))
+			Expect(storedSvc.OwnerReferences[0].UID).To(Equal(service.UID))
+
+			storedParent := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), storedParent)).To(Succeed())
+			ready := findMetav1Condition(storedParent.Status.Conditions, status.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Reason).NotTo(Equal(status.ReasonOwnershipConflict))
+		})
+
+		It("rejects mutation when there is an unowned Deployment collision", func() {
+			service := validService("manage-unowned-collision")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+
+			// Create an unowned Deployment beforehand
+			unownedDeploy, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Create(ctx, unownedDeploy)).To(Succeed())
+			deployRV := unownedDeploy.ResourceVersion
+
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			fakeRecorder := record.NewFakeRecorder(1)
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient, Recorder: fakeRecorder}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify Deployment remains untouched
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deploy)).To(Succeed())
+			Expect(deploy.ResourceVersion).To(Equal(deployRV))
+			Expect(deploy.OwnerReferences).To(BeEmpty())
+
+			// Verify Service was NOT created either (cascade block/failsafe)
+			svc := &corev1.Service{}
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, clientKey(service), svc))).To(BeTrue())
+
+			// Verify status reports OwnershipConflict
+			stored := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
+
+			readyCond := findMetav1Condition(stored.Status.Conditions, status.ConditionReady)
+			workloadCond := findMetav1Condition(stored.Status.Conditions, status.ConditionWorkloadReady)
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal(status.ReasonOwnershipConflict))
+			Expect(workloadCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(workloadCond.Reason).To(Equal(status.ReasonOwnershipConflict))
+			Eventually(fakeRecorder.Events).Should(Receive(ContainSubstring("Warning OwnershipConflict")))
+		})
+
+		It("rejects mutation when there is a foreign controller owner on Deployment", func() {
+			service := validService("manage-foreign-collision")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+
+			// Create a Deployment owned by another resource (foreign owner)
+			foreignDeploy, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			isController := true
+			foreignDeploy.OwnerReferences = []metav1.OwnerReference{
+				{
+					APIVersion: "apps/v1",
+					Kind:       "ReplicaSet",
+					Name:       "some-replicaset",
+					UID:        "12345678-1234-1234-1234-1234567890ab",
+					Controller: &isController,
+				},
+			}
+			Expect(k8sClient.Create(ctx, foreignDeploy)).To(Succeed())
+			deployRV := foreignDeploy.ResourceVersion
+
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify Deployment untouched
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deploy)).To(Succeed())
+			Expect(deploy.ResourceVersion).To(Equal(deployRV))
+
+			// Verify status reports OwnershipConflict
+			stored := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
+
+			readyCond := findMetav1Condition(stored.Status.Conditions, status.ConditionReady)
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal(status.ReasonOwnershipConflict))
+		})
+
+		It("rejects mutation when owner UID is stale", func() {
+			service := validService("manage-stale-collision")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+
+			// Create a Deployment owned by a previous UID of this CR
+			staleDeploy, err := resource.BuildDeployment(service)
+			Expect(err).NotTo(HaveOccurred())
+			isController := true
+			staleDeploy.OwnerReferences = []metav1.OwnerReference{
+				{
+					APIVersion: platformv1alpha1.GroupVersion.String(),
+					Kind:       "CoffeeShopService",
+					Name:       service.Name,
+					UID:        "stale-uid-12345",
+					Controller: &isController,
+				},
+			}
+			Expect(k8sClient.Create(ctx, staleDeploy)).To(Succeed())
+			deployRV := staleDeploy.ResourceVersion
+
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify Deployment untouched
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deploy)).To(Succeed())
+			Expect(deploy.ResourceVersion).To(Equal(deployRV))
+
+			// Verify status reports OwnershipConflict
+			stored := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
+
+			readyCond := findMetav1Condition(stored.Status.Conditions, status.ConditionReady)
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal(status.ReasonOwnershipConflict))
+		})
+
+		It("applies Deployment successfully but halts on Service collision", func() {
+			service := validService("manage-partial-collision")
+			service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+
+			// Create an unowned Service beforehand
+			unownedSvc, err := resource.BuildService(service)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Create(ctx, unownedSvc)).To(Succeed())
+			svcRV := unownedSvc.ResourceVersion
+
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			reconciler := &CoffeeShopServiceReconciler{Client: k8sClient}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: clientKey(service)})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify Deployment was created successfully (as it has no collision)
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, clientKey(service), deploy)).To(Succeed())
+			Expect(deploy.OwnerReferences).NotTo(BeEmpty())
+
+			// Verify Service remains untouched
+			svc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, clientKey(service), svc)).To(Succeed())
+			Expect(svc.ResourceVersion).To(Equal(svcRV))
+
+			// Verify status reflects partial conflict
+			stored := &platformv1alpha1.CoffeeShopService{}
+			Expect(k8sClient.Get(ctx, clientKey(service), stored)).To(Succeed())
+
+			readyCond := findMetav1Condition(stored.Status.Conditions, status.ConditionReady)
+			workloadCond := findMetav1Condition(stored.Status.Conditions, status.ConditionWorkloadReady)
+			serviceCond := findMetav1Condition(stored.Status.Conditions, status.ConditionGuardrailsReady)
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal(status.ReasonOwnershipConflict))
+
+			// WorkloadReady should reflect status of Deployment (which is successfully applied, but unavailable)
+			Expect(workloadCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(workloadCond.Reason).To(Equal(status.ReasonWorkloadUnavailable))
+
+			// GuardrailsReady should reflect Service collision
+			Expect(serviceCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(serviceCond.Reason).To(Equal(status.ReasonOwnershipConflict))
 		})
 	})
 
@@ -340,6 +564,15 @@ var _ = Describe("CoffeeShopService CRD contract", func() {
 
 func clientKey(service *platformv1alpha1.CoffeeShopService) client.ObjectKey {
 	return client.ObjectKeyFromObject(service)
+}
+
+func findMetav1Condition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
 
 func readServiceYAML(relativePath string) *platformv1alpha1.CoffeeShopService {

@@ -128,7 +128,7 @@ func TestCalculateObserveStatus_UnavailableReplicas(t *testing.T) {
 	}
 
 	workload := findCondition(delta, ConditionWorkloadReady)
-	if workload == nil || workload.Status != metav1.ConditionFalse || workload.Reason != "WorkloadUnavailable" {
+	if workload == nil || workload.Status != metav1.ConditionFalse || workload.Reason != ReasonWorkloadUnavailable {
 		t.Errorf("WorkloadReady = %+v, want False/WorkloadUnavailable", workload)
 	}
 }
@@ -180,17 +180,191 @@ func TestCalculateInvalidSpecStatus(t *testing.T) {
 	}
 
 	ready := findCondition(delta, ConditionReady)
-	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "InvalidSpec" {
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonInvalidSpec {
 		t.Errorf("Ready = %+v, want False/InvalidSpec", ready)
 	}
 
 	workload := findCondition(delta, ConditionWorkloadReady)
-	if workload == nil || workload.Status != metav1.ConditionFalse || workload.Reason != "InvalidSpec" {
+	if workload == nil || workload.Status != metav1.ConditionFalse || workload.Reason != ReasonInvalidSpec {
 		t.Errorf("WorkloadReady = %+v, want False/InvalidSpec", workload)
 	}
 
 	guardrails := findCondition(delta, ConditionGuardrailsReady)
-	if guardrails == nil || guardrails.Status != metav1.ConditionFalse || guardrails.Reason != "InvalidSpec" {
+	if guardrails == nil || guardrails.Status != metav1.ConditionFalse || guardrails.Reason != ReasonInvalidSpec {
 		t.Errorf("GuardrailsReady = %+v, want False/InvalidSpec", guardrails)
+	}
+}
+
+func TestCalculateManageStatus_Success(t *testing.T) {
+	svc := makeService(2, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment: &appsv1.Deployment{
+				Status: appsv1.DeploymentStatus{AvailableReplicas: 2},
+			},
+			ServiceEnabled: true,
+			ServiceExists:  true,
+		},
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue || ready.Reason != "Reconciled" {
+		t.Errorf("Ready condition = %+v, want True/Reconciled", ready)
+	}
+
+	workload := findCondition(delta, ConditionWorkloadReady)
+	if workload == nil || workload.Status != metav1.ConditionTrue || workload.Reason != "WorkloadAvailable" {
+		t.Errorf("WorkloadReady = %+v, want True/WorkloadAvailable", workload)
+	}
+
+	guardrails := findCondition(delta, ConditionGuardrailsReady)
+	if guardrails == nil || guardrails.Status != metav1.ConditionTrue || guardrails.Reason != "ServiceAvailable" {
+		t.Errorf("GuardrailsReady = %+v, want True/ServiceAvailable", guardrails)
+	}
+}
+
+func TestCalculateManageStatus_AppliedButNotObservedIsUnavailable(t *testing.T) {
+	svc := makeService(2, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment:   nil,
+			ServiceEnabled:   true,
+			ServiceExists:    true,
+		},
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonWorkloadUnavailable {
+		t.Errorf("Ready condition = %+v, want False/WorkloadUnavailable", ready)
+	}
+
+	workload := findCondition(delta, ConditionWorkloadReady)
+	if workload == nil || workload.Status != metav1.ConditionFalse || workload.Reason != ReasonWorkloadUnavailable {
+		t.Errorf("WorkloadReady = %+v, want False/WorkloadUnavailable", workload)
+	}
+}
+
+func TestCalculateManageStatus_OwnershipConflictDeployment(t *testing.T) {
+	svc := makeService(2, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment:   &appsv1.Deployment{},
+			ServiceEnabled:   true,
+			ServiceExists:    true,
+		},
+		DeploymentConflict: OwnershipUnownedCollision,
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonOwnershipConflict {
+		t.Errorf("Ready condition = %+v, want False/OwnershipConflict", ready)
+	}
+
+	workload := findCondition(delta, ConditionWorkloadReady)
+	if workload == nil || workload.Status != metav1.ConditionFalse || workload.Reason != ReasonOwnershipConflict {
+		t.Errorf("WorkloadReady = %+v, want False/OwnershipConflict", workload)
+	}
+}
+
+func TestCalculateManageStatus_OwnershipConflictService(t *testing.T) {
+	svc := makeService(2, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment: &appsv1.Deployment{
+				Status: appsv1.DeploymentStatus{AvailableReplicas: 2},
+			},
+			ServiceEnabled: true,
+			ServiceExists:  true,
+		},
+		ServiceConflict: OwnershipForeignOwnedCollision,
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonOwnershipConflict {
+		t.Errorf("Ready condition = %+v, want False/OwnershipConflict", ready)
+	}
+
+	guardrails := findCondition(delta, ConditionGuardrailsReady)
+	if guardrails == nil || guardrails.Status != metav1.ConditionFalse || guardrails.Reason != ReasonOwnershipConflict {
+		t.Errorf("GuardrailsReady = %+v, want False/OwnershipConflict", guardrails)
+	}
+}
+
+func TestCalculateManageStatus_PruneConflictService(t *testing.T) {
+	svc := makeService(2, false) // Service disabled in spec
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment: &appsv1.Deployment{
+				Status: appsv1.DeploymentStatus{AvailableReplicas: 2},
+			},
+			ServiceEnabled: false,
+			ServiceExists:  true, // but service still exists in cluster
+		},
+		PruneConflict: OwnershipUnownedCollision,
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonOwnershipConflict {
+		t.Errorf("Ready condition = %+v, want False/OwnershipConflict", ready)
+	}
+
+	guardrails := findCondition(delta, ConditionGuardrailsReady)
+	if guardrails == nil || guardrails.Status != metav1.ConditionFalse || guardrails.Reason != ReasonOwnershipConflict {
+		t.Errorf("GuardrailsReady = %+v, want False/OwnershipConflict", guardrails)
+	}
+}
+
+func TestCalculateManageStatus_ApplyConflictError(t *testing.T) {
+	svc := makeService(2, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment:   &appsv1.Deployment{},
+			ServiceEnabled:   true,
+		},
+		ApplyError: "apply conflict on fields replicas",
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "ApplyConflict" {
+		t.Errorf("Ready condition = %+v, want False/ApplyConflict", ready)
+	}
+}
+
+func TestCalculateManageStatus_WorkloadUnavailable(t *testing.T) {
+	svc := makeService(3, true)
+	input := &ManageInput{
+		Obs: &ObservationInput{
+			DeploymentExists: true,
+			LiveDeployment: &appsv1.Deployment{
+				Status: appsv1.DeploymentStatus{AvailableReplicas: 1}, // 1 < 3
+			},
+			ServiceEnabled: true,
+			ServiceExists:  true,
+		},
+	}
+
+	delta := CalculateManageStatus(svc, input)
+
+	ready := findCondition(delta, ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonWorkloadUnavailable {
+		t.Errorf("Ready condition = %+v, want False/WorkloadUnavailable", ready)
 	}
 }
