@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestGeneratedRBACIsLeastPrivilegeForSlice622(t *testing.T) {
+func TestGeneratedRBACIsLeastPrivilegeForPhase62(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "config", "rbac", "role.yaml"))
 	if err != nil {
 		t.Fatalf("reading generated role: %v", err)
@@ -39,7 +39,7 @@ func TestGeneratedRBACIsLeastPrivilegeForSlice622(t *testing.T) {
 		{group: "platform.t2dzung.github.io", resource: "coffeeshopservices/status", verbs: []string{"get", "patch"}},
 		{group: "apps", resource: "deployments", verbs: []string{"get", "list", "watch", "create", "patch", "delete"}},
 		{group: "", resource: "services", verbs: []string{"get", "list", "watch", "create", "patch", "delete"}},
-		{group: "", resource: "events", verbs: []string{"create", "patch"}},
+		{group: "events.k8s.io", resource: "events", verbs: []string{"create", "patch"}},
 	}
 	if len(role.Rules) != len(expected) {
 		t.Fatalf("generated role has %d rules, want exactly %d: %+v", len(role.Rules), len(expected), role.Rules)

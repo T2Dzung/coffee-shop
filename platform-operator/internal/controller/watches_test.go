@@ -269,6 +269,47 @@ var _ = Describe("Event-driven watches (Slice 6.2.4)", Ordered, func() {
 			50*time.Millisecond,
 		).Should(Equal(baseline))
 	})
+
+	It("adopts an unowned collision when the exact annotation is added", func() {
+		service := validService("watch-adoption-annotation")
+		service.Spec.ManagementPolicy = platformv1alpha1.ManagementPolicyManage
+		service.Spec.AdoptionPolicy = platformv1alpha1.AdoptionPolicyExplicit
+		service.Spec.Service.Enabled = false
+
+		collision, err := resource.BuildDeployment(service)
+		Expect(err).NotTo(HaveOccurred())
+		collision.Spec.Template.Spec.Containers[0].Image = legacyImage
+		Expect(k8sClient.Create(ctx, collision)).To(Succeed())
+		Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+		Eventually(func() bool {
+			current := &platformv1alpha1.CoffeeShopService{}
+			if err := k8sClient.Get(ctx, clientKey(service), current); err != nil {
+				return false
+			}
+			ready := findMetav1Condition(current.Status.Conditions, status.ConditionReady)
+			return ready != nil && ready.Reason == status.ReasonOwnershipConflict
+		}, 5*time.Second, 50*time.Millisecond).Should(BeTrue())
+
+		currentCollision := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, clientKey(service), currentCollision)).To(Succeed())
+		base := currentCollision.DeepCopy()
+		if currentCollision.Annotations == nil {
+			currentCollision.Annotations = map[string]string{}
+		}
+		currentCollision.Annotations[AdoptionAnnotationKey] = service.Name
+		Expect(k8sClient.Patch(ctx, currentCollision, client.MergeFrom(base))).To(Succeed())
+
+		Eventually(func() bool {
+			adopted := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, clientKey(service), adopted); err != nil {
+				return false
+			}
+			return len(adopted.OwnerReferences) == 1 &&
+				adopted.OwnerReferences[0].UID == service.UID &&
+				adopted.Spec.Template.Spec.Containers[0].Image == "registry.example/web:v1.0.0"
+		}, 5*time.Second, 50*time.Millisecond).Should(BeTrue())
+	})
 })
 
 func controllerReconcileTotal(controllerName string) float64 {

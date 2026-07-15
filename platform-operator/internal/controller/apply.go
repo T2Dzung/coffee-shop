@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,6 +22,7 @@ const FieldManager = "coffeeshop-operator"
 type ApplyResult struct {
 	DeploymentApplied bool
 	ServiceApplied    bool
+	Adoption          *AdoptionOutcome
 
 	// DeploymentConflict is set when ownership check prevents Deployment mutation.
 	DeploymentConflict OwnershipResult
@@ -64,10 +67,18 @@ func ApplyDesiredChildren(
 		}
 		result.DeploymentApplied = true
 	default:
-		// UnownedCollision, ForeignOwnedCollision, StaleOwnerCollision
+		outcome, adoptErr := tryAdoptDeployment(ctx, c, scheme, parent, obs.Deployment, desiredDeploy, deployOwnership)
+		result.Adoption = outcome
+		if adoptErr != nil {
+			return result, fmt.Errorf("adopting deployment: %w", adoptErr)
+		}
+		if outcome.Adopted {
+			result.DeploymentApplied = true
+			// Stage adoption one object per reconciliation. The ownerReference
+			// update wakes the controller through .Owns().
+			return result, nil
+		}
 		result.DeploymentConflict = deployOwnership
-		// Deployment is the primary workload identity. Do not create or mutate a
-		// Service that would select a workload the operator does not own.
 		return result, nil
 	}
 
@@ -87,6 +98,15 @@ func ApplyDesiredChildren(
 			}
 			result.ServiceApplied = true
 		default:
+			outcome, adoptErr := tryAdoptService(ctx, c, scheme, parent, obs.Service, desiredService, svcOwnership)
+			result.Adoption = outcome
+			if adoptErr != nil {
+				return result, fmt.Errorf("adopting service: %w", adoptErr)
+			}
+			if outcome.Adopted {
+				result.ServiceApplied = true
+				return result, nil
+			}
 			result.ServiceConflict = svcOwnership
 		}
 	}
@@ -102,6 +122,7 @@ func applyObject(
 	scheme *runtime.Scheme,
 	parent *platformv1alpha1.CoffeeShopService,
 	obj client.Object,
+	options ...client.ApplyOption,
 ) error {
 	// Set controller ownerReference
 	ownerRef := DesiredOwnerReference(parent)
@@ -123,8 +144,22 @@ func applyObject(
 	applyObject := &unstructured.Unstructured{Object: content}
 	applyObject.SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
 
-	// SSA Apply: no ForceOwnership (D-6.2-02).
-	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(applyObject), client.FieldOwner(FieldManager))
+	applyOptions := make([]client.ApplyOption, 0, 1+len(options))
+	applyOptions = append(applyOptions, client.FieldOwner(FieldManager))
+	applyOptions = append(applyOptions, options...)
+	operation := writeOperationApply
+	parsedOptions := (&client.ApplyOptions{}).ApplyOptions(applyOptions)
+	if slices.Contains(parsedOptions.DryRun, metav1.DryRunAll) {
+		operation = writeOperationApplyDryRun
+	}
+
+	resourceLabel := writeResourceDeployment
+	if _, ok := obj.(*corev1.Service); ok {
+		resourceLabel = writeResourceService
+	}
+	err = c.Apply(ctx, client.ApplyConfigurationFromUnstructured(applyObject), applyOptions...)
+	recordWrite(operation, resourceLabel, err)
+	return err
 }
 
 // DeleteOwnedService deletes a Service only if it is owned by the parent (D-6.2-11).
@@ -143,8 +178,10 @@ func DeleteOwnedService(
 	switch ownership {
 	case OwnershipOwned:
 		if err := c.Delete(ctx, obs.Service); err != nil {
+			recordWrite(writeOperationDelete, writeResourceService, err)
 			return false, "", fmt.Errorf("deleting owned service: %w", err)
 		}
+		recordWrite(writeOperationDelete, writeResourceService, nil)
 		return true, "", nil
 	default:
 		// Unowned, foreign, stale — do NOT delete (D-6.2-11)

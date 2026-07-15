@@ -67,9 +67,12 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # kubectl kuberc is disabled by default for test isolation; enable with:
 # - KUBECTL_KUBERC=true
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
+# CertManager is unnecessary without webhooks/cert-managed metrics and is skipped by default.
+# Override with CERT_MANAGER_INSTALL_SKIP=false when explicitly testing those integrations.
 KIND_CLUSTER ?= platform-operator-test-e2e
+CERT_MANAGER_INSTALL_SKIP ?= true
+E2E_STEADY_STATE_DURATION ?= 10m
+KEEP_E2E_CLUSTER ?= false
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -87,8 +90,13 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+	@status=0; \
+		KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) \
+		CERT_MANAGER_INSTALL_SKIP=$(CERT_MANAGER_INSTALL_SKIP) \
+		E2E_STEADY_STATE_DURATION=$(E2E_STEADY_STATE_DURATION) \
+		go test -tags=e2e ./test/e2e/ -v -ginkgo.v || status=$$?; \
+		if [ "$(KEEP_E2E_CLUSTER)" != "true" ]; then $(MAKE) cleanup-test-e2e; fi; \
+		exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
@@ -185,10 +193,10 @@ $(LOCALBIN):
 ## Tool Binaries
 KUBECTL ?= kubectl
 KIND ?= kind
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
-CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-ENVTEST ?= $(LOCALBIN)/setup-envtest
-GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+KUSTOMIZE ?= $(abspath $(LOCALBIN)/kustomize)
+CONTROLLER_GEN ?= $(abspath $(LOCALBIN)/controller-gen)
+ENVTEST ?= $(abspath $(LOCALBIN)/setup-envtest)
+GOLANGCI_LINT = $(abspath $(LOCALBIN)/golangci-lint)
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1

@@ -102,3 +102,28 @@ func TestCollisionDeletePredicate(t *testing.T) {
 		t.Fatal("generic event should not use the collision recovery mapper")
 	}
 }
+
+func TestAdoptionAnnotationChangedPredicate(t *testing.T) {
+	p := AdoptionAnnotationChangedPredicate()
+	oldDeployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"example.com/note": "old"}},
+	}
+
+	irrelevantAnnotation := oldDeployment.DeepCopy()
+	irrelevantAnnotation.Annotations["example.com/note"] = "new"
+	if p.Update(event.UpdateEvent{ObjectOld: oldDeployment, ObjectNew: irrelevantAnnotation}) {
+		t.Fatal("irrelevant annotation update should not enqueue adoption")
+	}
+
+	adoptionAnnotation := oldDeployment.DeepCopy()
+	adoptionAnnotation.Annotations[AdoptionAnnotationKey] = "parent"
+	if !p.Update(event.UpdateEvent{ObjectOld: oldDeployment, ObjectNew: adoptionAnnotation}) {
+		t.Fatal("adoption annotation update should enqueue")
+	}
+
+	if p.Create(event.CreateEvent{Object: oldDeployment}) ||
+		p.Delete(event.DeleteEvent{Object: oldDeployment}) ||
+		p.Generic(event.GenericEvent{Object: oldDeployment}) {
+		t.Fatal("only adoption annotation updates should pass this predicate")
+	}
+}

@@ -18,12 +18,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +38,7 @@ import (
 // CoffeeShopServiceReconciler reconciles a CoffeeShopService object.
 type CoffeeShopServiceReconciler struct {
 	client.Client
-	Recorder record.EventRecorder
+	Recorder eventRecorder
 }
 
 // +kubebuilder:rbac:groups=platform.t2dzung.github.io,resources=coffeeshopservices,verbs=get;list;watch
@@ -47,7 +47,7 @@ type CoffeeShopServiceReconciler struct {
 // sets metadata.ownerReferences; the reconciler does not directly delete Deployments.
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is the main execution loop of the controller.
 func (r *CoffeeShopServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -136,6 +136,7 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 	// apply failure blocks Service deletion, preventing a partial mutation that
 	// could remove networking while the workload identity is unresolved.
 	applyResult, applyErr = ApplyDesiredChildren(ctx, r.Client, r.Scheme(), service, obs)
+	r.recordAdoptionOutcome(service, applyResult)
 	r.recordApplyOwnershipConflicts(service, applyResult)
 
 	// Cleanup a disabled Service only after the desired Deployment converged
@@ -190,6 +191,10 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 	if applyErr != nil {
 		manageInput.ApplyError = applyErr.Error()
 		manageInput.ApplyErrorReason = status.ReasonApplyFailed
+		var adoptionErr *AdoptionError
+		if errors.As(applyErr, &adoptionErr) {
+			manageInput.ApplyErrorReason = status.ReasonAdoptionFailed
+		}
 		if apierrors.IsConflict(applyErr) {
 			manageInput.ApplyErrorReason = status.ReasonApplyConflict
 		}
@@ -220,6 +225,22 @@ func (r *CoffeeShopServiceReconciler) reconcileManage(ctx context.Context, servi
 	}
 
 	return statusResult, nil
+}
+
+func (r *CoffeeShopServiceReconciler) recordAdoptionOutcome(
+	service *platformv1alpha1.CoffeeShopService,
+	result *ApplyResult,
+) {
+	if result == nil || result.Adoption == nil || r.Recorder == nil {
+		return
+	}
+	outcome := result.Adoption
+	switch {
+	case outcome.Adopted:
+		r.Recorder.Eventf(service, "Normal", "AdoptionSucceeded", "Adopted existing %s after explicit preflight", outcome.Resource)
+	case outcome.Attempted && outcome.Reason != "":
+		r.Recorder.Eventf(service, "Warning", "AdoptionRejected", "%s adoption rejected: %s", outcome.Resource, outcome.Reason)
+	}
 }
 
 func (r *CoffeeShopServiceReconciler) recordApplyOwnershipConflicts(
@@ -279,8 +300,10 @@ func (r *CoffeeShopServiceReconciler) applyStatusDelta(ctx context.Context, serv
 	base.Status = *oldStatus
 	patch := client.MergeFrom(base)
 	if err := r.Status().Patch(ctx, service, patch); err != nil {
+		recordWrite(writeOperationStatusPatch, writeResourceCoffeeShopSvc, err)
 		return ctrl.Result{}, err
 	}
+	recordWrite(writeOperationStatusPatch, writeResourceCoffeeShopSvc, nil)
 
 	return ctrl.Result{}, nil
 }
@@ -288,7 +311,7 @@ func (r *CoffeeShopServiceReconciler) applyStatusDelta(ctx context.Context, serv
 // SetupWithManager registers parent, owned-child, and collision-recovery
 // watches. All watches are event-driven; the controller uses no fixed polling.
 func (r *CoffeeShopServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("coffeeshopservice")
+	r.Recorder = eventRecorderAdapter{recorder: mgr.GetEventRecorder("coffeeshopservice")}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(
 			&platformv1alpha1.CoffeeShopService{},
@@ -311,6 +334,16 @@ func (r *CoffeeShopServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(r.mapDeletedCollisionToParent),
 			builder.WithPredicates(CollisionDeletePredicate()),
+		).
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.mapAdoptionCandidateToParent),
+			builder.WithPredicates(AdoptionAnnotationChangedPredicate()),
+		).
+		Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(r.mapAdoptionCandidateToParent),
+			builder.WithPredicates(AdoptionAnnotationChangedPredicate()),
 		).
 		Named("coffeeshopservice").
 		Complete(r)

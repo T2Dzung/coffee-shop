@@ -52,6 +52,23 @@ func CollisionDeletePredicate() predicate.Predicate {
 	}
 }
 
+// AdoptionAnnotationChangedPredicate wakes a collision only when the explicit
+// child-side opt-in value changes. Other annotations remain filtered.
+func AdoptionAnnotationChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(event.CreateEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return false
+			}
+			return e.ObjectOld.GetAnnotations()[AdoptionAnnotationKey] !=
+				e.ObjectNew.GetAnnotations()[AdoptionAnnotationKey]
+		},
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+}
+
 func deploymentChangeRelevant(oldObject, newObject *appsv1.Deployment) bool {
 	return !reflect.DeepEqual(oldObject.Spec, newObject.Spec) ||
 		!reflect.DeepEqual(oldObject.Status, newObject.Status) ||

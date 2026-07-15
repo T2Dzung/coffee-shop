@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-operator-e2e
+---
+apiVersion: platform.t2dzung.github.io/v1alpha1
+kind: CoffeeShopService
+metadata:
+  name: phase62-runtime
+  namespace: platform-operator-e2e
+spec:
+  managementPolicy: Observe
+  adoptionPolicy: Never
+  image:
+    repository: nginx
+    tag: 1.27.4
+    pullPolicy: IfNotPresent
+  replicas: 1
+  ports:
+    - name: http
+      containerPort: 80
+  service:
+    enabled: true
+    ports:
+      - name: http
+        port: 80
+        targetPort: http
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  probes:
+    readiness:
+      httpGet:
+        path: /
+        port: http
+      periodSeconds: 2
+      failureThreshold: 10

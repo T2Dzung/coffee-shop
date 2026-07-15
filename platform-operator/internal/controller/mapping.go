@@ -20,6 +20,20 @@ func (r *CoffeeShopServiceReconciler) mapDeletedCollisionToParent(
 	ctx context.Context,
 	object client.Object,
 ) []reconcile.Request {
+	return r.mapCollisionToParent(ctx, object)
+}
+
+func (r *CoffeeShopServiceReconciler) mapAdoptionCandidateToParent(
+	ctx context.Context,
+	object client.Object,
+) []reconcile.Request {
+	return r.mapCollisionToParent(ctx, object)
+}
+
+func (r *CoffeeShopServiceReconciler) mapCollisionToParent(
+	ctx context.Context,
+	object client.Object,
+) []reconcile.Request {
 	parent := &platformv1alpha1.CoffeeShopService{}
 	key := client.ObjectKeyFromObject(object)
 	if err := r.Get(ctx, key, parent); err != nil {

@@ -19,6 +19,7 @@ const (
 	ReasonOwnershipConflict   = "OwnershipConflict"
 	ReasonApplyConflict       = "ApplyConflict"
 	ReasonApplyFailed         = "ApplyFailed"
+	ReasonAdoptionFailed      = "AdoptionFailed"
 	ReasonWorkloadUnavailable = "WorkloadUnavailable"
 )
 
