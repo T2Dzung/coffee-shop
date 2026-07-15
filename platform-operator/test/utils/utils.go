@@ -41,6 +41,15 @@ func warnError(err error) {
 
 // Run executes the provided command within this context
 func Run(cmd *exec.Cmd) (string, error) {
+	return run(cmd, nil)
+}
+
+// RunRedacted executes the provided command while replacing sensitive values in logs and errors.
+func RunRedacted(cmd *exec.Cmd, sensitiveValues ...string) (string, error) {
+	return run(cmd, sensitiveValues)
+}
+
+func run(cmd *exec.Cmd, sensitiveValues []string) (string, error) {
 	dir, _ := GetProjectDir()
 	cmd.Dir = dir
 
@@ -49,14 +58,24 @@ func Run(cmd *exec.Cmd) (string, error) {
 	}
 
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
-	command := strings.Join(cmd.Args, " ")
+	command := redact(strings.Join(cmd.Args, " "), sensitiveValues)
 	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
 	output, err := cmd.CombinedOutput()
+	safeOutput := redact(string(output), sensitiveValues)
 	if err != nil {
-		return string(output), fmt.Errorf("%q failed with error %q: %w", command, string(output), err)
+		return safeOutput, fmt.Errorf("%q failed with error %q: %w", command, safeOutput, err)
 	}
 
-	return string(output), nil
+	return safeOutput, nil
+}
+
+func redact(value string, sensitiveValues []string) string {
+	for _, sensitiveValue := range sensitiveValues {
+		if sensitiveValue != "" {
+			value = strings.ReplaceAll(value, sensitiveValue, "[REDACTED]")
+		}
+	}
+	return value
 }
 
 // UninstallCertManager uninstalls the cert manager

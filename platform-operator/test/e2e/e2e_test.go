@@ -342,7 +342,7 @@ func scrapeMetrics() (string, error) {
 		"curl", "-fsSk", "-H", "Authorization: Bearer "+metricsToken,
 		fmt.Sprintf("https://%s.%s.svc.cluster.local:8443/metrics", metricsServiceName, namespace),
 	)
-	return utils.Run(cmd)
+	return utils.RunRedacted(cmd, metricsToken)
 }
 
 // tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,

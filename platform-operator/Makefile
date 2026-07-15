@@ -72,6 +72,9 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 KIND_CLUSTER ?= platform-operator-test-e2e
 CERT_MANAGER_INSTALL_SKIP ?= true
 E2E_STEADY_STATE_DURATION ?= 10m
+# The overall Go test timeout must leave room for cluster setup, behavior checks,
+# and cleanup in addition to the steady-state observation window.
+E2E_TEST_TIMEOUT ?= 20m
 KEEP_E2E_CLUSTER ?= false
 
 .PHONY: setup-test-e2e
@@ -94,7 +97,7 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 		KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) \
 		CERT_MANAGER_INSTALL_SKIP=$(CERT_MANAGER_INSTALL_SKIP) \
 		E2E_STEADY_STATE_DURATION=$(E2E_STEADY_STATE_DURATION) \
-		go test -tags=e2e ./test/e2e/ -v -ginkgo.v || status=$$?; \
+		go test -timeout=$(E2E_TEST_TIMEOUT) -tags=e2e ./test/e2e/ -v -ginkgo.v || status=$$?; \
 		if [ "$(KEEP_E2E_CLUSTER)" != "true" ]; then $(MAKE) cleanup-test-e2e; fi; \
 		exit $$status
 
