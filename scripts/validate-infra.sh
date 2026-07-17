@@ -211,8 +211,25 @@ if grep -Eq '^[[:space:]]+- (secrets|configmaps)$' "${ALLOY_RENDERED}"; then
   exit 1
 fi
 
-if ! grep -Fq 'regex  = "cluster|namespace|workload|pod|container|service|level"' "${ALLOY_RENDERED}"; then
+if ! grep -Fq 'regex  = "cluster|namespace|workload|pod|container|service_name|level"' "${ALLOY_RENDERED}"; then
   echo "Error: Alloy bounded Loki label allowlist is missing." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'path: /var/lib/alloy/coffeeshop-positions' "${ALLOY_RENDERED}" ||
+  ! grep -Fq 'type: DirectoryOrCreate' "${ALLOY_RENDERED}"; then
+  echo "Error: Alloy positions must persist in the dedicated node-local hostPath." >&2
+  exit 1
+fi
+
+if grep -F -B 4 'name: alloy-storage' "${ALLOY_RENDERED}" |
+  grep -Fq 'emptyDir:'; then
+  echo "Error: Alloy positions storage must not use Pod-local emptyDir." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'tail_from_end = true' "${ALLOY_RENDERED}"; then
+  echo "Error: Alloy positions migration rollout 1 must seed offsets from EOF." >&2
   exit 1
 fi
 

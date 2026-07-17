@@ -82,7 +82,7 @@ alloy:
         rule {
           source_labels = ["__meta_kubernetes_pod_label_app"]
           regex         = "(.+)"
-          target_label  = "service"
+          target_label  = "service_name"
         }
 
         rule {
@@ -90,7 +90,7 @@ alloy:
             "__meta_kubernetes_pod_label_app_kubernetes_io_name",
           ]
           regex        = "(.+)"
-          target_label = "service"
+          target_label = "service_name"
         }
 
         rule {
@@ -153,7 +153,7 @@ alloy:
         // filename and every non-contract label are removed before ingestion.
         rule {
           action = "labelkeep"
-          regex  = "cluster|namespace|workload|pod|container|service|level"
+          regex  = "cluster|namespace|workload|pod|container|service_name|level"
         }
       }
 
@@ -182,8 +182,10 @@ controller:
   volumes:
     extra:
       - name: alloy-storage
-        emptyDir:
-          sizeLimit: 256Mi
+        hostPath:
+          # One positions directory per node survives Alloy Pod replacement.
+          path: /var/lib/alloy/coffeeshop-positions
+          type: DirectoryOrCreate
 
 rbac:
   # Chart 1.10.1 renders an invalid literal [] when rules are non-empty and
