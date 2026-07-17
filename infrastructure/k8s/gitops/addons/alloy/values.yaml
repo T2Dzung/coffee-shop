@@ -107,7 +107,7 @@ alloy:
       loki.source.file "pod_logs" {
         targets                 = discovery.relabel.pod_logs.output
         forward_to              = [loki.process.pod_logs.receiver]
-        tail_from_end           = true
+        tail_from_end           = false
         on_positions_file_error = "restart_from_end"
 
         // __path__ contains a glob. Enable the source's built-in file matcher
