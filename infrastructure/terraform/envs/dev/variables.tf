@@ -156,7 +156,12 @@ variable "longhorn_data_volume_enabled" {
 variable "longhorn_data_volume_size" {
   description = "Size of Longhorn dedicated volume in GiB"
   type        = number
-  default     = 30
+  default     = 50
+
+  validation {
+    condition     = var.longhorn_data_volume_size >= 30
+    error_message = "longhorn_data_volume_size must be at least 30 GiB. Existing EBS volumes cannot be shrunk in place."
+  }
 }
 
 variable "longhorn_data_volume_type" {

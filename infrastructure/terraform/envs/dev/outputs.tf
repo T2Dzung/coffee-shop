@@ -92,6 +92,11 @@ output "longhorn_data_volume_ids" {
   value       = aws_ebs_volume.longhorn[*].id
 }
 
+output "longhorn_data_volume_size" {
+  description = "Configured size in GiB for each dedicated Longhorn EBS volume"
+  value       = var.longhorn_data_volume_size
+}
+
 output "longhorn_data_mount_path" {
   description = "Path where Longhorn volumes will be mounted on the nodes"
   value       = "/var/lib/longhorn"

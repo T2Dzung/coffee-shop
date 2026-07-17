@@ -13,6 +13,7 @@
           - nfs-common
           - dmsetup
           - cryptsetup
+          - e2fsprogs
           - util-linux
         state: present
         update_cache: true
@@ -29,21 +30,69 @@
       failed_when: false
       changed_when: false
 
-    - name: Validate existing Longhorn data mount
+    - name: Record existing Longhorn device and filesystem
+      ansible.builtin.set_fact:
+        longhorn_prereqs_existing_device: "{{ longhorn_prereqs_existing_mount.stdout.split()[0] }}"
+        longhorn_prereqs_existing_fstype: "{{ longhorn_prereqs_existing_mount.stdout.split()[1] }}"
+      when: longhorn_prereqs_existing_mount.rc == 0
+
+    - name: Validate existing Longhorn mount identity
+      ansible.builtin.assert:
+        that:
+          - longhorn_prereqs_existing_mount.stdout.split() | length == 2
+          - longhorn_prereqs_existing_device is match('^/dev/')
+          - longhorn_prereqs_existing_fstype == 'ext4'
+        fail_msg: "Existing /var/lib/longhorn mount is not a supported raw ext4 block device."
+      when: longhorn_prereqs_existing_mount.rc == 0
+
+    - name: Wait for expanded Longhorn block device size
+      ansible.builtin.command: "blockdev --getsize64 {{ longhorn_prereqs_existing_device }}"
+      register: longhorn_prereqs_existing_device_size
+      changed_when: false
+      retries: 30
+      delay: 10
+      until:
+        - longhorn_prereqs_existing_device_size.rc == 0
+        - longhorn_prereqs_existing_device_size.stdout | int >= (longhorn_prereqs_data_volume_size | int * 1073741824 - 500000000)
+        - longhorn_prereqs_existing_device_size.stdout | int <= (longhorn_prereqs_data_volume_size | int * 1073741824 + 500000000)
+      when: longhorn_prereqs_existing_mount.rc == 0
+
+    - name: Grow existing Longhorn ext4 filesystem when the device is larger
       ansible.builtin.shell: |
         set -euo pipefail
 
-        SOURCE=$(findmnt -n --target /var/lib/longhorn --output SOURCE)
-        FSTYPE=$(findmnt -n --target /var/lib/longhorn --output FSTYPE)
-        SIZE=$(lsblk -bno SIZE "$SOURCE" | head -n 1)
+        SOURCE={{ longhorn_prereqs_existing_device | quote }}
+        DEVICE_BYTES=$(blockdev --getsize64 "$SOURCE")
+        BLOCK_COUNT=$(tune2fs -l "$SOURCE" 2>/dev/null | awk -F: '/^Block count:/ {gsub(/ /, "", $2); print $2}')
+        BLOCK_SIZE=$(tune2fs -l "$SOURCE" 2>/dev/null | awk -F: '/^Block size:/ {gsub(/ /, "", $2); print $2}')
+        FILESYSTEM_BYTES=$((BLOCK_COUNT * BLOCK_SIZE))
 
+        if (( DEVICE_BYTES - FILESYSTEM_BYTES > 16777216 )); then
+          resize2fs "$SOURCE"
+          echo "RESIZED"
+        else
+          echo "ALREADY_SIZED"
+        fi
+      args:
+        executable: /bin/bash
+      register: longhorn_prereqs_filesystem_grow
+      changed_when: "'RESIZED' in longhorn_prereqs_filesystem_grow.stdout_lines"
+      when: longhorn_prereqs_existing_mount.rc == 0
+
+    - name: Validate Longhorn ext4 filesystem reached target size
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        SOURCE={{ longhorn_prereqs_existing_device | quote }}
+        BLOCK_COUNT=$(tune2fs -l "$SOURCE" 2>/dev/null | awk -F: '/^Block count:/ {gsub(/ /, "", $2); print $2}')
+        BLOCK_SIZE=$(tune2fs -l "$SOURCE" 2>/dev/null | awk -F: '/^Block size:/ {gsub(/ /, "", $2); print $2}')
+        FILESYSTEM_BYTES=$((BLOCK_COUNT * BLOCK_SIZE))
         TARGET_SIZE=$(( {{ longhorn_prereqs_data_volume_size | int }} * 1024 * 1024 * 1024 ))
         MIN_SIZE=$((TARGET_SIZE - 500000000))
         MAX_SIZE=$((TARGET_SIZE + 500000000))
 
-        test "$FSTYPE" = "ext4"
-        test "$SIZE" -ge "$MIN_SIZE"
-        test "$SIZE" -le "$MAX_SIZE"
+        test "$FILESYSTEM_BYTES" -ge "$MIN_SIZE"
+        test "$FILESYSTEM_BYTES" -le "$MAX_SIZE"
       args:
         executable: /bin/bash
       changed_when: false

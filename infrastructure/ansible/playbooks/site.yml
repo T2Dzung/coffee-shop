@@ -56,5 +56,6 @@
 - name: Setup Longhorn Storage Prerequisites
   hosts: k3s_servers
   become: true
+  serial: 1
   roles:
     - longhorn_prereqs

@@ -44,6 +44,12 @@ module "ec2" {
   spot_type                           = var.spot_type
   spot_instance_interruption_behavior = var.spot_instance_interruption_behavior
 
+  # The community module's broad volume_tags setting also tries to manage
+  # separately attached EBS volumes. Keep root and Longhorn tag ownership
+  # disjoint: root tags live in root_block_device; dedicated data volumes are
+  # managed by their own aws_ebs_volume resources.
+  enable_volume_tags = false
+
   # Root block device configuration with encryption enabled
   root_block_device = [
     {
@@ -52,6 +58,13 @@ module "ec2" {
       volume_size = var.disk_size
       iops        = var.root_volume_iops
       throughput  = var.root_volume_throughput
+      tags = merge(
+        {
+          Environment = var.environment
+          ManagedBy   = "Terraform"
+        },
+        var.additional_tags
+      )
     }
   ]
 

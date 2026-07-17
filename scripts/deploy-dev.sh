@@ -134,6 +134,7 @@ API_ENDPOINT_PROVIDER=$(terraform -chdir="${DEV_TF_DIR}" output -raw active_api_
 ACTIVE_API_ENDPOINT=$(terraform -chdir="${DEV_TF_DIR}" output -raw active_api_endpoint)
 K3S_REGISTRATION_ENDPOINT=$(terraform -chdir="${DEV_TF_DIR}" output -raw k3s_registration_endpoint)
 K3S_TLS_SANS=$(terraform -chdir="${DEV_TF_DIR}" output -json k3s_tls_sans)
+LONGHORN_DATA_VOLUME_SIZE=$(terraform -chdir="${DEV_TF_DIR}" output -raw longhorn_data_volume_size)
 
 POSTGRES_BACKUP_BUCKET=$(terraform -chdir="${DEV_TF_DIR}" output -raw postgres_backup_bucket_name)
 POSTGRES_BACKUP_ACCESS_KEY=$(terraform -chdir="${DEV_TF_DIR}" output -raw postgres_backup_iam_access_key_id)
@@ -149,6 +150,7 @@ ansible-playbook \
   --extra-vars "active_api_endpoint=${ACTIVE_API_ENDPOINT}" \
   --extra-vars "k3s_registration_endpoint=${K3S_REGISTRATION_ENDPOINT}" \
   --extra-vars "{\"k3s_tls_sans\": ${K3S_TLS_SANS}}" \
+  --extra-vars "longhorn_prereqs_data_volume_size=${LONGHORN_DATA_VOLUME_SIZE}" \
   playbooks/site.yml
 
 ansible-playbook \

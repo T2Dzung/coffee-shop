@@ -97,6 +97,22 @@ fi
 
 shellcheck "${PROJECT_ROOT}/scripts/"*.sh
 
+# Terraform is the deployment source of truth. Keep the Ansible standalone
+# default aligned so a direct site.yml recovery cannot validate the wrong disk size.
+TF_LONGHORN_SIZE=$(awk '
+  /variable "longhorn_data_volume_size"/ { in_block=1 }
+  in_block && $1 == "default" { print $3; exit }
+  in_block && /^}/ { in_block=0 }
+' "${DEV_TF_DIR}/variables.tf")
+ANSIBLE_LONGHORN_SIZE=$(awk '$1 == "longhorn_prereqs_data_volume_size:" { print $2 }' \
+  "${ANSIBLE_DIR}/roles/longhorn_prereqs/defaults/main.yml")
+
+if [ "${TF_LONGHORN_SIZE}" != "${ANSIBLE_LONGHORN_SIZE}" ]; then
+  echo "Error: Longhorn data volume size mismatch between Terraform and Ansible." >&2
+  echo "Terraform: '${TF_LONGHORN_SIZE}' vs Ansible: '${ANSIBLE_LONGHORN_SIZE}'" >&2
+  exit 1
+fi
+
 if ! grep -Fxq '/infrastructure/k8s/gitops/apps/coffeeshop/base/secrets.yaml' "${PROJECT_ROOT}/.gitignore"; then
   echo "The runtime Kubernetes secret manifest is not ignored." >&2
   exit 1
