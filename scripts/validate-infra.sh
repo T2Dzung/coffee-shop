@@ -233,9 +233,15 @@ if ! grep -Fq 'tail_from_end = false' "${ALLOY_RENDERED}"; then
   exit 1
 fi
 
-if ! grep -F -A 3 'file_match {' "${ALLOY_RENDERED}" |
-  grep -Fq 'enabled     = true'; then
+if ! grep -F -A 4 'file_match {' "${ALLOY_RENDERED}" |
+  grep -Fq 'enabled           = true'; then
   echo "Error: Alloy must expand the globbed CRI log paths with file_match." >&2
+  exit 1
+fi
+
+if ! grep -F -A 4 'file_match {' "${ALLOY_RENDERED}" |
+  grep -Fq 'ignore_older_than = "1h"'; then
+  echo "Error: Alloy must bound historical CRI file replay to Loki's acceptance window." >&2
   exit 1
 fi
 
