@@ -165,6 +165,50 @@ helm template loki loki \
   --values "${K8S_DIR}/gitops/addons/loki/values.yaml" | kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}"
 
+# Validate version consistency and the rendered least-privilege contract for
+# the node-local Alloy log collector.
+ALLOY_VERSION_IN_ANSIBLE=$(grep 'alloy_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+ALLOY_VERSION_IN_GITOPS=$(grep 'chart: alloy' -A 1 "${K8S_DIR}/gitops/alloy-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+ALLOY_APP_VERSION_IN_ANSIBLE=$(grep 'alloy_app_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+
+if [ "${ALLOY_VERSION_IN_ANSIBLE}" != "${ALLOY_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for Alloy chart." >&2
+  echo "Ansible version: '${ALLOY_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${ALLOY_VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+ALLOY_RENDERED=$(mktemp --suffix=.yaml)
+trap 'rm -f "${ALLOY_RENDERED}"' EXIT
+
+helm template alloy alloy \
+  --repo https://grafana.github.io/helm-charts \
+  --version "${ALLOY_VERSION_IN_ANSIBLE}" \
+  --namespace observability \
+  --kube-version "${SCHEMA_VERSION}" \
+  --values "${K8S_DIR}/gitops/addons/alloy/values.yaml" >"${ALLOY_RENDERED}"
+
+kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" "${ALLOY_RENDERED}"
+
+if ! grep -q '^kind: DaemonSet$' "${ALLOY_RENDERED}"; then
+  echo "Error: Alloy must render as a DaemonSet." >&2
+  exit 1
+fi
+
+if ! grep -Fq "image: docker.io/grafana/alloy:${ALLOY_APP_VERSION_IN_ANSIBLE}" "${ALLOY_RENDERED}"; then
+  echo "Error: Rendered Alloy image does not match the app version contract." >&2
+  exit 1
+fi
+
+if grep -Eq '^[[:space:]]+- (secrets|configmaps)$' "${ALLOY_RENDERED}"; then
+  echo "Error: Alloy RBAC must not read Secrets or ConfigMaps." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'regex  = "cluster|namespace|workload|pod|container|service|level"' "${ALLOY_RENDERED}"; then
+  echo "Error: Alloy bounded Loki label allowlist is missing." >&2
+  exit 1
+fi
+
 # Validate version consistency for cloudnative-pg between Ansible and GitOps.
 # CNPG uses separate Helm chart and operator app versions; ArgoCD must pin the chart version.
 CNPG_VERSION_IN_ANSIBLE=$(grep 'cloudnativepg_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
