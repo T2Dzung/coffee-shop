@@ -109,6 +109,13 @@ alloy:
         forward_to              = [loki.process.pod_logs.receiver]
         tail_from_end           = true
         on_positions_file_error = "restart_from_end"
+
+        // __path__ contains a glob. Enable the source's built-in file matcher
+        // so Alloy expands it to the concrete CRI log files on this node.
+        file_match {
+          enabled     = true
+          sync_period = "10s"
+        }
       }
 
       loki.process "pod_logs" {

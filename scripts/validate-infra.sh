@@ -216,6 +216,12 @@ if ! grep -Fq 'regex  = "cluster|namespace|workload|pod|container|service|level"
   exit 1
 fi
 
+if ! grep -F -A 3 'file_match {' "${ALLOY_RENDERED}" |
+  grep -Fq 'enabled     = true'; then
+  echo "Error: Alloy must expand the globbed CRI log paths with file_match." >&2
+  exit 1
+fi
+
 # Validate version consistency for cloudnative-pg between Ansible and GitOps.
 # CNPG uses separate Helm chart and operator app versions; ArgoCD must pin the chart version.
 CNPG_VERSION_IN_ANSIBLE=$(grep 'cloudnativepg_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
