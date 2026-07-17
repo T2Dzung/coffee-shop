@@ -26,9 +26,9 @@ alloy:
       drop:
         - ALL
     readOnlyRootFilesystem: true
-    runAsGroup: 473
-    runAsNonRoot: true
-    runAsUser: 473
+    runAsGroup: 0
+    runAsNonRoot: false
+    runAsUser: 0
   resources:
     requests:
       cpu: 50m

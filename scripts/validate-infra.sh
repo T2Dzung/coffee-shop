@@ -199,6 +199,13 @@ if ! grep -Fq "image: docker.io/grafana/alloy:${ALLOY_APP_VERSION_IN_ANSIBLE}" "
   exit 1
 fi
 
+if ! grep -Fq 'runAsUser: 0' "${ALLOY_RENDERED}" ||
+  grep -Fq 'privileged: true' "${ALLOY_RENDERED}" ||
+  ! grep -Fq 'readOnlyRootFilesystem: true' "${ALLOY_RENDERED}"; then
+  echo "Error: Alloy host-log reader security boundary is not preserved." >&2
+  exit 1
+fi
+
 if grep -Eq '^[[:space:]]+- (secrets|configmaps)$' "${ALLOY_RENDERED}"; then
   echo "Error: Alloy RBAC must not read Secrets or ConfigMaps." >&2
   exit 1
