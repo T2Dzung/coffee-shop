@@ -143,6 +143,28 @@ if [ "${LONGHORN_VERSION_IN_ANSIBLE}" != "${LONGHORN_VERSION_IN_GITOPS}" ]; then
   exit 1
 fi
 
+# Validate version consistency for the Loki backend chart.
+LOKI_VERSION_IN_ANSIBLE=$(grep 'loki_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+LOKI_VERSION_IN_GITOPS=$(grep 'chart: loki' -A 1 "${K8S_DIR}/gitops/loki-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+
+if [ "${LOKI_VERSION_IN_ANSIBLE}" != "${LOKI_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for Loki chart." >&2
+  echo "Ansible version: '${LOKI_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${LOKI_VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+# Render the pinned remote chart with repository-owned values. This catches
+# chart schema/topology regressions that validating the Argo Application alone
+# cannot see. Network/schema failures must be reported as external blockers,
+# never treated as a manifest pass.
+helm template loki loki \
+  --repo https://grafana-community.github.io/helm-charts \
+  --version "${LOKI_VERSION_IN_ANSIBLE}" \
+  --namespace observability \
+  --kube-version "${SCHEMA_VERSION}" \
+  --values "${K8S_DIR}/gitops/addons/loki/values.yaml" | kubeconform \
+  "${KUBECONFORM_COMMON_ARGS[@]}"
+
 # Validate version consistency for cloudnative-pg between Ansible and GitOps.
 # CNPG uses separate Helm chart and operator app versions; ArgoCD must pin the chart version.
 CNPG_VERSION_IN_ANSIBLE=$(grep 'cloudnativepg_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
