@@ -12,7 +12,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/pkg/event"
 	"github.com/thangchung/go-coffeeshop/pkg/postgres"
 	"github.com/thangchung/go-coffeeshop/pkg/rabbitmq/publisher"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 var _ BaristaOrderedEventHandler = (*baristaOrderedEventHandler)(nil)
@@ -32,7 +32,7 @@ func NewBaristaOrderedEventHandler(pg postgres.DBEngine, counterPub publisher.Ev
 }
 
 func (h *baristaOrderedEventHandler) Handle(ctx context.Context, e event.BaristaOrdered) error {
-	slog.Info("received event", "event.BaristaOrdered", e)
+	slog.InfoContext(ctx, "barista order event received", "order_id", e.OrderID.String(), "item_line_id", e.ItemLineID.String())
 
 	order := domain.NewBaristaOrder(e)
 
@@ -58,7 +58,7 @@ func (h *baristaOrderedEventHandler) Handle(ctx context.Context, e event.Barista
 		},
 	})
 	if err != nil {
-		slog.Info("failed to call to repo", "error", err)
+		slog.ErrorContext(ctx, "failed to create barista order", "error", err, "order_id", e.OrderID.String())
 
 		return errors.Wrap(err, "baristaOrderedEventHandler-querier.CreateOrder")
 	}

@@ -8,38 +8,32 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/sirupsen/logrus"
 	"github.com/thangchung/go-coffeeshop/cmd/product/config"
 	"github.com/thangchung/go-coffeeshop/internal/product/app"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	"go.uber.org/automaxprocs/maxprocs"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
+	"log/slog"
 )
 
 func main() {
+	logger.SetDefault(logger.Config{Service: "product", Environment: logger.Environment(), Level: os.Getenv("LOG_LEVEL")})
+
 	// set GOMAXPROCS
 	_, err := maxprocs.Set()
 	if err != nil {
-		slog.Error("failed set max procs", err)
+		slog.Error("failed set max procs", "error", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cfg, err := config.NewConfig()
 	if err != nil {
-		slog.Error("failed get config", err)
+		slog.Error("failed get config", "error", err)
+		return
 	}
-
-	slog.Info("⚡ init app", "name", cfg.Name, "version", cfg.Version)
-
-	// set up logrus
-	logrus.SetFormatter(&logrus.JSONFormatter{})
-	logrus.SetOutput(os.Stdout)
-	logrus.SetLevel(logger.ConvertLogLevel(cfg.Log.Level))
-
-	// integrate Logrus with the slog logger
-	slog.New(logger.NewLogrusHandler(logrus.StandardLogger()))
+	logger.SetDefault(logger.Config{Service: cfg.Name, Environment: logger.Environment(), Version: cfg.Version, Level: cfg.Log.Level})
+	slog.Info("app initialized")
 
 	server := grpc.NewServer()
 
@@ -50,7 +44,7 @@ func main() {
 
 	_, err = app.InitApp(cfg, server)
 	if err != nil {
-		slog.Error("failed init app", err)
+		slog.Error("failed init app", "error", err)
 		cancel()
 	}
 
@@ -60,7 +54,7 @@ func main() {
 
 	l, err := net.Listen(network, address)
 	if err != nil {
-		slog.Error("failed to listen to address", err, "network", network, "address", address)
+		slog.Error("failed to listen to address", "error", err, "network", network, "address", address)
 		cancel()
 	}
 
@@ -68,13 +62,13 @@ func main() {
 
 	defer func() {
 		if err1 := l.Close(); err != nil {
-			slog.Error("failed to close", err1, "network", network, "address", address)
+			slog.Error("failed to close", "error", err1, "network", network, "address", address)
 		}
 	}()
 
 	err = server.Serve(l)
 	if err != nil {
-		slog.Error("failed start gRPC server", err, "network", network, "address", address)
+		slog.Error("failed start gRPC server", "error", err, "network", network, "address", address)
 		cancel()
 	}
 
@@ -83,8 +77,8 @@ func main() {
 
 	select {
 	case v := <-quit:
-		slog.Info("signal.Notify", v)
+		slog.Info("shutdown signal received", "signal", v.String())
 	case done := <-ctx.Done():
-		slog.Info("ctx.Done", done)
+		slog.Info("application context done", "error", done)
 	}
 }

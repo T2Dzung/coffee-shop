@@ -8,7 +8,7 @@ import (
 	"github.com/google/wire"
 	"github.com/pkg/errors"
 	"github.com/thangchung/go-coffeeshop/internal/counter/domain"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type usecase struct {
@@ -56,7 +56,7 @@ func (uc *usecase) PlaceOrder(ctx context.Context, model *domain.PlaceOrderModel
 		return errors.Wrap(err, "orderRepo.Create")
 	}
 
-	slog.Debug("order created", "order", *order)
+	slog.DebugContext(ctx, "order created", "order_id", order.ID.String(), "line_item_count", len(order.LineItems))
 
 	// todo: it might cause dual-write problem, but we accept it temporary
 	for _, event := range order.DomainEvents() {

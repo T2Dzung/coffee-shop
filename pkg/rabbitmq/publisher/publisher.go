@@ -9,7 +9,7 @@ import (
 	"github.com/google/wire"
 	"github.com/pkg/errors"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 const (

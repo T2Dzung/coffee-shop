@@ -8,15 +8,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/golang/glog"
 	gwruntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/sirupsen/logrus"
 	"github.com/thangchung/go-coffeeshop/cmd/proxy/config"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	gen "github.com/thangchung/go-coffeeshop/proto/gen"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"log/slog"
 )
 
 func newGateway(
@@ -66,18 +64,20 @@ func preflightHandler(w http.ResponseWriter, r *http.Request) {
 	methods := []string{"GET", "HEAD", "POST", "PUT", "DELETE"}
 	w.Header().Set("Access-Control-Allow-Methods", strings.Join(methods, ","))
 
-	slog.Info("preflight request", "http_path", r.URL.Path)
+	slog.InfoContext(r.Context(), "preflight request", "http_path", r.URL.Path)
 }
 
 func withLogger(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("Run request", "http_method", r.Method, "http_url", r.URL)
+		slog.InfoContext(r.Context(), "http request", "http_method", r.Method, "http_path", r.URL.Path)
 
 		h.ServeHTTP(w, r)
 	})
 }
 
 func main() {
+	logger.SetDefault(logger.Config{Service: "proxy", Environment: logger.Environment(), Level: os.Getenv("LOG_LEVEL")})
+
 	ctx := context.Background()
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -85,22 +85,18 @@ func main() {
 
 	cfg, err := config.NewConfig()
 	if err != nil {
-		glog.Fatalf("Config error: %s", err)
+		slog.Error("failed get config", "error", err)
+		return
 	}
-
-	// set up logrus
-	logrus.SetFormatter(&logrus.JSONFormatter{})
-	logrus.SetOutput(os.Stdout)
-	logrus.SetLevel(logger.ConvertLogLevel(cfg.Log.Level))
-
-	// integrate Logrus with the slog logger
-	slog.New(logger.NewLogrusHandler(logrus.StandardLogger()))
+	logger.SetDefault(logger.Config{Service: cfg.Name, Environment: logger.Environment(), Version: cfg.Version, Level: cfg.Log.Level})
+	slog.Info("app initialized")
 
 	mux := http.NewServeMux()
 
 	gw, err := newGateway(ctx, cfg, nil)
 	if err != nil {
-		slog.Error("failed to create a new gateway", err)
+		slog.ErrorContext(ctx, "failed to create a new gateway", "error", err)
+		return
 	}
 
 	mux.Handle("/", gw)
@@ -115,13 +111,13 @@ func main() {
 		slog.Info("shutting down the http server")
 
 		if err := s.Shutdown(context.Background()); err != nil {
-			slog.Error("failed to shutdown http server", err)
+			slog.ErrorContext(ctx, "failed to shutdown http server", "error", err)
 		}
 	}()
 
 	slog.Info("start listening...", "address", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 
 	if err := s.ListenAndServe(); errors.Is(err, http.ErrServerClosed) {
-		slog.Error("failed to listen and serve", err)
+		slog.ErrorContext(ctx, "failed to listen and serve", "error", err)
 	}
 }

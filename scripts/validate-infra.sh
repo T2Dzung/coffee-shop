@@ -228,7 +228,7 @@ if grep -F -B 4 'name: alloy-storage' "${ALLOY_RENDERED}" |
   exit 1
 fi
 
-if ! grep -Fq 'tail_from_end = false' "${ALLOY_RENDERED}"; then
+if ! grep -Eq 'tail_from_end[[:space:]]*=[[:space:]]*false' "${ALLOY_RENDERED}"; then
   echo "Error: Alloy must read new CRI files from the beginning after positions migration." >&2
   exit 1
 fi

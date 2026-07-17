@@ -12,7 +12,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/pkg/event"
 	"github.com/thangchung/go-coffeeshop/pkg/postgres"
 	pkgPublisher "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/publisher"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type kitchenOrderedEventHandler struct {
@@ -35,7 +35,7 @@ func NewKitchenOrderedEventHandler(
 }
 
 func (h *kitchenOrderedEventHandler) Handle(ctx context.Context, e event.KitchenOrdered) error {
-	slog.Info("kitchenOrderedEventHandler-Handle", "KitchenOrdered", e)
+	slog.InfoContext(ctx, "kitchen order event received", "order_id", e.OrderID.String(), "item_line_id", e.ItemLineID.String())
 
 	order := domain.NewKitchenOrder(e)
 
@@ -62,7 +62,7 @@ func (h *kitchenOrderedEventHandler) Handle(ctx context.Context, e event.Kitchen
 		},
 	})
 	if err != nil {
-		slog.Info("failed to call to repo", "error", err)
+		slog.ErrorContext(ctx, "failed to create kitchen order", "error", err, "order_id", e.OrderID.String())
 
 		return errors.Wrap(err, "kitchenOrderedEventHandler-querier.CreateOrder")
 	}

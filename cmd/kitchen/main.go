@@ -7,14 +7,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/sirupsen/logrus"
 	"github.com/thangchung/go-coffeeshop/cmd/kitchen/config"
 	"github.com/thangchung/go-coffeeshop/internal/kitchen/app"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	"github.com/thangchung/go-coffeeshop/pkg/postgres"
 	"github.com/thangchung/go-coffeeshop/pkg/rabbitmq"
 	"go.uber.org/automaxprocs/maxprocs"
-	"golang.org/x/exp/slog"
+	"log/slog"
 
 	pkgConsumer "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/consumer"
 	pkgPublisher "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/publisher"
@@ -23,32 +22,27 @@ import (
 )
 
 func main() {
+	logger.SetDefault(logger.Config{Service: "kitchen", Environment: logger.Environment(), Level: os.Getenv("LOG_LEVEL")})
+
 	// set GOMAXPROCS
 	_, err := maxprocs.Set()
 	if err != nil {
-		slog.Error("failed set max procs", err)
+		slog.Error("failed set max procs", "error", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cfg, err := config.NewConfig()
 	if err != nil {
-		slog.Error("failed get config", err)
+		slog.Error("failed get config", "error", err)
+		return
 	}
-
-	slog.Info("⚡ init app", "name", cfg.Name, "version", cfg.Version)
-
-	// set up logrus
-	logrus.SetFormatter(&logrus.JSONFormatter{})
-	logrus.SetOutput(os.Stdout)
-	logrus.SetLevel(logger.ConvertLogLevel(cfg.Log.Level))
-
-	// integrate Logrus with the slog logger
-	slog.New(logger.NewLogrusHandler(logrus.StandardLogger()))
+	logger.SetDefault(logger.Config{Service: cfg.Name, Environment: logger.Environment(), Version: cfg.Version, Level: cfg.Log.Level})
+	slog.Info("app initialized")
 
 	a, cleanup, err := app.InitApp(cfg, postgres.DBConnString(cfg.PG.DsnURL), rabbitmq.RabbitMQConnStr(cfg.RabbitMQ.URL))
 	if err != nil {
-		slog.Error("failed init app", err)
+		slog.ErrorContext(ctx, "failed init app", "error", err)
 		cancel()
 	}
 
@@ -70,7 +64,7 @@ func main() {
 	go func() {
 		err := a.Consumer.StartConsumer(a.Worker)
 		if err != nil {
-			slog.Error("failed to start Consumer", err)
+			slog.ErrorContext(ctx, "failed to start consumer", "error", err)
 			cancel()
 		}
 	}()
@@ -81,9 +75,9 @@ func main() {
 	select {
 	case v := <-quit:
 		cleanup()
-		slog.Info("signal.Notify", v)
+		slog.Info("shutdown signal received", "signal", v.String())
 	case done := <-ctx.Done():
 		cleanup()
-		slog.Info("ctx.Done", done)
+		slog.Info("application context done", "error", done)
 	}
 }
