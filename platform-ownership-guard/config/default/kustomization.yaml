@@ -1,0 +1,16 @@
+namespace: platform-ownership-guard-system
+
+namePrefix: platform-ownership-guard-
+
+resources:
+- ../crd
+- ../rbac
+- ../manager
+
+# Metrics, webhooks, Events and leader election are deliberately deferred.
+# Phase 6.4 runs one replica with health/readiness probes and zero target writes.
+
+# +kubebuilder:scaffold:crdkustomizecainjectionns
+# +kubebuilder:scaffold:crdkustomizecainjectionname
+# +kubebuilder:scaffold:webhookcainjectionns
+# +kubebuilder:scaffold:webhookcainjectionname

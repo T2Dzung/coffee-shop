@@ -1,0 +1,20 @@
+apiVersion: guard.platform.t2dzung.github.io/v1alpha1
+kind: OwnershipAudit
+metadata:
+  labels:
+    app.kubernetes.io/name: platform-ownership-guard
+    app.kubernetes.io/managed-by: kustomize
+  name: coffeeshop-ownership
+  namespace: coffeeshop
+spec:
+  applicationRefs:
+  - namespace: argocd
+    name: coffeeshop-rabbitmq
+  detectors:
+  - ArgoPruneRisk
+  - StaleOwnerReference
+  targetRules:
+  - apiGroup: apps
+    version: v1
+    kind: ReplicaSet
+  resyncInterval: 10m
