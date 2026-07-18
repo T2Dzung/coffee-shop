@@ -178,7 +178,7 @@ if [ "${ALLOY_VERSION_IN_ANSIBLE}" != "${ALLOY_VERSION_IN_GITOPS}" ]; then
 fi
 
 ALLOY_RENDERED=$(mktemp --suffix=.yaml)
-trap 'rm -f "${ALLOY_RENDERED}"' EXIT
+trap 'rm -f "${ALLOY_RENDERED}" "${TEMPO_RENDERED:-}" "${OTEL_RENDERED:-}"' EXIT
 
 helm template alloy alloy \
   --repo https://grafana.github.io/helm-charts \
@@ -242,6 +242,131 @@ fi
 if ! grep -F -A 4 'file_match {' "${ALLOY_RENDERED}" |
   grep -Fq 'ignore_older_than = "1h"'; then
   echo "Error: Alloy must bound historical CRI file replay to Loki's acceptance window." >&2
+  exit 1
+fi
+
+# Validate Tempo and the OpenTelemetry Collector as separate internal trace
+# backend/gateway failure domains. Rendered config assertions prevent remote
+# chart defaults from silently enabling extra protocols or signal pipelines.
+TEMPO_VERSION_IN_ANSIBLE=$(grep 'tempo_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+TEMPO_VERSION_IN_GITOPS=$(grep 'chart: tempo' -A 1 "${K8S_DIR}/gitops/tempo-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+TEMPO_APP_VERSION_IN_ANSIBLE=$(grep 'tempo_app_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+
+if [ "${TEMPO_VERSION_IN_ANSIBLE}" != "${TEMPO_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for Tempo chart." >&2
+  echo "Ansible version: '${TEMPO_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${TEMPO_VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+OTEL_VERSION_IN_ANSIBLE=$(grep 'otel_collector_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+OTEL_VERSION_IN_GITOPS=$(grep 'chart: opentelemetry-collector' -A 1 "${K8S_DIR}/gitops/otel-collector-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+OTEL_APP_VERSION_IN_ANSIBLE=$(grep 'otel_collector_app_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
+
+if [ "${OTEL_VERSION_IN_ANSIBLE}" != "${OTEL_VERSION_IN_GITOPS}" ]; then
+  echo "Error: Version mismatch for OpenTelemetry Collector chart." >&2
+  echo "Ansible version: '${OTEL_VERSION_IN_ANSIBLE}' vs GitOps targetRevision: '${OTEL_VERSION_IN_GITOPS}'" >&2
+  exit 1
+fi
+
+TEMPO_RENDERED=$(mktemp --suffix=.yaml)
+OTEL_RENDERED=$(mktemp --suffix=.yaml)
+
+helm template tempo tempo \
+  --repo https://grafana-community.github.io/helm-charts \
+  --version "${TEMPO_VERSION_IN_ANSIBLE}" \
+  --namespace observability \
+  --kube-version "${SCHEMA_VERSION}" \
+  --values "${K8S_DIR}/gitops/addons/tempo/values.yaml" >"${TEMPO_RENDERED}"
+
+helm template otel-collector opentelemetry-collector \
+  --repo https://open-telemetry.github.io/opentelemetry-helm-charts \
+  --version "${OTEL_VERSION_IN_ANSIBLE}" \
+  --namespace observability \
+  --kube-version "${SCHEMA_VERSION}" \
+  --values "${K8S_DIR}/gitops/addons/otel-collector/values.yaml" >"${OTEL_RENDERED}"
+
+kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" "${TEMPO_RENDERED}" "${OTEL_RENDERED}"
+
+TEMPO_CONFIG=$(awk '
+  /tempo.yaml: \|/ { in_config=1; next }
+  in_config && /^---$/ { exit }
+  in_config { print }
+' "${TEMPO_RENDERED}")
+
+if ! grep -q '^kind: StatefulSet$' "${TEMPO_RENDERED}" ||
+  ! grep -Fq "image: docker.io/grafana/tempo:${TEMPO_APP_VERSION_IN_ANSIBLE}" "${TEMPO_RENDERED}" ||
+  ! grep -Fq 'storageClassName: longhorn-observability' "${TEMPO_RENDERED}" ||
+  ! grep -Eq 'storage: ?"?1Gi"?' "${TEMPO_RENDERED}"; then
+  echo "Error: Tempo monolithic image/PVC contract is not preserved." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'block_retention: 72h' <<<"${TEMPO_CONFIG}" ||
+  ! grep -Fq 'backend: local' <<<"${TEMPO_CONFIG}" ||
+  grep -Eq 'jaeger:|zipkin:' <<<"${TEMPO_CONFIG}"; then
+  echo "Error: Tempo must use 72h local storage and OTLP-only receivers." >&2
+  exit 1
+fi
+
+if grep -Eq '^kind: (Ingress|HTTPRoute)$|type: (LoadBalancer|NodePort)' "${TEMPO_RENDERED}" ||
+  ! grep -Fq 'automountServiceAccountToken: false' "${TEMPO_RENDERED}" ||
+  ! grep -Fq 'readOnlyRootFilesystem: true' "${TEMPO_RENDERED}"; then
+  echo "Error: Tempo internal-only/security boundary is not preserved." >&2
+  exit 1
+fi
+
+OTEL_CONFIG=$(awk '
+  /relay: \|/ { in_config=1; next }
+  in_config && /^---$/ { exit }
+  in_config { print }
+' "${OTEL_RENDERED}")
+
+if ! grep -q '^kind: Deployment$' "${OTEL_RENDERED}" ||
+  ! grep -Fq "image: \"otel/opentelemetry-collector-contrib:${OTEL_APP_VERSION_IN_ANSIBLE}\"" "${OTEL_RENDERED}" ||
+  grep -q '^kind: ClusterRole$' "${OTEL_RENDERED}"; then
+  echo "Error: Collector deployment/image/no-RBAC contract is not preserved." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'queue_size: 500' <<<"${OTEL_CONFIG}" ||
+  ! grep -Fq 'max_elapsed_time: 60s' <<<"${OTEL_CONFIG}" ||
+  ! grep -Fq 'memory_limiter' <<<"${OTEL_CONFIG}" ||
+  ! grep -Fq 'batch' <<<"${OTEL_CONFIG}"; then
+  echo "Error: Collector must have one bounded traces-only pipeline." >&2
+  exit 1
+fi
+
+OTEL_PIPELINES=$(awk '
+  /^      pipelines:$/ { in_pipelines=1; next }
+  in_pipelines && /^      [^[:space:]]/ { exit }
+  in_pipelines { print }
+' <<<"${OTEL_CONFIG}")
+
+if ! grep -Eq '^        traces:$' <<<"${OTEL_PIPELINES}" ||
+  grep -Eq '^        (logs|metrics):$' <<<"${OTEL_PIPELINES}"; then
+  echo "Error: Collector must expose only a traces pipeline." >&2
+  exit 1
+fi
+
+if grep -Eq 'jaeger|zipkin|hostPort:|^kind: (Ingress|HTTPRoute)$|type: (LoadBalancer|NodePort)' "${OTEL_RENDERED}" ||
+  ! grep -Fq 'automountServiceAccountToken: false' "${OTEL_RENDERED}" ||
+  ! grep -Fq 'readOnlyRootFilesystem: true' "${OTEL_RENDERED}"; then
+  echo "Error: Collector OTLP-only/internal/security boundary is not preserved." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'url: http://tempo.observability.svc.cluster.local:3200' \
+  "${K8S_DIR}/gitops/addons/monitoring/values.yaml"; then
+  echo "Error: Grafana Tempo datasource is missing or not internal-only." >&2
+  exit 1
+fi
+
+OBSERVABILITY_POLICIES=$(kubectl kustomize "${K8S_DIR}/gitops/addons/observability-policies")
+if ! grep -Fq 'name: tempo-ingress' <<<"${OBSERVABILITY_POLICIES}" ||
+  ! grep -Fq 'name: otel-collector-ingress-egress' <<<"${OBSERVABILITY_POLICIES}" ||
+  ! grep -Fq 'port: 4317' <<<"${OBSERVABILITY_POLICIES}" ||
+  ! grep -Fq 'port: 4318' <<<"${OBSERVABILITY_POLICIES}"; then
+  echo "Error: Tempo/Collector internal NetworkPolicies are incomplete." >&2
   exit 1
 fi
 
