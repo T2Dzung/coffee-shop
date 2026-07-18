@@ -16,6 +16,8 @@ import (
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	"github.com/thangchung/go-coffeeshop/pkg/telemetry"
 	gen "github.com/thangchung/go-coffeeshop/proto/gen"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"log/slog"
@@ -30,7 +32,7 @@ func newGateway(
 	counterEndpoint := fmt.Sprintf("%s:%d", cfg.CounterHost, cfg.CounterPort)
 
 	mux := gwruntime.NewServeMux(opts...)
-	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler())}
 
 	err := gen.RegisterProductServiceHandlerFromEndpoint(ctx, mux, productEndpoint, dialOpts)
 	if err != nil {
@@ -68,12 +70,12 @@ func preflightHandler(w http.ResponseWriter, r *http.Request) {
 	methods := []string{"GET", "HEAD", "POST", "PUT", "DELETE"}
 	w.Header().Set("Access-Control-Allow-Methods", strings.Join(methods, ","))
 
-	slog.InfoContext(r.Context(), "preflight request", "http_path", r.URL.Path)
+	logger.InfoContext(r.Context(), "preflight request", "http_path", r.URL.Path)
 }
 
 func withLogger(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.InfoContext(r.Context(), "http request", "http_method", r.Method, "http_path", r.URL.Path)
+		logger.InfoContext(r.Context(), "http request", "http_method", r.Method, "http_path", r.URL.Path)
 
 		h.ServeHTTP(w, r)
 	})
@@ -123,7 +125,7 @@ func main() {
 
 	s := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler: allowCORS(withLogger(mux)),
+		Handler: otelhttp.NewHandler(allowCORS(withLogger(mux)), "HTTP /"),
 	}
 
 	go func() {

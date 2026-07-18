@@ -2,10 +2,13 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestNewWritesJSONWithStableAttributesAndGroups(t *testing.T) {
@@ -63,6 +66,25 @@ func TestLoggerRedactsSecretAttributes(t *testing.T) {
 	log.Error("database connection failed", "error", "connection refused", "dsn", secret)
 	if strings.Contains(output.String(), secret) || strings.Contains(output.String(), "postgres://") || !strings.Contains(output.String(), redactedValue) {
 		t.Fatalf("secret leaked into log: %q", output.String())
+	}
+}
+
+func TestWithTraceAddsIDsOnlyForValidSpanContext(t *testing.T) {
+	var output bytes.Buffer
+	log := New(Config{Service: "proxy", Environment: "test", Writer: &output})
+	traceID, _ := trace.TraceIDFromHex("0123456789abcdef0123456789abcdef")
+	spanID, _ := trace.SpanIDFromHex("0123456789abcdef")
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled}))
+	WithTrace(ctx, log).InfoContext(ctx, "with trace")
+	record := decodeRecord(t, output.String())
+	if record["trace_id"] != traceID.String() || record["span_id"] != spanID.String() {
+		t.Fatalf("missing trace correlation fields: %#v", record)
+	}
+	output.Reset()
+	WithTrace(context.Background(), log).Info("without trace")
+	record = decodeRecord(t, output.String())
+	if _, exists := record["trace_id"]; exists {
+		t.Fatalf("background context must not emit trace_id: %#v", record)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/product/app"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	"github.com/thangchung/go-coffeeshop/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/automaxprocs/maxprocs"
 	"google.golang.org/grpc"
 	"log/slog"
@@ -57,7 +58,7 @@ func main() {
 		}
 	}()
 
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 
 	go func() {
 		defer server.GracefulStop()

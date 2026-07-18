@@ -12,6 +12,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/counter/domain"
 	shared "github.com/thangchung/go-coffeeshop/internal/pkg/shared_kernel"
 	gen "github.com/thangchung/go-coffeeshop/proto/gen"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -25,7 +26,7 @@ var _ domain.ProductDomainService = (*productGRPCClient)(nil)
 var ProductGRPCClientSet = wire.NewSet(NewGRPCProductClient)
 
 func NewGRPCProductClient(cfg *config.Config) (domain.ProductDomainService, error) {
-	conn, err := grpc.Dial(cfg.ProductClient.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(cfg.ProductClient.URL, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return nil, err
 	}
