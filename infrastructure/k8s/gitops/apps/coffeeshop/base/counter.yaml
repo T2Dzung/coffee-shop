@@ -50,6 +50,26 @@ spec:
                 configMapKeyRef:
                   name: coffeeshop-config
                   key: PRODUCT_CLIENT_URL
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_TRACES_SAMPLER
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: OTEL_TRACES_SAMPLER
+            - name: OTEL_TRACES_SAMPLER_ARG
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: OTEL_TRACES_SAMPLER_ARG
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: coffeeshop-config
+                  key: OTEL_RESOURCE_ATTRIBUTES
           ports:
             - containerPort: 5002
               name: http-grpc

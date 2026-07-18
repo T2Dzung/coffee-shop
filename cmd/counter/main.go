@@ -2,17 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/thangchung/go-coffeeshop/cmd/counter/config"
 	"github.com/thangchung/go-coffeeshop/internal/counter/app"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	"github.com/thangchung/go-coffeeshop/pkg/postgres"
 	"github.com/thangchung/go-coffeeshop/pkg/rabbitmq"
+	"github.com/thangchung/go-coffeeshop/pkg/telemetry"
 	"go.uber.org/automaxprocs/maxprocs"
 	"google.golang.org/grpc"
 	"log/slog"
@@ -32,7 +35,8 @@ func main() {
 		slog.Error("failed set max procs", "error", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, err := config.NewConfig()
 	if err != nil {
@@ -42,6 +46,24 @@ func main() {
 	logger.SetDefault(logger.Config{Service: cfg.Name, Environment: logger.Environment(), Version: cfg.Version, Level: cfg.Log.Level})
 	slog.Info("app initialized")
 
+	telCfg, err := telemetry.ParseConfig(cfg.Name, logger.Environment(), cfg.Version)
+	if err != nil {
+		slog.Error("failed to parse telemetry config", "error", err)
+		return
+	}
+	telemetryShutdown, err := telemetry.New(telCfg)
+	if err != nil {
+		slog.Error("failed to init telemetry", "error", err)
+		return
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := telemetryShutdown(shutdownCtx); err != nil {
+			slog.Error("failed to shutdown telemetry", "error", err)
+		}
+	}()
+
 	server := grpc.NewServer()
 
 	go func() {
@@ -49,7 +71,7 @@ func main() {
 		<-ctx.Done()
 	}()
 
-	cleanup := prepareApp(ctx, cancel, cfg, server)
+	cleanup := prepareApp(ctx, stop, cfg, server)
 
 	// gRPC Server.
 	address := fmt.Sprintf("%s:%d", cfg.HTTP.Host, cfg.HTTP.Port)
@@ -58,37 +80,23 @@ func main() {
 	l, err := net.Listen(network, address)
 	if err != nil {
 		slog.Error("failed to listen to address", "error", err, "network", network, "address", address)
-		cancel()
-		<-ctx.Done()
+		return
 	}
 
 	slog.Info("🌏 start server...", "address", address)
 
 	defer func() {
-		if err1 := l.Close(); err != nil {
+		if err1 := l.Close(); err != nil && !errors.Is(err1, net.ErrClosed) {
 			slog.Error("failed to close", "error", err1, "network", network, "address", address)
-			<-ctx.Done()
 		}
 	}()
 
 	err = server.Serve(l)
-	if err != nil {
+	if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		slog.Error("failed start gRPC server", "error", err, "network", network, "address", address)
-		cancel()
-		<-ctx.Done()
 	}
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-
-	select {
-	case v := <-quit:
-		cleanup()
-		slog.Info("shutdown signal received", "signal", v.String())
-	case done := <-ctx.Done():
-		cleanup()
-		slog.Info("application context done", "error", done)
-	}
+	cleanup()
 }
 
 func prepareApp(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, server *grpc.Server) func() {

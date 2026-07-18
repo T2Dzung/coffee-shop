@@ -361,6 +361,29 @@ if ! grep -Fq 'url: http://tempo.observability.svc.cluster.local:3200' \
   exit 1
 fi
 
+# The application SDK lifecycle is intentionally enabled only for the first
+# three synchronous services. Keep their shared OTLP endpoint and sampling
+# configuration Git-managed so an image rollout cannot silently fall back to
+# localhost or a different sampler.
+COFFEESHOP_CONFIG="${K8S_DIR}/gitops/apps/coffeeshop/base/configmap.yaml"
+if ! grep -Fq 'OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"' "${COFFEESHOP_CONFIG}" ||
+  ! grep -Fq 'OTEL_TRACES_SAMPLER: "parentbased_traceidratio"' "${COFFEESHOP_CONFIG}" ||
+  ! grep -Fq 'OTEL_TRACES_SAMPLER_ARG: "1.0"' "${COFFEESHOP_CONFIG}" ||
+  ! grep -Fq 'OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=dev"' "${COFFEESHOP_CONFIG}"; then
+  echo "Error: CoffeeShop DEV OpenTelemetry config contract is incomplete." >&2
+  exit 1
+fi
+
+for workload in proxy counter product; do
+  workload_manifest="${K8S_DIR}/gitops/apps/coffeeshop/base/${workload}.yaml"
+  for telemetry_env in OTEL_EXPORTER_OTLP_ENDPOINT OTEL_TRACES_SAMPLER OTEL_TRACES_SAMPLER_ARG OTEL_RESOURCE_ATTRIBUTES; do
+    if ! grep -Fq "name: ${telemetry_env}" "${workload_manifest}"; then
+      echo "Error: CoffeeShop ${workload} is missing ${telemetry_env}." >&2
+      exit 1
+    fi
+  done
+done
+
 OBSERVABILITY_POLICIES=$(kubectl kustomize "${K8S_DIR}/gitops/addons/observability-policies")
 if ! grep -Fq 'name: tempo-ingress' <<<"${OBSERVABILITY_POLICIES}" ||
   ! grep -Fq 'name: otel-collector-ingress-egress' <<<"${OBSERVABILITY_POLICIES}" ||

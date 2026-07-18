@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	gwruntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/thangchung/go-coffeeshop/cmd/proxy/config"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
+	"github.com/thangchung/go-coffeeshop/pkg/telemetry"
 	gen "github.com/thangchung/go-coffeeshop/proto/gen"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -78,10 +82,8 @@ func withLogger(h http.Handler) http.Handler {
 func main() {
 	logger.SetDefault(logger.Config{Service: "proxy", Environment: logger.Environment(), Level: os.Getenv("LOG_LEVEL")})
 
-	ctx := context.Background()
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, err := config.NewConfig()
 	if err != nil {
@@ -90,6 +92,24 @@ func main() {
 	}
 	logger.SetDefault(logger.Config{Service: cfg.Name, Environment: logger.Environment(), Version: cfg.Version, Level: cfg.Log.Level})
 	slog.Info("app initialized")
+
+	telCfg, err := telemetry.ParseConfig(cfg.Name, logger.Environment(), cfg.Version)
+	if err != nil {
+		slog.Error("failed to parse telemetry config", "error", err)
+		return
+	}
+	telemetryShutdown, err := telemetry.New(telCfg)
+	if err != nil {
+		slog.Error("failed to init telemetry", "error", err)
+		return
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := telemetryShutdown(shutdownCtx); err != nil {
+			slog.Error("failed to shutdown telemetry", "error", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 
@@ -109,15 +129,16 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutting down the http server")
-
-		if err := s.Shutdown(context.Background()); err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := s.Shutdown(shutdownCtx); err != nil {
 			slog.ErrorContext(ctx, "failed to shutdown http server", "error", err)
 		}
 	}()
 
 	slog.Info("start listening...", "address", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 
-	if err := s.ListenAndServe(); errors.Is(err, http.ErrServerClosed) {
+	if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.ErrorContext(ctx, "failed to listen and serve", "error", err)
 	}
 }

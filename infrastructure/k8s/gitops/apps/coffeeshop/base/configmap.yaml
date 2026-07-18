@@ -19,3 +19,8 @@ data:
   REVERSE_PROXY_URL: "/api"
   WEB_PORT: "8888"
   IN_DOCKER: "true"
+
+  OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=dev"
