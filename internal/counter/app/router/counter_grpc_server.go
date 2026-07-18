@@ -89,6 +89,7 @@ func (g *counterGRPCServer) PlaceOrder(
 
 	loyaltyMemberID, err := uuid.Parse(request.LoyaltyMemberId)
 	if err != nil {
+		logger.ErrorContext(ctx, "invalid place order request", "rpc_method", "PlaceOrder", "error", err)
 		return nil, errors.Wrap(err, "uuid.Parse")
 	}
 
