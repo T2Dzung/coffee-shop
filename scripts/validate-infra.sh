@@ -384,6 +384,20 @@ for workload in proxy counter product; do
   done
 done
 
+# ARC runner Pods share one persistent Longhorn RWX cache. Each CD matrix
+# service must own separate module/build directories; sharing one GOMODCACHE
+# caused concurrent Go download lock I/O failures.
+CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/cd.yml"
+ARC_RUNNER_VALUES="${K8S_DIR}/gitops/addons/arc/runner-values.yaml"
+if ! grep -Fq 'GOMODCACHE: /go-cache/mod/${{ matrix.service }}' "${CD_WORKFLOW}" ||
+  ! grep -Fq 'GOCACHE: /go-cache/build/${{ matrix.service }}' "${CD_WORKFLOW}" ||
+  ! grep -Fq 'TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache/${{ matrix.service }}' "${CD_WORKFLOW}" ||
+  ! grep -Fq 'mountPath: /go-cache' "${ARC_RUNNER_VALUES}" ||
+  grep -Fq 'GOMODCACHE: /go/pkg/mod' "${CD_WORKFLOW}"; then
+  echo "Error: ARC/CD service-partitioned cache contract is not preserved." >&2
+  exit 1
+fi
+
 OBSERVABILITY_POLICIES=$(kubectl kustomize "${K8S_DIR}/gitops/addons/observability-policies")
 if ! grep -Fq 'name: tempo-ingress' <<<"${OBSERVABILITY_POLICIES}" ||
   ! grep -Fq 'name: otel-collector-ingress-egress' <<<"${OBSERVABILITY_POLICIES}" ||

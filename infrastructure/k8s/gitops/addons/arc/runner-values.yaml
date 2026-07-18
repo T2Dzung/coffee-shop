@@ -64,7 +64,7 @@ template:
             memory: "512Mi"
         volumeMounts:
           - name: go-cache
-            mountPath: /go/pkg/mod
+            mountPath: /go-cache
 
     volumes:
       - name: go-cache

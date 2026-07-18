@@ -8,9 +8,6 @@ concurrency:
   group: cd-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GOMODCACHE: /go/pkg/mod
-
 jobs:
   # 1. Path Filtering for Monorepo Optimization
   detect-changes:
@@ -112,12 +109,15 @@ jobs:
 
       - name: Build Go Binary
         env:
-          GOCACHE: /go/pkg/mod/.go-build-cache/${{ matrix.service }}
+          # Longhorn RWX persists across ephemeral runners. Partition both Go
+          # caches by service so matrix jobs never contend for the same locks.
+          GOMODCACHE: /go-cache/mod/${{ matrix.service }}
+          GOCACHE: /go-cache/build/${{ matrix.service }}
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: amd64
         run: |
-          mkdir -p ./bin
+          mkdir -p ./bin "$GOMODCACHE" "$GOCACHE"
           go build -v -tags migrate -ldflags="-w -s" -o ./bin/${{ matrix.service }} ./cmd/${{ matrix.service }}
 
       - name: Set up Docker Buildx
@@ -135,7 +135,9 @@ jobs:
       - name: Trivy Container Image Scan (DevSecOps Gate)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
-          TRIVY_CACHE_DIR: /go/pkg/mod/.trivy-cache
+          # Trivy's cache is job-local; it must not contend with Go module
+          # cache writes on the shared RWX volume.
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache/${{ matrix.service }}
         with:
           version: 'v0.72.0'
           image-ref: go-coffeeshop-${{ matrix.service }}:${{ github.sha }}
