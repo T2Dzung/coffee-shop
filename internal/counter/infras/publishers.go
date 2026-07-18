@@ -29,7 +29,7 @@ func NewBaristaEventPublisher(pub publisher.EventPublisher) orders.BaristaEventP
 }
 
 func (p *baristaEventPublisher) Configure(opts ...publisher.Option) {
-	p.pub.Configure(opts...)
+	p.pub = p.pub.Configure(opts...)
 }
 
 func (p *baristaEventPublisher) Publish(ctx context.Context, body []byte, contentType string) error {
@@ -43,7 +43,7 @@ func NewKitchenEventPublisher(pub publisher.EventPublisher) orders.KitchenEventP
 }
 
 func (p *kitchenEventPublisher) Configure(opts ...publisher.Option) {
-	p.pub.Configure(opts...)
+	p.pub = p.pub.Configure(opts...)
 }
 
 func (p *kitchenEventPublisher) Publish(ctx context.Context, body []byte, contentType string) error {

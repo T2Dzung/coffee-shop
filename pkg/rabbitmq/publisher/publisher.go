@@ -51,11 +51,12 @@ func NewPublisher(amqpConn *amqp.Connection) (EventPublisher, error) {
 }
 
 func (p *publisher) Configure(opts ...Option) EventPublisher {
+	configured := *p
 	for _, opt := range opts {
-		opt(p)
+		opt(&configured)
 	}
 
-	return p
+	return &configured
 }
 
 func (p *publisher) PublishEvents(ctx context.Context, events []any) error {

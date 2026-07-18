@@ -18,3 +18,7 @@ func WithTrace(ctx context.Context, log *slog.Logger) *slog.Logger {
 func InfoContext(ctx context.Context, msg string, args ...any) {
 	WithTrace(ctx, slog.Default()).InfoContext(ctx, msg, args...)
 }
+
+func ErrorContext(ctx context.Context, msg string, args ...any) {
+	WithTrace(ctx, slog.Default()).ErrorContext(ctx, msg, args...)
+}
