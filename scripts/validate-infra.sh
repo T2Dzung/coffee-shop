@@ -389,6 +389,9 @@ done
 # caused concurrent Go download lock I/O failures.
 CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/cd.yml"
 ARC_RUNNER_VALUES="${K8S_DIR}/gitops/addons/arc/runner-values.yaml"
+# These are GitHub Actions expressions that must be matched literally. Using
+# double quotes would make Bash try to expand the `${{ ... }}` syntax.
+# shellcheck disable=SC2016
 if ! grep -Fq 'GOMODCACHE: /go-cache/mod/${{ matrix.service }}' "${CD_WORKFLOW}" ||
   ! grep -Fq 'GOCACHE: /go-cache/build/${{ matrix.service }}' "${CD_WORKFLOW}" ||
   ! grep -Fq 'TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache/${{ matrix.service }}' "${CD_WORKFLOW}" ||
