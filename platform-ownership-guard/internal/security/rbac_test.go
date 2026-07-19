@@ -30,6 +30,8 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
 
 	foundAuditRead := false
 	foundStatusWrite := false
+	foundApplicationRead := false
+	foundTargetRead := false
 	for _, rule := range role.Rules {
 		if slices.Contains(rule.APIGroups, "*") || slices.Contains(rule.Resources, "*") || slices.Contains(rule.Verbs, "*") {
 			t.Fatalf("wildcard RBAC is forbidden: %#v", rule)
@@ -46,6 +48,12 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
 			case "ownershipaudits/status":
 				foundStatusWrite = true
 				assertOnlyVerbs(t, rule.Verbs, "get", "patch", "update")
+			case "applications":
+				foundApplicationRead = true
+				assertOnlyVerbs(t, rule.Verbs, "get")
+			case "deployments", "replicasets":
+				foundTargetRead = true
+				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch")
 			default:
 				for _, forbidden := range []string{"create", "update", "patch", "delete", "deletecollection"} {
 					if slices.Contains(rule.Verbs, forbidden) {
@@ -56,7 +64,7 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
 		}
 	}
 
-	if !foundAuditRead || !foundStatusWrite {
+	if !foundAuditRead || !foundStatusWrite || !foundApplicationRead || !foundTargetRead {
 		t.Fatalf("expected audit read and status rules, got %#v", role.Rules)
 	}
 }
