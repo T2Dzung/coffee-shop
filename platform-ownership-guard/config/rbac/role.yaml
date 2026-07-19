@@ -20,6 +20,14 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
   - guard.platform.t2dzung.github.io
   resources:
   - ownershipaudits

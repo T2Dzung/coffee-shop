@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
@@ -47,6 +48,18 @@ type mockDiscovery struct {
 
 type discoveryFakeStub struct {
 	resourcesFunc func(gv string) (*metav1.APIResourceList, error)
+}
+
+type forbiddenOwnerReader struct {
+	client.Reader
+	ownerName string
+}
+
+func (r forbiddenOwnerReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if key.Name == r.ownerName && obj.GetObjectKind().GroupVersionKind().Kind == "Deployment" {
+		return apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, key.Name, errors.New("forbidden"))
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
 }
 
 func (m mockDiscovery) ServerResourcesForGroupVersion(gv string) (*metav1.APIResourceList, error) {
@@ -411,6 +424,42 @@ func TestCollectorCollectsNormalizedEvidence(t *testing.T) {
 	}
 	if o2.Metadata.SourceError == nil || o2.Metadata.SourceError.Class != inventory.ErrStaleEvidence {
 		t.Errorf("expected cache miss to carry StaleEvidence, got %#v", o2.Metadata.SourceError)
+	}
+}
+
+func TestCollectorClassifiesForbiddenOwnerLookup(t *testing.T) {
+	scheme := runtime.NewScheme()
+	rs := &unstructured.Unstructured{}
+	rs.SetGroupVersionKind(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "ReplicaSet"})
+	rs.SetName("app-rs")
+	rs.SetNamespace("coffeeshop")
+	rs.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       "restricted-owner",
+		UID:        "restricted-owner-uid",
+	}})
+
+	baseReader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(rs).Build()
+	reader := forbiddenOwnerReader{Reader: baseReader, ownerName: "restricted-owner"}
+	mapper, disc := availableDiscovery()
+	collector := inventory.NewCollector(reader, dynamicfake.NewSimpleDynamicClient(scheme), inventory.NewDiscoveryHelper(disc, mapper))
+
+	snapshot, err := collector.Collect(context.Background(), "coffeeshop", &guardplatformv1alpha1.OwnershipAuditSpec{
+		TargetRules: []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "ReplicaSet"}},
+	})
+	if err != nil {
+		t.Fatalf("Collect failed: %v", err)
+	}
+	if len(snapshot.Owners) != 1 {
+		t.Fatalf("expected one owner evidence, got %d", len(snapshot.Owners))
+	}
+	owner := snapshot.Owners[0]
+	if owner.LookupResult != inventory.OwnerForbidden {
+		t.Fatalf("expected forbidden lookup result, got %s", owner.LookupResult)
+	}
+	if owner.Metadata.Freshness != inventory.FreshnessUnknown || owner.Metadata.SourceError == nil || owner.Metadata.SourceError.Class != inventory.ErrEvidenceForbidden {
+		t.Fatalf("forbidden owner must remain unhealthy EvidenceForbidden, got metadata=%#v", owner.Metadata)
 	}
 }
 

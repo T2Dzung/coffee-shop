@@ -249,6 +249,8 @@ func (c *Collector) Collect(ctx context.Context, targetNamespace string, spec *g
 							}
 						} else if apierrors.IsForbidden(err) {
 							ownerEvidence.LookupResult = OwnerForbidden
+							ownerEvidence.Metadata.Freshness = FreshnessUnknown
+							ownerEvidence.Metadata.SourceError = c.classifyError(err)
 						} else {
 							ownerEvidence.LookupResult = OwnerUnknown
 							ownerEvidence.Metadata.SourceError = c.classifyError(err)

@@ -28,12 +28,14 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/controller"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/detectors"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/telemetry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -52,7 +54,7 @@ func main() {
 	var metricsAddr string
 	var probeAddr string
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "Metrics bind address; 0 disables metrics in Phase 6.4")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address; :8080 by default")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address")
 
 	logOptions := zap.Options{Development: false}
@@ -74,6 +76,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize Prometheus telemetry metrics
+	telemetryMetrics, err := telemetry.NewMetrics(crmetrics.Registry)
+	if err != nil {
+		setupLog.Error(err, "Failed to register telemetry metrics")
+		os.Exit(1)
+	}
+
 	dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		setupLog.Error(err, "Failed to create dynamic client")
@@ -91,12 +100,17 @@ func main() {
 		inventory.WithAuthoritativeOwnerReader(mgr.GetAPIReader()),
 	)
 
+	eventRecorder := mgr.GetEventRecorder("platform-ownership-guard")
+
 	if err := (&controller.OwnershipAuditReconciler{
 		Reader:       mgr.GetClient(),
 		StatusWriter: mgr.GetClient().Status(),
 		Collector:    collector,
 		Evaluator:    detectors.NewEvaluator(),
 		Scheme:       mgr.GetScheme(),
+		Recorder:     eventRecorder,
+		Telemetry:    &controller.TelemetryWrapper{Metrics: telemetryMetrics},
+		Jitter:       controller.DefaultJitter,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "OwnershipAudit")
 		os.Exit(1)
@@ -114,7 +128,7 @@ func main() {
 
 	setupLog.Info("Starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "Failed to run manager")
+		setupLog.Error(err, "Problem running manager")
 		os.Exit(1)
 	}
 }

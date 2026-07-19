@@ -24,6 +24,14 @@ type collectorStub struct {
 	err      error
 }
 
+type evaluatorStub struct {
+	findings []guardplatformv1alpha1.OwnershipFinding
+}
+
+func (s evaluatorStub) Evaluate(*inventory.NormalizedSnapshot, []guardplatformv1alpha1.DetectorType) []guardplatformv1alpha1.OwnershipFinding {
+	return s.findings
+}
+
 func (s collectorStub) Collect(context.Context, string, *guardplatformv1alpha1.OwnershipAuditSpec) (*inventory.NormalizedSnapshot, error) {
 	return s.snapshot, s.err
 }
@@ -99,7 +107,17 @@ func TestStatusConflictDoesNotOverwriteStaleStatus(t *testing.T) {
 	delegate, audit := newReconcileFixture(t, "conflict")
 	conflict := apierrors.NewConflict(schema.GroupResource{Group: "guard.platform.t2dzung.github.io", Resource: "ownershipaudits"}, audit.Name, errors.New("conflict"))
 	writer := &countingStatusWriter{SubResourceWriter: delegate.Status(), err: conflict}
-	reconciler := &OwnershipAuditReconciler{Reader: delegate, StatusWriter: writer, Collector: collectorStub{snapshot: &inventory.NormalizedSnapshot{ArgoDiscoveryState: inventory.DiscoveryAvailable}}}
+	recorder := &FakeEventRecorder{}
+	reconciler := &OwnershipAuditReconciler{
+		Reader:       delegate,
+		StatusWriter: writer,
+		Collector:    collectorStub{snapshot: &inventory.NormalizedSnapshot{ArgoDiscoveryState: inventory.DiscoveryAvailable}},
+		Evaluator: evaluatorStub{findings: []guardplatformv1alpha1.OwnershipFinding{{
+			ID: "finding-that-must-not-publish", Detector: guardplatformv1alpha1.DetectorArgoPruneRisk,
+			Severity: guardplatformv1alpha1.SeverityHigh, Confidence: guardplatformv1alpha1.ConfidenceConfirmed,
+		}}},
+		Recorder: recorder,
+	}
 	_, err := reconciler.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: audit.Name, Namespace: audit.Namespace}})
 	if !apierrors.IsConflict(err) {
 		t.Fatalf("expected conflict, got %v", err)
@@ -111,6 +129,9 @@ func TestStatusConflictDoesNotOverwriteStaleStatus(t *testing.T) {
 	if stored.Status.ObservedGeneration != 0 {
 		t.Fatalf("stale status was overwritten: %+v", stored.Status)
 	}
+	if len(recorder.GetEvents()) != 0 {
+		t.Fatalf("status conflict must suppress transition publication, got %#v", recorder.GetEvents())
+	}
 }
 
 func TestMutationRecorderRejectsEveryNonAuditStatusMutation(t *testing.T) {
@@ -118,5 +139,36 @@ func TestMutationRecorderRejectsEveryNonAuditStatusMutation(t *testing.T) {
 	recorder.record("update", &guardplatformv1alpha1.OwnershipAudit{ObjectMeta: metav1.ObjectMeta{Name: "audit"}}, false)
 	if recorder.AssertZeroTargetMutations() == nil {
 		t.Fatal("root OwnershipAudit mutation must be forbidden")
+	}
+}
+
+func TestRepeatedUnchangedReconcileHasNoEventGrowthOrTargetMutation(t *testing.T) {
+	delegate, audit := newReconcileFixture(t, "repeated-unchanged")
+	recordedClient := NewMutationRecorderClient(delegate)
+	events := &FakeEventRecorder{}
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	reconciler := &OwnershipAuditReconciler{
+		Reader:       recordedClient,
+		StatusWriter: recordedClient.Status(),
+		Collector:    collectorStub{snapshot: &inventory.NormalizedSnapshot{ArgoDiscoveryState: inventory.DiscoveryAvailable}},
+		Evaluator: evaluatorStub{findings: []guardplatformv1alpha1.OwnershipFinding{{
+			ID: "stable-finding", Detector: guardplatformv1alpha1.DetectorArgoPruneRisk,
+			Severity: guardplatformv1alpha1.SeverityHigh, Confidence: guardplatformv1alpha1.ConfidenceConfirmed,
+		}}},
+		Recorder: events,
+		Jitter:   IdentityJitter,
+		Now:      func() time.Time { return now },
+	}
+	request := reconcile.Request{NamespacedName: types.NamespacedName{Name: audit.Name, Namespace: audit.Namespace}}
+	for i := 0; i < 25; i++ {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("reconcile %d failed: %v", i, err)
+		}
+	}
+	if got := len(events.GetEvents()); got != 1 {
+		t.Fatalf("expected only the first Added event across 25 reconciles, got %d", got)
+	}
+	if err := recordedClient.AssertZeroTargetMutations(); err != nil {
+		t.Fatal(err)
 	}
 }

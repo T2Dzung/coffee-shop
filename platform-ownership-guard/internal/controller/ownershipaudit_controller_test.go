@@ -199,6 +199,7 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 			Reader:       k8sClient,
 			StatusWriter: k8sClient.Status(),
 			Collector:    coll,
+			Jitter:       IdentityJitter,
 			Scheme:       k8sClient.Scheme(),
 		}
 
@@ -243,6 +244,7 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 			Reader:       k8sClient,
 			StatusWriter: k8sClient.Status(),
 			Collector:    coll,
+			Jitter:       IdentityJitter,
 			Scheme:       k8sClient.Scheme(),
 		}
 
@@ -371,5 +373,67 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		Expect(stored.Status.Findings[0].Confidence).To(Equal(guardplatformv1alpha1.ConfidenceConfirmed))
 		Expect(stored.Status.Summary.TotalFindings).To(Equal(int32(1)))
 		Expect(stored.Status.Summary.Confirmed).To(Equal(int32(1)))
+	})
+	It("emits zero duplicate transition events when reconciler restarts with old persisted status", func() {
+		const name = "restart-proof-zero-events"
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteIfPresent(name)
+
+		audit := validAudit(name)
+		audit.Spec.Detectors = []guardplatformv1alpha1.DetectorType{
+			guardplatformv1alpha1.DetectorStaleOwnerReference,
+		}
+		Expect(k8sClient.Create(ctx, audit)).To(Succeed())
+
+		snapshot := &inventory.NormalizedSnapshot{
+			ObservedAt:         time.Now(),
+			ArgoDiscoveryState: inventory.DiscoveryAvailable,
+			Owners: []inventory.OwnerEvidence{
+				{
+					DependentIdentity: inventory.ResourceIdentity{
+						APIGroup: "apps", Version: "v1", Kind: "ReplicaSet",
+						Namespace: "default", Name: name + "-rs",
+					},
+					OwnerRefGVK:  schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
+					OwnerName:    "missing-deploy",
+					OwnerUID:     "uid-999",
+					LookupResult: inventory.OwnerNotFound,
+				},
+			},
+		}
+
+		fakeRecorder1 := &FakeEventRecorder{}
+		reconciler1 := &OwnershipAuditReconciler{
+			Reader:       k8sClient,
+			StatusWriter: k8sClient.Status(),
+			Collector:    collectorStub{snapshot: snapshot},
+			Evaluator:    detectors.NewEvaluator(),
+			Recorder:     fakeRecorder1,
+			Jitter:       IdentityJitter,
+			Scheme:       k8sClient.Scheme(),
+		}
+
+		// First reconcile: finding is Added -> Exactly 1 Event emitted
+		_, err := reconciler1.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fakeRecorder1.GetEvents()).To(HaveLen(1))
+		Expect(fakeRecorder1.GetEvents()[0].Reason).To(Equal("FindingDetected"))
+
+		// Simulating Manager restart: new reconciler instance created, reads persisted status from k8sClient
+		fakeRecorder2 := &FakeEventRecorder{}
+		reconciler2 := &OwnershipAuditReconciler{
+			Reader:       k8sClient,
+			StatusWriter: k8sClient.Status(),
+			Collector:    collectorStub{snapshot: snapshot},
+			Evaluator:    detectors.NewEvaluator(),
+			Recorder:     fakeRecorder2,
+			Jitter:       IdentityJitter,
+			Scheme:       k8sClient.Scheme(),
+		}
+
+		// Second reconcile (after restart): finding is Unchanged -> ZERO events emitted!
+		_, err = reconciler2.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fakeRecorder2.GetEvents()).To(HaveLen(0)) // Zero duplicate events!
 	})
 })

@@ -1,0 +1,52 @@
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+group_eval_order:
+  - platform-ownership-guard.rules
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'platform_ownership_guard_finding_transitions_total{detector="ArgoPruneRisk", severity="High", confidence="Confirmed", transition="added"}'
+        values: '0+0x4 1+0x25'
+      - series: 'platform_ownership_guard_inventory_errors_total{source="collector", reason="TransientReadFailure"}'
+        values: '0+0x4 1 2 2+0x25'
+
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: PlatformOwnershipGuardHighFindingDetected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "High severity ownership finding detected in cluster"
+              description: "PlatformOwnershipGuard detected a new or elevated High severity finding in the last 10 minutes."
+
+      - eval_time: 16m
+        alertname: PlatformOwnershipGuardHighFindingDetected
+        exp_alerts: []
+
+      - eval_time: 12m
+        alertname: PlatformOwnershipGuardInventoryDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "PlatformOwnershipGuard inventory collection degraded"
+              description: "PlatformOwnershipGuard observed forbidden or transient inventory evidence in the last 15 minutes."
+
+      - eval_time: 23m
+        alertname: PlatformOwnershipGuardInventoryDegraded
+        exp_alerts: []
+
+  - name: counter reset does not create a false finding alert
+    interval: 1m
+    input_series:
+      - series: 'platform_ownership_guard_finding_transitions_total{detector="ArgoPruneRisk", severity="High", confidence="Confirmed", transition="added"}'
+        values: '5+0x4 0+0x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: PlatformOwnershipGuardHighFindingDetected
+        exp_alerts: []

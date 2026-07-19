@@ -11,7 +11,7 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
+func TestManagerRoleIsReadOnlyOutsideAuditStatusAndEvents(t *testing.T) {
 	path := filepath.Join("..", "..", "config", "rbac", "role.yaml")
 	file, err := os.Open(path)
 	if err != nil {
@@ -32,6 +32,8 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
 	foundStatusWrite := false
 	foundApplicationRead := false
 	foundTargetRead := false
+	foundEventWrite := false
+
 	for _, rule := range role.Rules {
 		if slices.Contains(rule.APIGroups, "*") || slices.Contains(rule.Resources, "*") || slices.Contains(rule.Verbs, "*") {
 			t.Fatalf("wildcard RBAC is forbidden: %#v", rule)
@@ -54,6 +56,12 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
 			case "deployments", "replicasets":
 				foundTargetRead = true
 				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch")
+			case "events":
+				foundEventWrite = true
+				if !slices.Contains(rule.APIGroups, "events.k8s.io") {
+					t.Fatalf("events resource must belong to events.k8s.io group, got %#v", rule.APIGroups)
+				}
+				assertOnlyVerbs(t, rule.Verbs, "create", "patch", "update")
 			default:
 				for _, forbidden := range []string{"create", "update", "patch", "delete", "deletecollection"} {
 					if slices.Contains(rule.Verbs, forbidden) {
@@ -64,8 +72,8 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatus(t *testing.T) {
 		}
 	}
 
-	if !foundAuditRead || !foundStatusWrite || !foundApplicationRead || !foundTargetRead {
-		t.Fatalf("expected audit read and status rules, got %#v", role.Rules)
+	if !foundAuditRead || !foundStatusWrite || !foundApplicationRead || !foundTargetRead || !foundEventWrite {
+		t.Fatalf("expected audit read, status write, and events write rules, got %#v", role.Rules)
 	}
 }
 
