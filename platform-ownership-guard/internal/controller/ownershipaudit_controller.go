@@ -89,7 +89,7 @@ func (r *OwnershipAuditReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
-	findings := evaluator.Evaluate(snapshot)
+	findings := evaluator.Evaluate(snapshot, audit.Spec.Detectors)
 	desired := builder.BuildStatus(
 		&audit.Status,
 		audit.Generation,

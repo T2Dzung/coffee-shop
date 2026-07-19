@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/detectors"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 )
 
@@ -277,6 +278,7 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 			Reader:       recorderClient,
 			StatusWriter: recorderClient.Status(),
 			Collector:    coll,
+			Evaluator:    detectors.NewEvaluator(),
 			Scheme:       k8sClient.Scheme(),
 		}
 
@@ -297,7 +299,7 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		defer func() { Expect(k8sClient.Delete(ctx, target)).To(Succeed()) }()
 		before := target.DeepCopy()
 		recorder := NewMutationRecorderClient(k8sClient)
-		reconciler := &OwnershipAuditReconciler{Reader: recorder, StatusWriter: recorder.Status(), Collector: collectorStub{snapshot: &inventory.NormalizedSnapshot{ArgoDiscoveryState: inventory.DiscoveryAvailable}}}
+		reconciler := &OwnershipAuditReconciler{Reader: recorder, StatusWriter: recorder.Status(), Collector: collectorStub{snapshot: &inventory.NormalizedSnapshot{ArgoDiscoveryState: inventory.DiscoveryAvailable}}, Evaluator: detectors.NewEvaluator()}
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
 		after := &appsv1.ReplicaSet{}
@@ -307,5 +309,67 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		Expect(after.OwnerReferences).To(Equal(before.OwnerReferences))
 		Expect(after.ResourceVersion).To(Equal(before.ResourceVersion))
 		Expect(recorder.AssertZeroTargetMutations()).To(Succeed())
+	})
+	It("builds status findings using real evaluator", func() {
+		const name = "real-evaluator-status-findings"
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteIfPresent(name)
+		audit := validAudit(name)
+		audit.Spec.Detectors = []guardplatformv1alpha1.DetectorType{
+			guardplatformv1alpha1.DetectorArgoPruneRisk,
+			guardplatformv1alpha1.DetectorStaleOwnerReference,
+		}
+		Expect(k8sClient.Create(ctx, audit)).To(Succeed())
+
+		rs := &appsv1.ReplicaSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name + "-rs",
+				Namespace: "default",
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "apps/v1",
+						Kind:       "Deployment",
+						Name:       "missing-deploy",
+						UID:        "uid-expected-999",
+					},
+				},
+			},
+		}
+
+		snapshot := &inventory.NormalizedSnapshot{
+			ObservedAt:         time.Now(),
+			ArgoDiscoveryState: inventory.DiscoveryAvailable,
+			Owners: []inventory.OwnerEvidence{
+				{
+					DependentIdentity: inventory.ResourceIdentity{
+						APIGroup: "apps", Version: "v1", Kind: "ReplicaSet",
+						Namespace: "default", Name: rs.Name,
+					},
+					OwnerRefGVK:  schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
+					OwnerName:    "missing-deploy",
+					OwnerUID:     "uid-expected-999",
+					LookupResult: inventory.OwnerNotFound,
+				},
+			},
+		}
+
+		reconciler := &OwnershipAuditReconciler{
+			Reader:       k8sClient,
+			StatusWriter: k8sClient.Status(),
+			Collector:    collectorStub{snapshot: snapshot},
+			Evaluator:    detectors.NewEvaluator(),
+			Scheme:       k8sClient.Scheme(),
+		}
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+
+		stored := &guardplatformv1alpha1.OwnershipAudit{}
+		Expect(k8sClient.Get(ctx, key, stored)).To(Succeed())
+		Expect(stored.Status.Findings).To(HaveLen(1))
+		Expect(stored.Status.Findings[0].Detector).To(Equal(guardplatformv1alpha1.DetectorStaleOwnerReference))
+		Expect(stored.Status.Findings[0].Confidence).To(Equal(guardplatformv1alpha1.ConfidenceConfirmed))
+		Expect(stored.Status.Summary.TotalFindings).To(Equal(int32(1)))
+		Expect(stored.Status.Summary.Confirmed).To(Equal(int32(1)))
 	})
 })

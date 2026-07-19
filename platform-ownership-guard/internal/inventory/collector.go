@@ -71,7 +71,8 @@ func NewCollector(reader client.Reader, dyn dynamic.Interface, disc *DiscoveryHe
 // Collect reads dynamic Argo resources and target resources from the cluster and normalizes them.
 func (c *Collector) Collect(ctx context.Context, targetNamespace string, spec *guardplatformv1alpha1.OwnershipAuditSpec) (*NormalizedSnapshot, error) {
 	snapshot := &NormalizedSnapshot{
-		ObservedAt: c.Now(),
+		ObservedAt:      c.Now(),
+		TargetNamespace: targetNamespace,
 	}
 
 	// 1. Enforce GVK supported registry validation

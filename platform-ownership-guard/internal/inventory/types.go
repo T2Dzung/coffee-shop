@@ -79,16 +79,22 @@ type ResourceIdentity struct {
 	UID       types.UID `json:"uid,omitempty"`
 }
 
+// ApplicationResourceEvidence tracks resource identity and whether Argo considers it a prune candidate.
+type ApplicationResourceEvidence struct {
+	Identity        ResourceIdentity `json:"identity"`
+	RequiresPruning bool             `json:"requiresPruning"`
+}
+
 // ApplicationEvidence represents normalized state of an Argo CD Application.
 type ApplicationEvidence struct {
-	ApplicationRef     ResourceIdentity    `json:"applicationRef"`
-	Metadata           ObservationMetadata `json:"metadata"`
-	SyncStatus         string              `json:"syncStatus"`
-	SyncStatusKnown    bool                `json:"syncStatusKnown"`
-	SourceConditions   []SourceCondition   `json:"sourceConditions,omitempty"`
-	AutoPruneKnown     bool                `json:"autoPruneKnown"`
-	AutoPruneEnabled   bool                `json:"autoPruneEnabled"`
-	ResourceIdentities []ResourceIdentity  `json:"resourceIdentities"`
+	ApplicationRef   ResourceIdentity              `json:"applicationRef"`
+	Metadata         ObservationMetadata           `json:"metadata"`
+	SyncStatus       string                        `json:"syncStatus"`
+	SyncStatusKnown  bool                          `json:"syncStatusKnown"`
+	SourceConditions []SourceCondition             `json:"sourceConditions,omitempty"`
+	AutoPruneKnown   bool                          `json:"autoPruneKnown"`
+	AutoPruneEnabled bool                          `json:"autoPruneEnabled"`
+	Resources        []ApplicationResourceEvidence `json:"resources,omitempty"`
 }
 
 // SourceCondition is the bounded allowlisted subset of an upstream condition.
@@ -99,11 +105,13 @@ type SourceCondition struct {
 
 // ProtectionEvidence captures tracking and pruning annotations.
 type ProtectionEvidence struct {
-	TargetRef       ResourceIdentity    `json:"targetRef"`
-	Metadata        ObservationMetadata `json:"metadata"`
-	Readable        bool                `json:"readable"`
-	PruneFalseKnown bool                `json:"pruneFalseKnown"`
-	PruneFalse      bool                `json:"pruneFalse"` // Whether compare-options or prune=false annotation exists
+	TargetRef             ResourceIdentity    `json:"targetRef"`
+	Metadata              ObservationMetadata `json:"metadata"`
+	Readable              bool                `json:"readable"`
+	IgnoreExtraneousKnown bool                `json:"ignoreExtraneousKnown"`
+	IgnoreExtraneous      bool                `json:"ignoreExtraneous"`
+	PruneFalseKnown       bool                `json:"pruneFalseKnown"`
+	PruneFalse            bool                `json:"pruneFalse"`
 }
 
 // OwnerLookupResult defines owner existence state.
@@ -130,6 +138,7 @@ type OwnerEvidence struct {
 // NormalizedSnapshot bundles all normalized evidence collected for a Reconcile cycle.
 type NormalizedSnapshot struct {
 	ObservedAt         time.Time             `json:"observedAt"`
+	TargetNamespace    string                `json:"targetNamespace"`
 	ArgoDiscoveryState DiscoveryState        `json:"argoDiscoveryState"`
 	ArgoDiscoveryError *ErrorDTO             `json:"argoDiscoveryError,omitempty"`
 	Applications       []ApplicationEvidence `json:"applications,omitempty"`

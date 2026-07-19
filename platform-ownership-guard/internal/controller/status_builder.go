@@ -11,15 +11,15 @@ import (
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 )
 
-// FoundationEvaluator is the pure seam Phase 6.5 detectors will implement.
+// FoundationEvaluator is the pure seam Phase 6.5 detectors implement.
 type FoundationEvaluator interface {
-	Evaluate(snapshot *inventory.NormalizedSnapshot) []guardplatformv1alpha1.OwnershipFinding
+	Evaluate(snapshot *inventory.NormalizedSnapshot, enabled []guardplatformv1alpha1.DetectorType) []guardplatformv1alpha1.OwnershipFinding
 }
 
-// NoopFoundationEvaluator deliberately makes no business inference in Phase 6.4.
+// NoopFoundationEvaluator deliberately makes no business inference.
 type NoopFoundationEvaluator struct{}
 
-func (NoopFoundationEvaluator) Evaluate(_ *inventory.NormalizedSnapshot) []guardplatformv1alpha1.OwnershipFinding {
+func (NoopFoundationEvaluator) Evaluate(_ *inventory.NormalizedSnapshot, _ []guardplatformv1alpha1.DetectorType) []guardplatformv1alpha1.OwnershipFinding {
 	return nil
 }
 

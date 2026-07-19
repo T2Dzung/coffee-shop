@@ -32,6 +32,7 @@ import (
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/controller"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/detectors"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 	// +kubebuilder:scaffold:imports
 )
@@ -94,7 +95,7 @@ func main() {
 		Reader:       mgr.GetClient(),
 		StatusWriter: mgr.GetClient().Status(),
 		Collector:    collector,
-		Evaluator:    controller.NoopFoundationEvaluator{},
+		Evaluator:    detectors.NewEvaluator(),
 		Scheme:       mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "OwnershipAudit")

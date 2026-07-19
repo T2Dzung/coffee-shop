@@ -58,7 +58,7 @@ func (p *SafeParser) ParseApplication(unstr *unstructured.Unstructured) (*Applic
 	}
 
 	// status.resources list
-	var resourceIdentities []ResourceIdentity
+	var resources []ApplicationResourceEvidence
 	resourcesVal, found, err := unstructured.NestedFieldNoCopy(unstr.Object, "status", "resources")
 	if err != nil {
 		return nil, fmt.Errorf("status.resources is malformed: %w", err)
@@ -100,23 +100,35 @@ func (p *SafeParser) ParseApplication(unstr *unstructured.Unstructured) (*Applic
 				return nil, fmt.Errorf("status.resources[%d] missing kind or name", i)
 			}
 
-			resourceIdentities = append(resourceIdentities, ResourceIdentity{
-				APIGroup:  group,
-				Version:   version,
-				Kind:      kind,
-				Namespace: namespace,
-				Name:      name,
+			requiresPruning := false
+			if reqVal, exists := resMap["requiresPruning"]; exists && reqVal != nil {
+				if reqBool, ok := reqVal.(bool); ok {
+					requiresPruning = reqBool
+				} else {
+					return nil, fmt.Errorf("status.resources[%d].requiresPruning is not a boolean", i)
+				}
+			}
+
+			resources = append(resources, ApplicationResourceEvidence{
+				Identity: ResourceIdentity{
+					APIGroup:  group,
+					Version:   version,
+					Kind:      kind,
+					Namespace: namespace,
+					Name:      name,
+				},
+				RequiresPruning: requiresPruning,
 			})
 		}
 	}
 
 	evidence := &ApplicationEvidence{
-		ApplicationRef:     appRef,
-		SyncStatus:         syncStatus,
-		SyncStatusKnown:    syncStatusKnown,
-		AutoPruneKnown:     true,
-		AutoPruneEnabled:   autoPrune,
-		ResourceIdentities: resourceIdentities,
+		ApplicationRef:   appRef,
+		SyncStatus:       syncStatus,
+		SyncStatusKnown:  syncStatusKnown,
+		AutoPruneKnown:   true,
+		AutoPruneEnabled: autoPrune,
+		Resources:        resources,
 	}
 	if err := p.ParseApplicationObservation(unstr, evidence); err != nil {
 		return nil, err
@@ -186,24 +198,33 @@ func (p *SafeParser) ParseProtection(unstr *unstructured.Unstructured) *Protecti
 	}
 
 	annotations := unstr.GetAnnotations()
-	pruneFalse := false
 
+	ignoreExtraneous := false
 	if val, ok := annotations["argocd.argoproj.io/compare-options"]; ok {
-		if strings.Contains(val, "IgnoreExtraneous") {
-			pruneFalse = true
+		for _, token := range strings.Split(val, ",") {
+			if strings.TrimSpace(token) == "IgnoreExtraneous" {
+				ignoreExtraneous = true
+				break
+			}
 		}
 	}
 
+	pruneFalse := false
 	if val, ok := annotations["argocd.argoproj.io/sync-options"]; ok {
-		if strings.Contains(val, "Prune=false") {
-			pruneFalse = true
+		for _, token := range strings.Split(val, ",") {
+			if strings.TrimSpace(token) == "Prune=false" {
+				pruneFalse = true
+				break
+			}
 		}
 	}
 
 	return &ProtectionEvidence{
-		TargetRef:       ref,
-		Readable:        true,
-		PruneFalseKnown: true,
-		PruneFalse:      pruneFalse,
+		TargetRef:             ref,
+		Readable:              true,
+		IgnoreExtraneousKnown: true,
+		IgnoreExtraneous:      ignoreExtraneous,
+		PruneFalseKnown:       true,
+		PruneFalse:            pruneFalse,
 	}
 }

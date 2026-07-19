@@ -104,10 +104,10 @@ func TestParserExtractsArgoApplicationDefensively(t *testing.T) {
 	if !evidence.AutoPruneEnabled {
 		t.Error("expected AutoPruneEnabled to be true")
 	}
-	if len(evidence.ResourceIdentities) != 1 {
-		t.Fatalf("expected 1 managed resource, got %d", len(evidence.ResourceIdentities))
+	if len(evidence.Resources) != 1 {
+		t.Fatalf("expected 1 managed resource, got %d", len(evidence.Resources))
 	}
-	res := evidence.ResourceIdentities[0]
+	res := evidence.Resources[0].Identity
 	if res.Kind != "ReplicaSet" || res.Name != "coffeeshop-rabbitmq-12345" {
 		t.Errorf("parsed resource mismatch: %+v", res)
 	}
@@ -140,8 +140,11 @@ func TestParserExtractsProtectionAnnotations(t *testing.T) {
 	}
 
 	prot := parser.ParseProtection(rs)
-	if !prot.PruneFalse {
-		t.Error("expected PruneFalse to be true due to compare-options")
+	if !prot.IgnoreExtraneous {
+		t.Error("expected IgnoreExtraneous to be true due to compare-options")
+	}
+	if prot.PruneFalse {
+		t.Error("expected PruneFalse to be false for compare-options alone")
 	}
 
 	// 2. Target with sync-options Prune=false
@@ -153,7 +156,7 @@ func TestParserExtractsProtectionAnnotations(t *testing.T) {
 				"name":      "rs-2",
 				"namespace": "default",
 				"annotations": map[string]interface{}{
-					"argocd.argoproj.io/sync-options": "Prune=false",
+					"argocd.argoproj.io/sync-options": "Prune=false, Validate=false",
 				},
 			},
 		},
@@ -161,6 +164,9 @@ func TestParserExtractsProtectionAnnotations(t *testing.T) {
 	prot2 := parser.ParseProtection(rs2)
 	if !prot2.PruneFalse {
 		t.Error("expected PruneFalse to be true due to sync-options")
+	}
+	if prot2.IgnoreExtraneous {
+		t.Error("expected IgnoreExtraneous to be false for sync-options alone")
 	}
 }
 
@@ -377,8 +383,11 @@ func TestCollectorCollectsNormalizedEvidence(t *testing.T) {
 		t.Fatalf("expected 1 protection, got %d", len(snapshot.Protections))
 	}
 	prot := snapshot.Protections[0]
-	if !prot.PruneFalse {
-		t.Error("expected PruneFalse to be true due to rs annotation")
+	if !prot.IgnoreExtraneous {
+		t.Error("expected IgnoreExtraneous to be true due to rs annotation")
+	}
+	if prot.PruneFalse {
+		t.Error("expected PruneFalse to be false for compare-options alone")
 	}
 
 	// Verify Owners Evidence (2 owner references)
