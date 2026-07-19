@@ -166,7 +166,6 @@ type ResourceReference struct {
 
 	// UID is present when live evidence resolved the exact object identity.
 	// +optional
-	// +kubebuilder:validation:MaxLength=128
 	UID types.UID `json:"uid,omitempty"`
 }
 

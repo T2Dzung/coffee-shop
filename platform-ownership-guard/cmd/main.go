@@ -22,6 +22,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -30,6 +32,7 @@ import (
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/controller"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -70,9 +73,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "Failed to create dynamic client")
+		os.Exit(1)
+	}
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "Failed to create discovery client")
+		os.Exit(1)
+	}
+	collector := inventory.NewCollector(
+		mgr.GetClient(),
+		dynamicClient,
+		inventory.NewDiscoveryHelper(discoveryClient, mgr.GetRESTMapper()),
+		inventory.WithAuthoritativeOwnerReader(mgr.GetAPIReader()),
+	)
+
 	if err := (&controller.OwnershipAuditReconciler{
-		Reader: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Reader:       mgr.GetClient(),
+		StatusWriter: mgr.GetClient().Status(),
+		Collector:    collector,
+		Evaluator:    controller.NoopFoundationEvaluator{},
+		Scheme:       mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "OwnershipAudit")
 		os.Exit(1)

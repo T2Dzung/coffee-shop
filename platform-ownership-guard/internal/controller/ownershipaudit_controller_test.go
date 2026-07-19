@@ -24,13 +24,40 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 )
+
+type mockRESTMapperStub struct {
+	meta.RESTMapper
+	mappingFunc func(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error)
+}
+
+func (m *mockRESTMapperStub) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	if m.mappingFunc != nil {
+		return m.mappingFunc(gk, versions...)
+	}
+	return nil, &meta.NoResourceMatchError{PartialResource: schema.GroupVersionResource{Group: gk.Group, Resource: gk.Kind}}
+}
+
+func (m *mockRESTMapperStub) Reset() {}
+
+type mockDiscoveryStub struct{}
+
+func (m mockDiscoveryStub) ServerResourcesForGroupVersion(gv string) (*metav1.APIResourceList, error) {
+	return nil, apierrors.NewNotFound(schema.GroupResource{}, gv)
+}
 
 var _ = Describe("OwnershipAudit API and read-only controller", func() {
 	ctx := context.Background()
@@ -39,6 +66,7 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		return &guardplatformv1alpha1.OwnershipAudit{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 			Spec: guardplatformv1alpha1.OwnershipAuditSpec{
+				ResyncInterval: metav1.Duration{Duration: 10 * time.Minute},
 				ApplicationRefs: []guardplatformv1alpha1.ApplicationReference{{
 					Namespace: "argocd",
 					Name:      "coffeeshop-rabbitmq",
@@ -136,7 +164,7 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		Expect(stored.Spec.ApplicationRefs).To(Equal(audit.Spec.ApplicationRefs))
 	})
 
-	It("rejects an oversized condition message on status", func() {
+	It("rejects an oversized condition message on status subresource update", func() {
 		const name = "invalid-status-message"
 		defer deleteIfPresent(name)
 
@@ -155,19 +183,129 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		Expect(k8sClient.Status().Update(ctx, audit)).NotTo(Succeed())
 	})
 
-	It("reads an existing audit and ignores a deleted audit", func() {
-		const name = "read-only-reconcile"
+	It("reconciles audit policy and patches status when Argo CRD is absent", func() {
+		const name = "reconcile-crd-absent"
 		key := types.NamespacedName{Name: name, Namespace: "default"}
 		defer deleteIfPresent(name)
 
 		Expect(k8sClient.Create(ctx, validAudit(name))).To(Succeed())
-		reconciler := &OwnershipAuditReconciler{Reader: k8sClient, Scheme: k8sClient.Scheme()}
+
+		fakeDyn := dynamicfake.NewSimpleDynamicClient(k8sClient.Scheme())
+		discHelper := inventory.NewDiscoveryHelper(mockDiscoveryStub{}, &mockRESTMapperStub{})
+		coll := inventory.NewCollector(k8sClient, fakeDyn, discHelper)
+
+		reconciler := &OwnershipAuditReconciler{
+			Reader:       k8sClient,
+			StatusWriter: k8sClient.Status(),
+			Collector:    coll,
+			Scheme:       k8sClient.Scheme(),
+		}
+
+		res, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(Equal(10 * time.Minute))
+
+		stored := &guardplatformv1alpha1.OwnershipAudit{}
+		Expect(k8sClient.Get(ctx, key, stored)).To(Succeed())
+		Expect(stored.Status.ObservedGeneration).To(Equal(int64(1)))
+		Expect(stored.Status.Conditions).To(HaveLen(2))
+
+		readyCond := meta.FindStatusCondition(stored.Status.Conditions, "Ready")
+		Expect(readyCond).NotTo(BeNil())
+		Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(readyCond.Reason).To(Equal("DependencyUnavailable"))
+
+		inventoryReadyCond := meta.FindStatusCondition(stored.Status.Conditions, "InventoryReady")
+		Expect(inventoryReadyCond).NotTo(BeNil())
+		Expect(inventoryReadyCond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(inventoryReadyCond.Reason).To(Equal("DependencyUnavailable"))
+	})
+
+	It("reconciles audit policy with terminal InvalidInventoryScope for unsupported GVK", func() {
+		const name = "reconcile-unsupported-gvk"
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteIfPresent(name)
+
+		audit := validAudit(name)
+		audit.Spec.TargetRules = []guardplatformv1alpha1.TargetRule{{
+			APIGroup: "",
+			Version:  "v1",
+			Kind:     "Deployment", // Unsupported group/version combo
+		}}
+		Expect(k8sClient.Create(ctx, audit)).To(Succeed())
+
+		fakeDyn := dynamicfake.NewSimpleDynamicClient(k8sClient.Scheme())
+		discHelper := inventory.NewDiscoveryHelper(mockDiscoveryStub{}, &mockRESTMapperStub{})
+		coll := inventory.NewCollector(k8sClient, fakeDyn, discHelper)
+
+		reconciler := &OwnershipAuditReconciler{
+			Reader:       k8sClient,
+			StatusWriter: k8sClient.Status(),
+			Collector:    coll,
+			Scheme:       k8sClient.Scheme(),
+		}
+
+		res, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(Equal(10 * time.Minute))
+
+		stored := &guardplatformv1alpha1.OwnershipAudit{}
+		Expect(k8sClient.Get(ctx, key, stored)).To(Succeed())
+		Expect(stored.Status.ObservedGeneration).To(Equal(int64(1)))
+
+		readyCond := meta.FindStatusCondition(stored.Status.Conditions, "Ready")
+		Expect(readyCond).NotTo(BeNil())
+		Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(readyCond.Reason).To(Equal("InvalidInventoryScope"))
+	})
+
+	It("proves zero target mutations during full audit reconcile cycle", func() {
+		const name = "zero-target-mutation-proof"
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteIfPresent(name)
+
+		Expect(k8sClient.Create(ctx, validAudit(name))).To(Succeed())
+
+		// Wrap k8sClient in MutationRecorderClient to record all mutating API calls
+		recorderClient := NewMutationRecorderClient(k8sClient)
+
+		fakeDyn := dynamicfake.NewSimpleDynamicClient(k8sClient.Scheme())
+		discHelper := inventory.NewDiscoveryHelper(mockDiscoveryStub{}, &mockRESTMapperStub{})
+		coll := inventory.NewCollector(recorderClient, fakeDyn, discHelper)
+
+		reconciler := &OwnershipAuditReconciler{
+			Reader:       recorderClient,
+			StatusWriter: recorderClient.Status(),
+			Collector:    coll,
+			Scheme:       k8sClient.Scheme(),
+		}
 
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
 
-		deleteIfPresent(name)
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		// Assert zero target mutation calls occurred during reconciliation
+		Expect(recorderClient.AssertZeroTargetMutations()).To(Succeed())
+	})
+	It("keeps an envtest target semantically unchanged", func() {
+		const name = "target-unchanged"
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteIfPresent(name)
+		Expect(k8sClient.Create(ctx, validAudit(name))).To(Succeed())
+		replicas := int32(1)
+		target := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Annotations: map[string]string{"proof": "unchanged"}}, Spec: appsv1.ReplicaSetSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "example.invalid/app:test"}}}}}}
+		Expect(k8sClient.Create(ctx, target)).To(Succeed())
+		defer func() { Expect(k8sClient.Delete(ctx, target)).To(Succeed()) }()
+		before := target.DeepCopy()
+		recorder := NewMutationRecorderClient(k8sClient)
+		reconciler := &OwnershipAuditReconciler{Reader: recorder, StatusWriter: recorder.Status(), Collector: collectorStub{snapshot: &inventory.NormalizedSnapshot{ArgoDiscoveryState: inventory.DiscoveryAvailable}}}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
+		after := &appsv1.ReplicaSet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(target), after)).To(Succeed())
+		Expect(after.Spec).To(Equal(before.Spec))
+		Expect(after.Annotations).To(Equal(before.Annotations))
+		Expect(after.OwnerReferences).To(Equal(before.OwnerReferences))
+		Expect(after.ResourceVersion).To(Equal(before.ResourceVersion))
+		Expect(recorder.AssertZeroTargetMutations()).To(Succeed())
 	})
 })

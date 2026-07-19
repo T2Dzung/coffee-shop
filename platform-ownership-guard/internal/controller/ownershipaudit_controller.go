@@ -18,32 +18,39 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 )
 
-// OwnershipAuditReconciler is intentionally read-only in Slice 6.4.1.
-// Slice 6.4.3 adds a narrow OwnershipAudit status writer; inventory and
-// detectors never receive a full client.Client.
+// OwnershipAuditReconciler owns only OwnershipAudit status writes.
 type OwnershipAuditReconciler struct {
-	Reader client.Reader
-	Scheme *runtime.Scheme
+	Reader        client.Reader
+	StatusWriter  client.SubResourceWriter
+	Collector     inventory.InventoryCollector
+	Evaluator     FoundationEvaluator
+	Scheme        *runtime.Scheme
+	StatusBuilder *StatusBuilder
+	Now           func() time.Time
 }
 
-// The manager may observe OwnershipAudit resources, but only the status
-// subresource is writable when the status pipeline is introduced.
 // +kubebuilder:rbac:groups=guard.platform.t2dzung.github.io,resources=ownershipaudits,verbs=get;list;watch
 // +kubebuilder:rbac:groups=guard.platform.t2dzung.github.io,resources=ownershipaudits/status,verbs=get;update;patch
 
-// Reconcile proves the level-based read skeleton without claiming inventory
-// or detector behavior that belongs to later slices.
 func (r *OwnershipAuditReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	if r.Reader == nil || r.Collector == nil || r.StatusWriter == nil {
+		return ctrl.Result{}, fmt.Errorf("reconciler dependencies Reader, Collector, and StatusWriter are required")
+	}
+
 	audit := &guardplatformv1alpha1.OwnershipAudit{}
 	if err := r.Reader.Get(ctx, req.NamespacedName, audit); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -52,17 +59,84 @@ func (r *OwnershipAuditReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	log.FromContext(ctx).V(1).Info(
-		"Observed OwnershipAudit",
-		"name", audit.Name,
-		"namespace", audit.Namespace,
-		"generation", audit.Generation,
+	now := r.Now
+	if now == nil {
+		now = time.Now
+	}
+	builder := r.StatusBuilder
+	if builder == nil {
+		builder = NewStatusBuilder(now)
+	}
+	evaluator := r.Evaluator
+	if evaluator == nil {
+		evaluator = NoopFoundationEvaluator{}
+	}
+
+	snapshot, collectErr := r.Collector.Collect(ctx, audit.Namespace, &audit.Spec)
+	var overrideReason, overrideMessage string
+	var transientErr error
+	if collectErr != nil {
+		if typed, ok := collectErr.(*inventory.InventoryError); ok {
+			overrideReason = string(typed.DTO.Class)
+			overrideMessage = typed.DTO.Message
+			if typed.DTO.Class == inventory.ErrTransientReadFailure {
+				transientErr = collectErr
+			}
+		} else {
+			overrideReason = string(inventory.ErrTransientReadFailure)
+			overrideMessage = collectErr.Error()
+			transientErr = collectErr
+		}
+	}
+
+	findings := evaluator.Evaluate(snapshot)
+	desired := builder.BuildStatus(
+		&audit.Status,
+		audit.Generation,
+		snapshot,
+		findings,
+		audit.Spec.ResyncInterval.Duration,
+		overrideReason,
+		overrideMessage,
 	)
 
-	return ctrl.Result{}, nil
+	if !SemanticEqualStatus(&audit.Status, desired) || heartbeatChanged(audit.Status.LastCompletedScanTime, desired.LastCompletedScanTime) {
+		if err := r.patchStatus(ctx, audit, desired); err != nil {
+			log.FromContext(ctx).Error(err, "Failed to patch OwnershipAudit status")
+			return ctrl.Result{}, err
+		}
+	}
+
+	if transientErr != nil {
+		return ctrl.Result{}, transientErr
+	}
+
+	resync := audit.Spec.ResyncInterval.Duration
+	if resync <= 0 {
+		resync = 10 * time.Minute
+	}
+	return ctrl.Result{RequeueAfter: resync}, nil
 }
 
-// SetupWithManager registers only the guard-owned API watch in Slice 6.4.1.
+// patchStatus uses the object read for evaluation as the merge base.
+// A conflict is returned so the next workqueue attempt re-reads and re-evaluates.
+func (r *OwnershipAuditReconciler) patchStatus(
+	ctx context.Context,
+	audit *guardplatformv1alpha1.OwnershipAudit,
+	desired *guardplatformv1alpha1.OwnershipAuditStatus,
+) error {
+	base := audit.DeepCopy()
+	audit.Status = *desired.DeepCopy()
+	return r.StatusWriter.Patch(ctx, audit, client.MergeFrom(base))
+}
+
+func heartbeatChanged(oldTime, newTime *metav1.Time) bool {
+	if oldTime == nil || newTime == nil {
+		return oldTime != nil || newTime != nil
+	}
+	return !oldTime.Equal(newTime)
+}
+
 func (r *OwnershipAuditReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&guardplatformv1alpha1.OwnershipAudit{}).
