@@ -1,0 +1,206 @@
+name: PlatformOwnershipGuard - Supply Chain and GitOps
+
+on:
+  push:
+    branches: [main, feat/k3s-ha]
+    paths:
+      - 'platform-ownership-guard/**'
+      - '!platform-ownership-guard/config/dev/kustomization.yaml'
+      - '.github/workflows/platform-ownership-guard.yml'
+      - 'infrastructure/terraform/envs/dev/ecr.tf'
+      - 'infrastructure/terraform/envs/dev/github_oidc.tf'
+      - 'infrastructure/k8s/gitops/platform-ownership-guard-app.yaml'
+      - 'scripts/validate-infra.sh'
+      - 'scripts/verify-dev-runtime.sh'
+  pull_request:
+    branches: [main, feat/k3s-ha]
+    paths:
+      - 'platform-ownership-guard/**'
+      - '.github/workflows/platform-ownership-guard.yml'
+      - 'infrastructure/terraform/envs/dev/ecr.tf'
+      - 'infrastructure/terraform/envs/dev/github_oidc.tf'
+      - 'infrastructure/k8s/gitops/platform-ownership-guard-app.yaml'
+      - 'scripts/validate-infra.sh'
+      - 'scripts/verify-dev-runtime.sh'
+
+concurrency:
+  group: guard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  ECR_REPOSITORY: platform-ownership-guard
+
+jobs:
+  test:
+    name: Unit, Envtest and Static Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: platform-ownership-guard/go.mod
+          cache-dependency-path: platform-ownership-guard/go.sum
+
+      - name: Run module tests, vet and envtest
+        working-directory: platform-ownership-guard
+        run: |
+          make test
+          git diff --exit-code
+
+      - name: Render DEV bundle
+        run: kubectl kustomize platform-ownership-guard/config/dev >/tmp/platform-ownership-guard.yaml
+
+  build-and-supply-chain:
+    name: Push, Scan, SBOM, Sign and Pin Digest
+    if: github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Validate AWS role secret
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [[ -z "${AWS_ROLE_ARN}" ]]; then
+            echo "::error title=Missing GitHub secret::Set AWS_ROLE_ARN for the DEV GitHub Actions role"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build and push one immutable artifact
+        id: build-image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: platform-ownership-guard
+          file: platform-ownership-guard/Dockerfile
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Validate registry digest
+        id: artifact
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          DIGEST: ${{ steps.build-image.outputs.digest }}
+        run: |
+          if [[ ! "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error title=Invalid registry digest::${DIGEST}"
+            exit 1
+          fi
+          echo "image=${REGISTRY}/${ECR_REPOSITORY}@${DIGEST}" >>"${GITHUB_OUTPUT}"
+
+      - name: Scan exact ECR digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.artifact.outputs.image }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL
+          cache: 'false'
+
+      - name: Generate SBOM from exact ECR digest
+        uses: anchore/sbom-action@b4a8e2cb0f92b602129f05256e3e3f2257d0793b # v0.16.0
+        with:
+          image: ${{ steps.artifact.outputs.image }}
+          format: spdx-json
+          output-file: platform-ownership-guard-sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: platform-ownership-guard-sbom-${{ github.sha }}
+          path: platform-ownership-guard-sbom.spdx.json
+          retention-days: 14
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Keyless sign and verify exact digest
+        env:
+          IMAGE: ${{ steps.artifact.outputs.image }}
+          EXPECTED_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/platform-ownership-guard.yml@${{ github.ref }}
+        run: |
+          if ! cosign verify \
+            --certificate-identity "${EXPECTED_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}" >/dev/null 2>&1; then
+            cosign sign --yes "${IMAGE}"
+          fi
+          cosign verify \
+            --certificate-identity "${EXPECTED_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}"
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
+
+      - name: Pin exact digest in GitOps source
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          DIGEST: ${{ steps.build-image.outputs.digest }}
+          CURRENT_BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          cd platform-ownership-guard/config/dev
+          kustomize edit set image "controller=${REGISTRY}/${ECR_REPOSITORY}@${DIGEST}"
+          cd ../../..
+
+          kubectl kustomize platform-ownership-guard/config/dev >/tmp/platform-ownership-guard.yaml
+          if ! grep -Fq "image: ${REGISTRY}/${ECR_REPOSITORY}@${DIGEST}" /tmp/platform-ownership-guard.yaml; then
+            echo "::error title=Digest pin validation failed::Rendered Deployment does not use the verified digest"
+            exit 1
+          fi
+
+          git add platform-ownership-guard/config/dev/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "GitOps already pins the verified digest; no commit required."
+          else
+            git commit -m "chore(gitops): pin PlatformOwnershipGuard digest ${DIGEST} [skip ci]"
+            git push origin "HEAD:${CURRENT_BRANCH}"
+          fi
+
+      - name: Supply-chain summary
+        env:
+          IMAGE: ${{ steps.artifact.outputs.image }}
+        run: |
+          {
+            echo "### PlatformOwnershipGuard supply-chain gates"
+            echo "- Unit/envtest/static: passed"
+            echo "- Exact artifact: \`${IMAGE}\`"
+            echo "- Trivy CRITICAL policy: passed"
+            echo "- SPDX-JSON SBOM: uploaded"
+            echo "- Cosign keyless signature and identity verification: passed"
+            echo "- GitOps digest pin: verified on \`${{ github.ref_name }}\`"
+          } >>"${GITHUB_STEP_SUMMARY}"

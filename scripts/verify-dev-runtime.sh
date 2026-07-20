@@ -25,6 +25,7 @@ require_command() {
 }
 
 require_command kubectl
+require_command jq
 
 if [[ ! -f "${KUBECONFIG}" ]]; then
   echo "KUBECONFIG does not exist: ${KUBECONFIG}" >&2
@@ -95,8 +96,117 @@ if [[ "${VERIFY_GITOPS}" == "true" ]]; then
   fi
 fi
 
-for namespace in kube-system argocd coffeeshop cnpg-system longhorn-system monitoring actions-runner-system; do
+for namespace in kube-system argocd coffeeshop cnpg-system longhorn-system monitoring actions-runner-system platform-ownership-guard-system; do
   check_namespace_pods "${namespace}"
+done
+
+guard_namespace="platform-ownership-guard-system"
+guard_app="platform-ownership-guard"
+guard_deployment="platform-ownership-guard-controller-manager"
+guard_service="platform-ownership-guard-metrics-service"
+guard_service_account="system:serviceaccount:${guard_namespace}:platform-ownership-guard-controller-manager"
+
+echo "Verifying PlatformOwnershipGuard runtime contract..."
+
+if ! namespace_exists "${guard_namespace}"; then
+  record_failure "PlatformOwnershipGuard namespace is missing"
+fi
+
+if ! kubectl get applications.argoproj.io -n argocd "${guard_app}" \
+    > "${EVIDENCE_DIR}/guard-argocd-app.yaml" 2>/dev/null; then
+  record_failure "PlatformOwnershipGuard ArgoCD Application is missing"
+fi
+
+if ! kubectl get crd ownershipaudits.guard.platform.t2dzung.github.io \
+    > "${EVIDENCE_DIR}/guard-crd.yaml" 2>/dev/null; then
+  record_failure "OwnershipAudit CRD is missing"
+elif ! kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership -o yaml \
+    > "${EVIDENCE_DIR}/guard-ownershipaudit.yaml" 2>/dev/null; then
+  record_failure "coffeeshop/coffeeshop-ownership audit is missing"
+else
+  audit_ready="$(kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+  inventory_ready="$(kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership \
+    -o jsonpath='{.status.conditions[?(@.type=="InventoryReady")].status}')"
+  if [[ "${audit_ready}" != "True" || "${inventory_ready}" != "True" ]]; then
+    record_failure "OwnershipAudit is not Ready/InventoryReady (Ready=${audit_ready:-Missing}, InventoryReady=${inventory_ready:-Missing})"
+  fi
+fi
+
+if ! kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" -o yaml \
+    > "${EVIDENCE_DIR}/guard-deployment.yaml" 2>/dev/null; then
+  record_failure "PlatformOwnershipGuard Deployment is missing"
+else
+  guard_image="$(kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')"
+  guard_desired="$(kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" \
+    -o jsonpath='{.spec.replicas}')"
+  guard_ready="$(kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" \
+    -o jsonpath='{.status.readyReplicas}')"
+  if [[ ! "${guard_image}" =~ @sha256:[a-f0-9]{64}$ ]] ||
+    [[ "${guard_image}" =~ @sha256:0{64}$ ]]; then
+    record_failure "PlatformOwnershipGuard Deployment is not pinned to a non-placeholder digest"
+  fi
+  if [[ "${guard_ready:-0}" != "${guard_desired:-1}" ]]; then
+    record_failure "PlatformOwnershipGuard Deployment has ${guard_ready:-0}/${guard_desired:-1} replicas ready"
+  fi
+fi
+
+endpoint_rows="$(kubectl get endpointslice -n "${guard_namespace}" \
+  -l "kubernetes.io/service-name=${guard_service}" \
+  -o jsonpath='{range .items[*].endpoints[*]}{.conditions.ready}{" "}{.addresses[0]}{"\n"}{end}' 2>/dev/null || true)"
+printf '%s\n' "${endpoint_rows}" > "${EVIDENCE_DIR}/guard-metrics-endpoints.txt"
+if ! grep -Eq '^true[[:space:]]+[^[:space:]]+' <<<"${endpoint_rows}"; then
+  record_failure "PlatformOwnershipGuard metrics Service has no ready EndpointSlice endpoint"
+fi
+
+if ! kubectl get servicemonitor -n "${guard_namespace}" \
+    platform-ownership-guard-metrics-monitor -o yaml \
+    > "${EVIDENCE_DIR}/guard-servicemonitor.yaml" 2>/dev/null; then
+  record_failure "PlatformOwnershipGuard ServiceMonitor is missing"
+fi
+
+if ! kubectl get prometheusrule -n monitoring platform-ownership-guard-rules -o yaml \
+    > "${EVIDENCE_DIR}/guard-prometheus-rule.yaml" 2>/dev/null; then
+  record_failure "PlatformOwnershipGuard PrometheusRule is missing from monitoring namespace"
+fi
+
+if ! kubectl get configmap -n monitoring -l grafana_dashboard=1 -o name 2>/dev/null |
+    grep -Fq 'platform-ownership-guard-dashboard'; then
+  record_failure "PlatformOwnershipGuard Grafana dashboard ConfigMap is missing"
+fi
+
+prometheus_service="$(kubectl get service -n monitoring -l app.kubernetes.io/name=prometheus \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -z "${prometheus_service}" ]]; then
+  record_failure "Prometheus Service could not be discovered"
+else
+  prometheus_targets="$(kubectl get --raw \
+    "/api/v1/namespaces/monitoring/services/http:${prometheus_service}:9090/proxy/api/v1/targets" 2>/dev/null || true)"
+  printf '%s\n' "${prometheus_targets}" > "${EVIDENCE_DIR}/guard-prometheus-targets.json"
+  if ! jq -e '.data.activeTargets[] | select(.labels.namespace == "platform-ownership-guard-system" and .health == "up")' \
+      >/dev/null 2>&1 <<<"${prometheus_targets}"; then
+    record_failure "Prometheus has no healthy PlatformOwnershipGuard scrape target"
+  fi
+fi
+
+for denied_check in \
+  "get secrets" \
+  "list secrets" \
+  "create deployments.apps" \
+  "patch deployments.apps" \
+  "delete deployments.apps" \
+  "create replicasets.apps" \
+  "patch replicasets.apps" \
+  "delete replicasets.apps" \
+  "create applications.argoproj.io" \
+  "patch applications.argoproj.io" \
+  "delete applications.argoproj.io"; do
+  read -r verb resource <<<"${denied_check}"
+  if [[ "$(kubectl auth can-i "${verb}" "${resource}" -n coffeeshop \
+      --as="${guard_service_account}" 2>/dev/null || true)" != "no" ]]; then
+    record_failure "Guard ServiceAccount must not ${verb} ${resource}"
+  fi
 done
 
 if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then

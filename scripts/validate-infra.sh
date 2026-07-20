@@ -85,6 +85,73 @@ kubectl kustomize "${K8S_DIR}/gitops/addons/arc/hardening" | kubeconform \
 kubectl kustomize "${K8S_DIR}/gitops/addons/monitoring-rules" | kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}"
 
+if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
+  GUARD_RENDERED=$(kubectl kustomize "${PROJECT_ROOT}/platform-ownership-guard/config/dev")
+  kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" <<<"${GUARD_RENDERED}"
+
+  if grep -Exq '[[:space:]]*- rules\.yaml' "${PROJECT_ROOT}/platform-ownership-guard/config/observability/kustomization.yaml"; then
+    echo "Error: raw rules.yaml must not be in observability kustomization resources." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq "423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard" "${PROJECT_ROOT}/platform-ownership-guard/config/dev/kustomization.yaml"; then
+    echo "Error: DEV kustomization image newName must use AWS account 423623841278." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq "targetRevision: feat/k3s-ha" "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml"; then
+    echo "Error: platform-ownership-guard-app.yaml must target feat/k3s-ha branch." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq "kind: OwnershipAudit" <<<"${GUARD_RENDERED}"; then
+    echo "Error: OwnershipAudit sample must be rendered in DEV overlay." >&2
+    exit 1
+  fi
+
+  GUARD_DIGEST=$(awk '$1 == "digest:" { print $2; exit }' \
+    "${PROJECT_ROOT}/platform-ownership-guard/config/dev/kustomization.yaml")
+  GUARD_AUTOSYNC=$(awk '
+    /automated:/ { in_automated=1; next }
+    in_automated && $1 == "enabled:" { print $2; exit }
+    in_automated && /^[^[:space:]]/ { in_automated=0 }
+  ' "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml")
+
+  if [[ "${GUARD_DIGEST}" == "sha256:$(printf '0%.0s' {1..64})" && "${GUARD_AUTOSYNC}" != "false" ]]; then
+    echo "Error: Guard auto-sync must remain disabled while the image digest is a placeholder." >&2
+    exit 1
+  fi
+
+  if [[ "${GUARD_DIGEST}" != "sha256:$(printf '0%.0s' {1..64})" ]] &&
+    [[ ! "${GUARD_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    echo "Error: Guard image digest must be a sha256 digest or the gated all-zero bootstrap placeholder." >&2
+    exit 1
+  fi
+
+  GUARD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/platform-ownership-guard.yml"
+  for required_workflow_contract in \
+    'push: true' \
+    'steps.build-image.outputs.digest' \
+    'cosign sign --yes' \
+    'cosign verify' \
+    'kustomize edit set image'; do
+    if ! grep -Fq "${required_workflow_contract}" "${GUARD_WORKFLOW}"; then
+      echo "Error: Guard workflow is missing contract: ${required_workflow_contract}" >&2
+      exit 1
+    fi
+  done
+
+  if grep -Fq 'continue-on-error: true' "${GUARD_WORKFLOW}"; then
+    echo "Error: Guard supply-chain gates must fail closed." >&2
+    exit 1
+  fi
+
+  if grep -Eq '^[[:space:]]+uses:[[:space:]]+[^@[:space:]]+@v[0-9]' "${GUARD_WORKFLOW}"; then
+    echo "Error: Guard workflow Actions must be pinned by full commit SHA." >&2
+    exit 1
+  fi
+fi
+
 # Validate local coffeeshop-rabbitmq helm chart template rendering early, before
 # version consistency checks, so manifest/schema issues fail close to the source.
 if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-rabbitmq" ]; then

@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: platform-ownership-guard-metrics-monitor
+  namespace: platform-ownership-guard-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: platform-ownership-guard
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: platform-ownership-guard
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics

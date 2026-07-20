@@ -33,7 +33,7 @@ resource "aws_iam_role" "github_actions" {
   tags = local.common_tags
 }
 
-# ECR Push Policy limited to our microservices
+# ECR Push Policy limited to our microservices and PlatformOwnershipGuard
 resource "aws_iam_role_policy" "github_actions_ecr_push" {
   name = "${var.cluster_name}-github-actions-ecr-push"
   role = aws_iam_role.github_actions.id
@@ -57,7 +57,10 @@ resource "aws_iam_role_policy" "github_actions_ecr_push" {
           "ecr:PutImage",
           "ecr:UploadLayerPart"
         ]
-        Resource = [for repo in aws_ecr_repository.services : repo.arn]
+        Resource = concat(
+          [for repo in aws_ecr_repository.services : repo.arn],
+          [aws_ecr_repository.platform_ownership_guard.arn]
+        )
       }
     ]
   })
