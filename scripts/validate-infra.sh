@@ -128,28 +128,6 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
     exit 1
   fi
 
-  GUARD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/platform-ownership-guard.yml"
-  for required_workflow_contract in \
-    'push: true' \
-    'steps.build-image.outputs.digest' \
-    'cosign sign --yes' \
-    'cosign verify' \
-    'kustomize edit set image'; do
-    if ! grep -Fq "${required_workflow_contract}" "${GUARD_WORKFLOW}"; then
-      echo "Error: Guard workflow is missing contract: ${required_workflow_contract}" >&2
-      exit 1
-    fi
-  done
-
-  if grep -Fq 'continue-on-error: true' "${GUARD_WORKFLOW}"; then
-    echo "Error: Guard supply-chain gates must fail closed." >&2
-    exit 1
-  fi
-
-  if grep -Eq '^[[:space:]]+uses:[[:space:]]+[^@[:space:]]+@v[0-9]' "${GUARD_WORKFLOW}"; then
-    echo "Error: Guard workflow Actions must be pinned by full commit SHA." >&2
-    exit 1
-  fi
 fi
 
 # Validate local coffeeshop-rabbitmq helm chart template rendering early, before
@@ -162,7 +140,7 @@ if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-rabbitmq" ]; then
     "${KUBECONFORM_COMMON_ARGS[@]}"
 fi
 
-shellcheck "${PROJECT_ROOT}/scripts/"*.sh
+shellcheck "${PROJECT_ROOT}/scripts/"*.sh "${PROJECT_ROOT}/scripts/validation/"*.sh
 
 # Terraform is the deployment source of truth. Keep the Ansible standalone
 # default aligned so a direct site.yml recovery cannot validate the wrong disk size.
@@ -451,22 +429,7 @@ for workload in proxy counter product; do
   done
 done
 
-# ARC runner Pods share one persistent Longhorn RWX cache. Each CD matrix
-# service must own separate module/build directories; sharing one GOMODCACHE
-# caused concurrent Go download lock I/O failures.
-CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/cd.yml"
-ARC_RUNNER_VALUES="${K8S_DIR}/gitops/addons/arc/runner-values.yaml"
-# These are GitHub Actions expressions that must be matched literally. Using
-# double quotes would make Bash try to expand the `${{ ... }}` syntax.
-# shellcheck disable=SC2016
-if ! grep -Fq 'GOMODCACHE: /go-cache/mod/${{ matrix.service }}' "${CD_WORKFLOW}" ||
-  ! grep -Fq 'GOCACHE: /go-cache/build/${{ matrix.service }}' "${CD_WORKFLOW}" ||
-  ! grep -Fq 'TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache/${{ matrix.service }}' "${CD_WORKFLOW}" ||
-  ! grep -Fq 'mountPath: /go-cache' "${ARC_RUNNER_VALUES}" ||
-  grep -Fq 'GOMODCACHE: /go/pkg/mod' "${CD_WORKFLOW}"; then
-  echo "Error: ARC/CD service-partitioned cache contract is not preserved." >&2
-  exit 1
-fi
+bash "${PROJECT_ROOT}/scripts/validation/validate-ci-contracts.sh"
 
 OBSERVABILITY_POLICIES=$(kubectl kustomize "${K8S_DIR}/gitops/addons/observability-policies")
 if ! grep -Fq 'name: tempo-ingress' <<<"${OBSERVABILITY_POLICIES}" ||

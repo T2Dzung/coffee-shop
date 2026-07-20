@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/cd.yml"
+GUARD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/platform-ownership-guard.yml"
+ARC_RUNNER_VALUES="${PROJECT_ROOT}/infrastructure/k8s/gitops/addons/arc/runner-values.yaml"
+
+fail() {
+  echo "Error: $1" >&2
+  exit 1
+}
+
+# ARC runner Pods share one Longhorn RWX volume. Matrix services must never
+# share writable Go cache directories; this contract prevents recurrence of
+# the 2026-07-18 concurrent module-lock incident.
+# shellcheck disable=SC2016
+if ! grep -Fq 'GOMODCACHE: /go-cache/mod/${{ matrix.service }}' "${CD_WORKFLOW}" ||
+  ! grep -Fq 'GOCACHE: /go-cache/build/${{ matrix.service }}' "${CD_WORKFLOW}" ||
+  ! grep -Fq 'TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache/${{ matrix.service }}' "${CD_WORKFLOW}" ||
+  ! grep -Fq 'mountPath: /go-cache' "${ARC_RUNNER_VALUES}" ||
+  grep -Fq 'GOMODCACHE: /go/pkg/mod' "${CD_WORKFLOW}"; then
+  fail "ARC/CD service-partitioned cache contract is not preserved."
+fi
+
+# Application Dockerfiles package the already-built binary. Persistent
+# BuildKit cache has little value here, and the scanned image must be pushed
+# without invoking a second image build.
+if grep -Eq 'cache-(from|to):[[:space:]]*type=gha' "${CD_WORKFLOW}"; then
+  fail "Application CD must not use the legacy GitHub BuildKit cache."
+fi
+
+if [[ "$(grep -Fc 'uses: docker/build-push-action@' "${CD_WORKFLOW}")" -ne 1 ]]; then
+  fail "Application CD must build the Docker image exactly once."
+fi
+
+# Match the literal shell variables embedded in the workflow run block.
+# shellcheck disable=SC2016
+for push_contract in \
+  'docker tag "${LOCAL_IMAGE}" "${ECR_IMAGE}:${REVISION}"' \
+  'docker push "${ECR_IMAGE}:${REVISION}"'; do
+  if ! grep -Fq "${push_contract}" "${CD_WORKFLOW}"; then
+    fail "Application CD is missing scan-once/push-same-image contract: ${push_contract}"
+  fi
+done
+
+if grep -Fq "'.github/workflows/**'" "${CD_WORKFLOW}" ||
+  ! grep -Fq "'.github/workflows/cd.yml'" "${CD_WORKFLOW}"; then
+  fail "Application CD workflow path filter is broader than its real dependencies."
+fi
+
+# Pull-request code remains isolated on GitHub-hosted runners. Only the trusted
+# push supply-chain job may enter the DEV ARC runner boundary.
+GUARD_TEST_JOB=$(sed -n '/^  test:/,/^  build-and-supply-chain:/p' "${GUARD_WORKFLOW}")
+GUARD_BUILD_JOB=$(sed -n '/^  build-and-supply-chain:/,$p' "${GUARD_WORKFLOW}")
+
+if ! grep -Fq 'runs-on: ubuntu-latest' <<<"${GUARD_TEST_JOB}" ||
+  ! grep -Fq 'cache: true' <<<"${GUARD_TEST_JOB}" ||
+  ! grep -Fq 'cache-dependency-path: platform-ownership-guard/go.sum' <<<"${GUARD_TEST_JOB}"; then
+  fail "Guard PR test must remain GitHub-hosted with its nested Go cache enabled."
+fi
+
+if ! grep -Fq 'if: github.event_name == '\''push'\''' <<<"${GUARD_BUILD_JOB}" ||
+  ! grep -Fq 'runs-on: coffeeshop-runner-v3' <<<"${GUARD_BUILD_JOB}"; then
+  fail "Guard trusted supply-chain job must run on the DEV ARC runner."
+fi
+
+for guard_contract in \
+  'push: true' \
+  'steps.build-image.outputs.digest' \
+  'cosign sign --yes' \
+  'cosign verify' \
+  'kustomize edit set image'; do
+  if ! grep -Fq "${guard_contract}" "${GUARD_WORKFLOW}"; then
+    fail "Guard workflow is missing contract: ${guard_contract}"
+  fi
+done
+
+if grep -Fq 'continue-on-error: true' "${GUARD_WORKFLOW}"; then
+  fail "Guard supply-chain gates must fail closed."
+fi
+
+if grep -Eq 'cache-(from|to):[[:space:]]*type=gha' "${GUARD_WORKFLOW}"; then
+  fail "Guard workflow must not introduce GitHub BuildKit cache."
+fi
+
+if grep -Eq '^[[:space:]]+uses:[[:space:]]+[^@[:space:]]+@v[0-9]' "${GUARD_WORKFLOW}"; then
+  fail "Guard workflow Actions must be pinned by full commit SHA."
+fi
+
+echo "CI/CD architecture contract validation completed successfully."

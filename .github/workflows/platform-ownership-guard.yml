@@ -46,6 +46,7 @@ jobs:
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
           go-version-file: platform-ownership-guard/go.mod
+          cache: true
           cache-dependency-path: platform-ownership-guard/go.sum
 
       - name: Run module tests, vet and envtest
@@ -61,7 +62,7 @@ jobs:
     name: Push, Scan, SBOM, Sign and Pin Digest
     if: github.event_name == 'push'
     needs: [test]
-    runs-on: ubuntu-latest
+    runs-on: coffeeshop-runner-v3
     permissions:
       contents: write
       id-token: write
@@ -188,6 +189,7 @@ jobs:
             echo "GitOps already pins the verified digest; no commit required."
           else
             git commit -m "chore(gitops): pin PlatformOwnershipGuard digest ${DIGEST} [skip ci]"
+            git pull --rebase origin "${CURRENT_BRANCH}"
             git push origin "HEAD:${CURRENT_BRANCH}"
           fi
 
