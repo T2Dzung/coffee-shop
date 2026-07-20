@@ -55,8 +55,11 @@ jobs:
           make test
           git diff --exit-code
 
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
+
       - name: Render DEV bundle
-        run: kubectl kustomize platform-ownership-guard/config/dev >/tmp/platform-ownership-guard.yaml
+        run: kustomize build platform-ownership-guard/config/dev >/tmp/platform-ownership-guard.yaml
 
   build-and-supply-chain:
     name: Push, Scan, SBOM, Sign and Pin Digest
@@ -178,7 +181,7 @@ jobs:
           kustomize edit set image "controller=${REGISTRY}/${ECR_REPOSITORY}@${DIGEST}"
           cd ../../..
 
-          kubectl kustomize platform-ownership-guard/config/dev >/tmp/platform-ownership-guard.yaml
+          kustomize build platform-ownership-guard/config/dev >/tmp/platform-ownership-guard.yaml
           if ! grep -Fq "image: ${REGISTRY}/${ECR_REPOSITORY}@${DIGEST}" /tmp/platform-ownership-guard.yaml; then
             echo "::error title=Digest pin validation failed::Rendered Deployment does not use the verified digest"
             exit 1
