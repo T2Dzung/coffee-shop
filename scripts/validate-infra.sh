@@ -47,6 +47,14 @@ KUBECONFORM_COMMON_ARGS=(
 terraform -chdir="${PROJECT_ROOT}/infrastructure/terraform" fmt -check -recursive
 terraform -chdir="${DEV_TF_DIR}" validate -no-color
 
+# The GitHub OIDC role can publish the Guard artifact, but K3s containerd pulls
+# as the EC2 node role. Keep the dedicated Guard repository in that node-side
+# least-privilege policy or a valid workflow artifact will fail with ECR 403.
+if ! grep -Fq '[aws_ecr_repository.platform_ownership_guard.arn]' "${DEV_TF_DIR}/iam.tf"; then
+  echo "Error: DEV node ECR pull policy does not include PlatformOwnershipGuard." >&2
+  exit 1
+fi
+
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/site.yml"
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/post_start.yml"
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/backup_baseline.yml"
@@ -109,8 +117,13 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
     exit 1
   fi
 
-  GUARD_DIGEST=$(awk '$1 == "digest:" { print $2; exit }' \
-    "${PROJECT_ROOT}/platform-ownership-guard/config/dev/kustomization.yaml")
+  # Validate the effective image after Kustomize renders it. `kustomize edit`
+  # may rewrite list indentation (`digest:` vs `- digest:`) without changing
+  # behavior, so source-text parsing would reject an equivalent configuration.
+  GUARD_IMAGE=$(awk '
+    $1 == "image:" && $2 ~ /platform-ownership-guard@sha256:/ { print $2; exit }
+  ' <<<"${GUARD_RENDERED}")
+  GUARD_DIGEST="${GUARD_IMAGE##*@}"
   GUARD_AUTOSYNC=$(awk '
     /automated:/ { in_automated=1; next }
     in_automated && $1 == "enabled:" { print $2; exit }

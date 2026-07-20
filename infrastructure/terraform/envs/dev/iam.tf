@@ -49,7 +49,10 @@ resource "aws_iam_role_policy" "ecr_scoped" {
           "ecr:DescribeImages",
           "ecr:BatchGetImage"
         ]
-        Resource = [for repo in aws_ecr_repository.services : repo.arn]
+        Resource = concat(
+          [for repo in aws_ecr_repository.services : repo.arn],
+          [aws_ecr_repository.platform_ownership_guard.arn]
+        )
       }
     ]
   })

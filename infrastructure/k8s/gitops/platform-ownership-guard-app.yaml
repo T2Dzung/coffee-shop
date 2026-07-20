@@ -21,9 +21,7 @@ spec:
         - /status/terminatingReplicas
   syncPolicy:
     automated:
-      # G1 safety gate: keep disabled until the workflow has produced, scanned,
-      # signed, verified and committed a non-placeholder registry digest.
-      enabled: false
+      enabled: true
       prune: true
       selfHeal: true
     syncOptions:
