@@ -5,6 +5,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
 CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/cd.yml"
 GUARD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/platform-ownership-guard.yml"
 ARC_RUNNER_VALUES="${PROJECT_ROOT}/infrastructure/k8s/gitops/addons/arc/runner-values.yaml"
+GUARD_RELEASE_DOCKERFILE="${PROJECT_ROOT}/platform-ownership-guard/Dockerfile.release"
 
 fail() {
   echo "Error: $1" >&2
@@ -63,6 +64,23 @@ fi
 if ! grep -Fq 'if: github.event_name == '\''push'\''' <<<"${GUARD_BUILD_JOB}" ||
   ! grep -Fq 'runs-on: coffeeshop-runner-v3' <<<"${GUARD_BUILD_JOB}"; then
   fail "Guard trusted supply-chain job must run on the DEV ARC runner."
+fi
+
+# The Guard release follows the same proven boundary as the application CD:
+# compile with a branch-partitioned Longhorn Go cache, then let Docker package
+# the pre-built binary without a second Go build inside ephemeral DinD.
+# shellcheck disable=SC2016
+if ! grep -Fq 'GOMODCACHE: /go-cache/mod/platform-ownership-guard/${{ github.ref_name }}' <<<"${GUARD_BUILD_JOB}" ||
+  ! grep -Fq 'GOCACHE: /go-cache/build/platform-ownership-guard/${{ github.ref_name }}' <<<"${GUARD_BUILD_JOB}" ||
+  ! grep -Fq 'cache: false' <<<"${GUARD_BUILD_JOB}" ||
+  ! grep -Fq 'go build -mod=readonly -trimpath -ldflags="-s -w" -o bin/manager ./cmd/main.go' <<<"${GUARD_BUILD_JOB}" ||
+  ! grep -Fq 'file: platform-ownership-guard/Dockerfile.release' <<<"${GUARD_BUILD_JOB}"; then
+  fail "Guard release must compile with its partitioned local Go cache before Docker packaging."
+fi
+
+if ! grep -Fq 'COPY --chown=65532:65532 bin/manager /manager' "${GUARD_RELEASE_DOCKERFILE}" ||
+  grep -Eq '^FROM[[:space:]]+golang:' "${GUARD_RELEASE_DOCKERFILE}"; then
+  fail "Guard release Dockerfile must package the pre-built binary without compiling Go."
 fi
 
 for guard_contract in \

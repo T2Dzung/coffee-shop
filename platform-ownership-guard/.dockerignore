@@ -9,3 +9,8 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# The release workflow compiles with the persistent ARC Go cache, then Docker
+# packages only this binary. Keep every other generated bin artifact excluded.
+!bin/
+!bin/manager

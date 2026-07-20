@@ -11,6 +11,7 @@ on:
       - 'infrastructure/terraform/envs/dev/github_oidc.tf'
       - 'infrastructure/k8s/gitops/platform-ownership-guard-app.yaml'
       - 'scripts/validate-infra.sh'
+      - 'scripts/validation/validate-ci-contracts.sh'
       - 'scripts/verify-dev-runtime.sh'
   pull_request:
     branches: [main, feat/k3s-ha]
@@ -21,6 +22,7 @@ on:
       - 'infrastructure/terraform/envs/dev/github_oidc.tf'
       - 'infrastructure/k8s/gitops/platform-ownership-guard-app.yaml'
       - 'scripts/validate-infra.sh'
+      - 'scripts/validation/validate-ci-contracts.sh'
       - 'scripts/verify-dev-runtime.sh'
 
 concurrency:
@@ -75,6 +77,25 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
 
+      - name: Set up Go for release build
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version-file: platform-ownership-guard/go.mod
+          cache: false
+
+      - name: Build release binary with local persistent cache
+        working-directory: platform-ownership-guard
+        env:
+          GOMODCACHE: /go-cache/mod/platform-ownership-guard/${{ github.ref_name }}
+          GOCACHE: /go-cache/build/platform-ownership-guard/${{ github.ref_name }}
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p bin "${GOMODCACHE}" "${GOCACHE}"
+          go build -mod=readonly -trimpath -ldflags="-s -w" -o bin/manager ./cmd/main.go
+          test -x bin/manager
+
       - name: Validate AWS role secret
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
@@ -102,7 +123,7 @@ jobs:
         uses: docker/build-push-action@c382f710d39a5bb4e430307530a720f50c2d3318 # v6.0.0
         with:
           context: platform-ownership-guard
-          file: platform-ownership-guard/Dockerfile
+          file: platform-ownership-guard/Dockerfile.release
           push: true
           tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: |

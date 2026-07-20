@@ -1,0 +1,9 @@
+# This image stage only packages the exact release binary; it does not
+# repeat compilation inside ephemeral DinD storage.
+FROM gcr.io/distroless/static:nonroot
+
+WORKDIR /
+COPY --chown=65532:65532 bin/manager /manager
+USER 65532:65532
+
+ENTRYPOINT ["/manager"]
