@@ -125,13 +125,21 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
   ' <<<"${GUARD_RENDERED}")
   GUARD_DIGEST="${GUARD_IMAGE##*@}"
   GUARD_AUTOSYNC=$(awk '
-    /automated:/ { in_automated=1; next }
-    in_automated && $1 == "enabled:" { print $2; exit }
-    in_automated && /^[^[:space:]]/ { in_automated=0 }
+    $1 == "automated:" { print "true"; exit }
   ' "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml")
 
-  if [[ "${GUARD_DIGEST}" == "sha256:$(printf '0%.0s' {1..64})" && "${GUARD_AUTOSYNC}" != "false" ]]; then
-    echo "Error: Guard auto-sync must remain disabled while the image digest is a placeholder." >&2
+  if awk '
+    $1 == "automated:" { in_automated=1; next }
+    in_automated && $1 == "enabled:" { found=1; exit }
+    in_automated && $1 !~ /^(prune:|selfHeal:)/ { in_automated=0 }
+    END { exit !found }
+  ' "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml"; then
+    echo "Error: Guard Application must not use automated.enabled; the deployed ArgoCD CRD prunes that field and causes perpetual drift." >&2
+    exit 1
+  fi
+
+  if [[ "${GUARD_DIGEST}" == "sha256:$(printf '0%.0s' {1..64})" && "${GUARD_AUTOSYNC}" == "true" ]]; then
+    echo "Error: Guard automated sync block must be absent while the image digest is a placeholder." >&2
     exit 1
   fi
 

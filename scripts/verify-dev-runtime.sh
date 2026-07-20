@@ -176,8 +176,12 @@ if ! kubectl get configmap -n monitoring -l grafana_dashboard=1 -o name 2>/dev/n
   record_failure "PlatformOwnershipGuard Grafana dashboard ConfigMap is missing"
 fi
 
-prometheus_service="$(kubectl get service -n monitoring -l app.kubernetes.io/name=prometheus \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+prometheus_service="$(kubectl get service -n monitoring \
+  -l app.kubernetes.io/instance=monitoring,app.kubernetes.io/part-of=kube-prometheus-stack \
+  -o json 2>/dev/null | jq -r '
+    [.items[] | select(any(.spec.ports[]?; .port == 9090)) | .metadata.name]
+    | if length == 1 then .[0] else empty end
+  ' || true)"
 if [[ -z "${prometheus_service}" ]]; then
   record_failure "Prometheus Service could not be discovered"
 else
