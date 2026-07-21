@@ -48,6 +48,18 @@ spec:
           ports:
             - containerPort: 5001
               name: grpc
+          resources:
+            requests:
+              cpu: 40m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            tcpSocket:
+              port: 5001
+            initialDelaySeconds: 3
+            periodSeconds: 5
 
 ---
 apiVersion: v1

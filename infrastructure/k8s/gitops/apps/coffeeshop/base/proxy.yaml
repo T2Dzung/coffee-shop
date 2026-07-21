@@ -68,6 +68,18 @@ spec:
           ports:
             - containerPort: 5000
               name: proxy-port
+          resources:
+            requests:
+              cpu: 60m
+              memory: 32Mi
+            limits:
+              cpu: 150m
+              memory: 64Mi
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 3
+            periodSeconds: 5
 
 ---
 apiVersion: v1
