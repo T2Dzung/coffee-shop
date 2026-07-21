@@ -46,14 +46,20 @@ kubectl top nodes 2>/dev/null | tee -a "${EVIDENCE_DIR}/preflight.log" || echo "
 
 # Node Pressure Fail-fast Check
 NODE_JSON=$(kubectl get nodes -o json)
-if echo "$NODE_JSON" | grep -q '"type":"MemoryPressure","status":"True"'; then
-    echo "[FATAL ERROR] Node is under MemoryPressure!" | tee "${EVIDENCE_DIR}/error.log"
+PRESSURE_CONDITIONS=$(jq -r '
+    .items[] as $node
+    | $node.status.conditions[]
+    | select((.type == "MemoryPressure" or .type == "DiskPressure") and .status == "True")
+    | "\($node.metadata.name): \(.type)=\(.status)"
+' <<<"${NODE_JSON}")
+if [ -n "${PRESSURE_CONDITIONS}" ]; then
+    {
+        echo "[FATAL ERROR] Blocking node pressure detected:"
+        echo "${PRESSURE_CONDITIONS}"
+    } | tee "${EVIDENCE_DIR}/error.log"
     exit 1
 fi
-if echo "$NODE_JSON" | grep -q '"type":"DiskPressure","status":"True"'; then
-    echo "[FATAL ERROR] Node is under DiskPressure!" | tee "${EVIDENCE_DIR}/error.log"
-    exit 1
-fi
+echo "[OK] No MemoryPressure or DiskPressure detected." | tee -a "${EVIDENCE_DIR}/preflight.log"
 
 echo "--- 2/4 Checking Metrics API Status ---" | tee -a "${EVIDENCE_DIR}/preflight.log"
 if kubectl get --raw /apis/metrics.k8s.io/v1beta1 &>/dev/null; then
@@ -65,6 +71,24 @@ fi
 
 echo "--- 3/4 Checking Target Deployments & Probes ---" | tee -a "${EVIDENCE_DIR}/preflight.log"
 kubectl get deployments -n coffeeshop -o wide | tee -a "${EVIDENCE_DIR}/preflight.log"
+
+check_argocd_health() {
+    local phase="$1"
+    local app_json sync_status health_status
+
+    app_json=$(kubectl get application coffeeshop-dev -n argocd -o json)
+    sync_status=$(jq -r '.status.sync.status // "Unknown"' <<<"${app_json}")
+    health_status=$(jq -r '.status.health.status // "Unknown"' <<<"${app_json}")
+    echo "[${phase}] ArgoCD coffeeshop-dev: sync=${sync_status}, health=${health_status}" \
+        | tee -a "${EVIDENCE_DIR}/preflight.log"
+    if [ "${sync_status}" != "Synced" ] || [ "${health_status}" != "Healthy" ]; then
+        echo "[FATAL ERROR] ArgoCD application is not Synced/Healthy." \
+            | tee "${EVIDENCE_DIR}/error.log"
+        return 1
+    fi
+}
+
+check_argocd_health "PRE-LOAD"
 
 TARGET_PATH="${TARGET_PATH:-/v1/api/item-types}"
 echo "--- 4/4 Testing Gateway Reachability (${BASE_URL}${TARGET_PATH}) ---" | tee -a "${EVIDENCE_DIR}/preflight.log"
@@ -160,14 +184,44 @@ set -e
 kill "$MONITOR_PID" 2>/dev/null || true
 
 # 6. Capture Post-load Stabilization Evidence & Scale-down Polling
-echo "--- Capturing Post-load Stabilization Evidence (Polling up to 180s for Scale-Down) ---" | tee -a "${EVIDENCE_DIR}/post_load.log"
-for (( i=0; i<12; i++ )); do
+SCALE_DOWN_TIMEOUT_SECONDS="${SCALE_DOWN_TIMEOUT_SECONDS:-180}"
+SCALE_DOWN_POLL_SECONDS="${SCALE_DOWN_POLL_SECONDS:-10}"
+SCALE_DOWN_DEADLINE=$((SECONDS + SCALE_DOWN_TIMEOUT_SECONDS))
+SCALE_DOWN_VERIFIED=false
+
+echo "--- Capturing Post-load Stabilization Evidence (Polling up to ${SCALE_DOWN_TIMEOUT_SECONDS}s for Scale-Down) ---" \
+    | tee -a "${EVIDENCE_DIR}/post_load.log"
+while [ "${SECONDS}" -lt "${SCALE_DOWN_DEADLINE}" ]; do
     NOW=$(date -u +'%H:%M:%S')
     echo "=== [Post-Load Poll $NOW] ===" | tee -a "${EVIDENCE_DIR}/post_load.log"
-    kubectl get hpa -n coffeeshop | tee -a "${EVIDENCE_DIR}/post_load.log" || true
+    HPA_JSON=$(kubectl get hpa -n coffeeshop -o json)
+    kubectl get hpa -n coffeeshop | tee -a "${EVIDENCE_DIR}/post_load.log"
     kubectl get pods -n coffeeshop -o wide | tee -a "${EVIDENCE_DIR}/post_load.log" || true
-    sleep 10
+
+    HPA_COUNT=$(jq '.items | length' <<<"${HPA_JSON}")
+    if [ "${HPA_COUNT}" -eq 0 ]; then
+        echo "[INFO] No HPA resources exist; scale-down verification is not applicable." \
+            | tee -a "${EVIDENCE_DIR}/post_load.log"
+        SCALE_DOWN_VERIFIED=true
+        break
+    fi
+
+    if jq -e '[.items[] | (.status.currentReplicas // 0) <= .spec.minReplicas] | all' \
+        >/dev/null <<<"${HPA_JSON}"; then
+        echo "[OK] All HPAs reached minReplicas." | tee -a "${EVIDENCE_DIR}/post_load.log"
+        SCALE_DOWN_VERIFIED=true
+        break
+    fi
+    sleep "${SCALE_DOWN_POLL_SECONDS}"
 done
+
+if [ "${SCALE_DOWN_VERIFIED}" != "true" ]; then
+    echo "[FATAL ERROR] HPAs did not reach minReplicas within ${SCALE_DOWN_TIMEOUT_SECONDS}s." \
+        | tee -a "${EVIDENCE_DIR}/post_load.log" "${EVIDENCE_DIR}/error.log"
+    exit 1
+fi
+
+check_argocd_health "POST-LOAD"
 
 if [ "$K6_EXIT_CODE" -eq 0 ]; then
     echo "=== [DEV-3 Load Test Completed Cleanly - Evidence Saved to ${EVIDENCE_DIR}] ==="
