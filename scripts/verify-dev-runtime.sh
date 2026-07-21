@@ -226,11 +226,22 @@ else
     if ! awk -F '\t' -v holder="${lease_holder_pod}" '$1 == holder { found=1 } END { exit !found }' <<<"${guard_ready_pods}"; then
       record_failure "PlatformOwnershipGuard Lease holder ${lease_holder} is not one of the Ready manager Pods"
     fi
-    lease_renew_epoch="$(date -u -d "${lease_renew}" +%s 2>/dev/null || true)"
-    now_epoch="$(date -u +%s)"
-    if [[ -z "${lease_renew_epoch}" ]] ||
-      ((lease_renew_epoch > now_epoch || now_epoch - lease_renew_epoch > 60)); then
-      record_failure "PlatformOwnershipGuard Lease renewTime is invalid or older than 60 seconds (${lease_renew})"
+
+    # Prove liveness by observing the API object advance. Comparing renewTime
+    # against this client's wall clock creates false failures when the operator
+    # host and Kubernetes nodes have small clock skew.
+    initial_lease_renew="${lease_renew}"
+    lease_progress_deadline=$((SECONDS + 15))
+    while ((SECONDS < lease_progress_deadline)); do
+      lease_holder="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)"
+      lease_renew="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
+      if [[ -n "${lease_holder}" && -n "${lease_renew}" && "${lease_renew}" != "${initial_lease_renew}" ]]; then
+        break
+      fi
+      sleep 2
+    done
+    if [[ -z "${lease_renew}" || "${lease_renew}" == "${initial_lease_renew}" ]]; then
+      record_failure "PlatformOwnershipGuard Lease renewTime did not advance within 15 seconds (${initial_lease_renew})"
     fi
   fi
 fi
