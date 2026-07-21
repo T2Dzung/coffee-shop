@@ -18,6 +18,6 @@ patches:
     version: v1alpha1
 
 images:
-- digest: sha256:6a9e252840c836cb1e0e51e64ce8488c60ef94dbe9976822638b261eaf3e6a00
+- digest: sha256:cc4ca19156037def6a0b1534634ca8251ec7cc8e292d5b73647103ac851ddc99
   name: controller
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard
