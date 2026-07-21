@@ -21,3 +21,10 @@ images:
 - digest: sha256:6a9e252840c836cb1e0e51e64ce8488c60ef94dbe9976822638b261eaf3e6a00
   name: controller
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard
+
+# Phase 6.7 approved early-close drill: temporarily stop audit reconciliation through
+# GitOps while leaving the CRD, OwnershipAudit and target workloads untouched.
+# Revert this exact change after disabled-state evidence is captured.
+replicas:
+- count: 0
+  name: controller-manager
