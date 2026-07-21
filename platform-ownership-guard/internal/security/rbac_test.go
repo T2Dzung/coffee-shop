@@ -1,6 +1,7 @@
 package security_test
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -74,6 +75,80 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatusAndEvents(t *testing.T) {
 
 	if !foundAuditRead || !foundStatusWrite || !foundApplicationRead || !foundTargetRead || !foundEventWrite {
 		t.Fatalf("expected audit read, status write, and events write rules, got %#v", role.Rules)
+	}
+}
+
+func TestLeaseRoleIsNamespacedAndRestricted(t *testing.T) {
+	rolePath := filepath.Join("..", "..", "config", "rbac", "lease_role.yaml")
+	roleBytes, err := os.ReadFile(rolePath)
+	if err != nil {
+		t.Fatalf("read lease role: %v", err)
+	}
+
+	var role rbacv1.Role
+	if err := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(roleBytes), 4096).Decode(&role); err != nil && err != io.EOF {
+		t.Fatalf("decode lease role: %v", err)
+	}
+
+	if role.Kind != "Role" {
+		t.Fatalf("expected lease role Kind to be Role, got %q", role.Kind)
+	}
+	if role.Name != "lease-role" {
+		t.Fatalf("expected lease role Name to be lease-role, got %q", role.Name)
+	}
+	if role.Namespace != "system" {
+		t.Fatalf("expected lease role Namespace to be system, got %q", role.Namespace)
+	}
+
+	if len(role.Rules) == 0 {
+		t.Fatal("lease role must contain rules")
+	}
+
+	foundLeaseRule := false
+	for _, rule := range role.Rules {
+		if !slices.Contains(rule.APIGroups, "coordination.k8s.io") {
+			t.Fatalf("unexpected API group in lease role: %#v", rule.APIGroups)
+		}
+		for _, resource := range rule.Resources {
+			if resource == "leases" {
+				foundLeaseRule = true
+				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch", "create", "update", "patch")
+			} else {
+				t.Fatalf("unexpected resource in lease role: %s", resource)
+			}
+		}
+	}
+
+	if !foundLeaseRule {
+		t.Fatal("lease role must contain rules for leases resource")
+	}
+
+	// Validate lease_role_binding.yaml
+	bindingPath := filepath.Join("..", "..", "config", "rbac", "lease_role_binding.yaml")
+	bindingBytes, err := os.ReadFile(bindingPath)
+	if err != nil {
+		t.Fatalf("read lease role binding: %v", err)
+	}
+
+	var binding rbacv1.RoleBinding
+	if err := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(bindingBytes), 4096).Decode(&binding); err != nil && err != io.EOF {
+		t.Fatalf("decode lease role binding: %v", err)
+	}
+
+	if binding.Kind != "RoleBinding" {
+		t.Fatalf("expected lease role binding Kind to be RoleBinding, got %q", binding.Kind)
+	}
+	if binding.Name != "lease-rolebinding" {
+		t.Fatalf("expected lease role binding Name to be lease-rolebinding, got %q", binding.Name)
+	}
+	if binding.Namespace != "system" {
+		t.Fatalf("expected lease role binding Namespace to be system, got %q", binding.Namespace)
+	}
+	if binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != "lease-role" {
+		t.Fatalf("unexpected roleRef in lease role binding: %#v", binding.RoleRef)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != "ServiceAccount" || binding.Subjects[0].Name != "controller-manager" || binding.Subjects[0].Namespace != "system" {
+		t.Fatalf("unexpected subjects in lease role binding: %#v", binding.Subjects)
 	}
 }
 

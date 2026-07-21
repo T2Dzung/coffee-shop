@@ -54,8 +54,11 @@ func main() {
 	var metricsAddr string
 	var probeAddr string
 
+	var leaderElectionNamespace string
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address; :8080 by default")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address")
+	flag.StringVar(&leaderElectionNamespace, "leader-election-namespace", os.Getenv("POD_NAMESPACE"), "Namespace for leader election lease; defaults to POD_NAMESPACE or in-cluster namespace if empty")
 
 	logOptions := zap.Options{Development: false}
 	logOptions.BindFlags(flag.CommandLine)
@@ -63,14 +66,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme: scheme,
-		Metrics: metricsserver.Options{
-			BindAddress: metricsAddr,
-		},
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         false,
-	})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions(metricsAddr, probeAddr, leaderElectionNamespace))
 	if err != nil {
 		setupLog.Error(err, "Failed to create manager")
 		os.Exit(1)
@@ -130,5 +126,18 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "Problem running manager")
 		os.Exit(1)
+	}
+}
+
+func managerOptions(metricsAddr, probeAddr, leaderElectionNamespace string) ctrl.Options {
+	return ctrl.Options{
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsAddr,
+		},
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          true,
+		LeaderElectionID:        "platform-ownership-guard-leader",
+		LeaderElectionNamespace: leaderElectionNamespace,
 	}
 }

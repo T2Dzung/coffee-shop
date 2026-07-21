@@ -117,13 +117,26 @@ if ! kubectl get applications.argoproj.io -n argocd "${guard_app}" \
   record_failure "PlatformOwnershipGuard ArgoCD Application is missing"
 fi
 
-if ! kubectl get crd ownershipaudits.guard.platform.t2dzung.github.io \
-    > "${EVIDENCE_DIR}/guard-crd.yaml" 2>/dev/null; then
+if ! guard_crd_json="$(kubectl get crd ownershipaudits.guard.platform.t2dzung.github.io -o json 2>/dev/null)"; then
   record_failure "OwnershipAudit CRD is missing"
-elif ! kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership -o yaml \
+else
+  printf '%s\n' "${guard_crd_json}" > "${EVIDENCE_DIR}/guard-crd.json"
+  if ! jq -e '
+      (.spec.versions | length == 1) and
+      (.spec.versions[0].name == "v1alpha1") and
+      (.spec.versions[0].served == true) and
+      (.spec.versions[0].storage == true) and
+      (.status.storedVersions == ["v1alpha1"])
+    ' >/dev/null 2>&1 <<<"${guard_crd_json}"; then
+    record_failure "OwnershipAudit CRD must have only served/storage v1alpha1 and storedVersions=[v1alpha1]"
+  fi
+fi
+
+if kubectl get crd ownershipaudits.guard.platform.t2dzung.github.io >/dev/null 2>&1 &&
+  ! kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership -o yaml \
     > "${EVIDENCE_DIR}/guard-ownershipaudit.yaml" 2>/dev/null; then
   record_failure "coffeeshop/coffeeshop-ownership audit is missing"
-else
+elif kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership >/dev/null 2>&1; then
   audit_ready="$(kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
   inventory_ready="$(kubectl get ownershipaudit -n coffeeshop coffeeshop-ownership \
@@ -147,8 +160,71 @@ else
     [[ "${guard_image}" =~ @sha256:0{64}$ ]]; then
     record_failure "PlatformOwnershipGuard Deployment is not pinned to a non-placeholder digest"
   fi
-  if [[ "${guard_ready:-0}" != "${guard_desired:-1}" ]]; then
-    record_failure "PlatformOwnershipGuard Deployment has ${guard_ready:-0}/${guard_desired:-1} replicas ready"
+  if [[ "${guard_desired:-0}" != "2" ]]; then
+    record_failure "PlatformOwnershipGuard Deployment spec.replicas must be 2 for HA contract (got ${guard_desired:-0})"
+  fi
+  if [[ "${guard_ready:-0}" != "2" ]]; then
+    record_failure "PlatformOwnershipGuard Deployment has ${guard_ready:-0}/2 replicas ready"
+  fi
+fi
+
+# Verify HA Pod readiness and classify node placement. ScheduleAnyway permits a
+# degraded same-node placement, so record it without turning topology preference
+# into a hard scheduling contract.
+guard_pods_json="$(kubectl get pods -n "${guard_namespace}" \
+  -l control-plane=controller-manager,app.kubernetes.io/name=platform-ownership-guard \
+  -o json 2>/dev/null || true)"
+printf '%s\n' "${guard_pods_json}" > "${EVIDENCE_DIR}/guard-pods.json"
+guard_ready_pods="$(jq -r '
+  .items[]?
+  | select(.status.phase == "Running")
+  | select((.status.containerStatuses // []) | length > 0)
+  | select(all(.status.containerStatuses[]; .ready == true))
+  | [.metadata.name, .spec.nodeName] | @tsv
+' <<<"${guard_pods_json}" 2>/dev/null || true)"
+printf '%s\n' "${guard_ready_pods}" > "${EVIDENCE_DIR}/guard-ready-pods.tsv"
+guard_ready_pod_count="$(awk 'NF { count++ } END { print count+0 }' <<<"${guard_ready_pods}")"
+if [[ "${guard_ready_pod_count}" != "2" ]]; then
+  record_failure "PlatformOwnershipGuard must have exactly 2 fully Ready manager Pods (got ${guard_ready_pod_count})"
+fi
+guard_distinct_nodes="$(awk 'NF >= 2 { nodes[$2]=1 } END { print length(nodes)+0 }' <<<"${guard_ready_pods}")"
+printf 'ready_pods=%s\ndistinct_nodes=%s\n' "${guard_ready_pod_count}" "${guard_distinct_nodes}" \
+  > "${EVIDENCE_DIR}/guard-placement.txt"
+if [[ "${guard_ready_pod_count}" == "2" && "${guard_distinct_nodes}" -lt 2 ]]; then
+  echo "WARN: PlatformOwnershipGuard HA is running in degraded same-node placement." >&2
+fi
+
+# Verify Leader Election Lease object
+if ! kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o yaml \
+    > "${EVIDENCE_DIR}/guard-lease.yaml" 2>/dev/null; then
+  record_failure "PlatformOwnershipGuard Leader Election Lease object is missing"
+else
+  lease_holder="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)"
+  lease_renew="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
+  if [[ -z "${lease_holder}" || -z "${lease_renew}" ]]; then
+    record_failure "PlatformOwnershipGuard Lease is missing valid holderIdentity or renewTime"
+  else
+    lease_holder_pod="${lease_holder%%_*}"
+    if ! awk -F '\t' -v holder="${lease_holder_pod}" '$1 == holder { found=1 } END { exit !found }' <<<"${guard_ready_pods}"; then
+      record_failure "PlatformOwnershipGuard Lease holder ${lease_holder} is not one of the Ready manager Pods"
+    fi
+    lease_renew_epoch="$(date -u -d "${lease_renew}" +%s 2>/dev/null || true)"
+    now_epoch="$(date -u +%s)"
+    if [[ -z "${lease_renew_epoch}" ]] ||
+      ((lease_renew_epoch > now_epoch || now_epoch - lease_renew_epoch > 60)); then
+      record_failure "PlatformOwnershipGuard Lease renewTime is invalid or older than 60 seconds (${lease_renew})"
+    fi
+  fi
+fi
+
+# Verify PodDisruptionBudget (PDB)
+if ! kubectl get pdb -n "${guard_namespace}" platform-ownership-guard-controller-manager-pdb -o yaml \
+    > "${EVIDENCE_DIR}/guard-pdb.yaml" 2>/dev/null; then
+  record_failure "PlatformOwnershipGuard PodDisruptionBudget is missing"
+else
+  pdb_max_unavail="$(kubectl get pdb -n "${guard_namespace}" platform-ownership-guard-controller-manager-pdb -o jsonpath='{.spec.maxUnavailable}' 2>/dev/null || true)"
+  if [[ "${pdb_max_unavail}" != "1" ]]; then
+    record_failure "PlatformOwnershipGuard PodDisruptionBudget spec.maxUnavailable must be 1 (got ${pdb_max_unavail:-missing})"
   fi
 fi
 

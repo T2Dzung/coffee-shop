@@ -117,6 +117,47 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
     exit 1
   fi
 
+  GUARD_MAIN="${PROJECT_ROOT}/platform-ownership-guard/cmd/main.go"
+  GUARD_MANAGER="${PROJECT_ROOT}/platform-ownership-guard/config/manager/manager.yaml"
+  GUARD_PDB="${PROJECT_ROOT}/platform-ownership-guard/config/manager/pdb.yaml"
+  GUARD_LEASE_ROLE="${PROJECT_ROOT}/platform-ownership-guard/config/rbac/lease_role.yaml"
+  GUARD_LEASE_BINDING="${PROJECT_ROOT}/platform-ownership-guard/config/rbac/lease_role_binding.yaml"
+  GUARD_CRD="${PROJECT_ROOT}/platform-ownership-guard/config/crd/bases/guard.platform.t2dzung.github.io_ownershipaudits.yaml"
+
+  if ! grep -Fq 'LeaderElection:          true' "${GUARD_MAIN}" ||
+    ! grep -Fq 'LeaderElectionID:        "platform-ownership-guard-leader"' "${GUARD_MAIN}" ||
+    ! grep -Fq 'LeaderElectionNamespace: leaderElectionNamespace' "${GUARD_MAIN}" ||
+    ! grep -Fq 'name: POD_NAMESPACE' "${GUARD_MANAGER}" ||
+    ! grep -Fq 'fieldPath: metadata.namespace' "${GUARD_MANAGER}"; then
+    echo "Error: Guard manager must use stable leader election with its runtime Pod namespace." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'replicas: 2' "${GUARD_MANAGER}" ||
+    ! grep -Fq 'maxUnavailable: 0' "${GUARD_MANAGER}" ||
+    ! grep -Fq 'maxSurge: 1' "${GUARD_MANAGER}" ||
+    ! grep -Fq 'topologyKey: kubernetes.io/hostname' "${GUARD_MANAGER}" ||
+    ! grep -Fq 'whenUnsatisfiable: ScheduleAnyway' "${GUARD_MANAGER}"; then
+    echo "Error: Guard two-replica rollout and topology contract is not preserved." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'kind: PodDisruptionBudget' "${GUARD_PDB}" ||
+    ! grep -Fq 'maxUnavailable: 1' "${GUARD_PDB}" ||
+    ! grep -Fq 'kind: Role' "${GUARD_LEASE_ROLE}" ||
+    ! grep -Fq 'coordination.k8s.io' "${GUARD_LEASE_ROLE}" ||
+    ! grep -Fq 'kind: RoleBinding' "${GUARD_LEASE_BINDING}"; then
+    echo "Error: Guard PDB or namespaced Lease RBAC contract is missing." >&2
+    exit 1
+  fi
+
+  if [[ "$(grep -Ec '^[[:space:]]+name: v1alpha1$' "${GUARD_CRD}")" != "1" ]] ||
+    ! grep -Fq 'served: true' "${GUARD_CRD}" ||
+    ! grep -Fq 'storage: true' "${GUARD_CRD}"; then
+    echo "Error: Guard CRD must keep exactly one served/storage v1alpha1 version in Phase 6.8." >&2
+    exit 1
+  fi
+
   # Validate the effective image after Kustomize renders it. `kustomize edit`
   # may rewrite list indentation (`digest:` vs `- digest:`) without changing
   # behavior, so source-text parsing would reject an equivalent configuration.

@@ -7,8 +7,7 @@ resources:
 - ../rbac
 - ../manager
 
-# Metrics, webhooks, Events and leader election are deliberately deferred.
-# Phase 6.4 runs one replica with health/readiness probes and zero target writes.
+# Webhooks are deliberately deferred.
 
 # +kubebuilder:scaffold:crdkustomizecainjectionns
 # +kubebuilder:scaffold:crdkustomizecainjectionname

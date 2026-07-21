@@ -106,4 +106,31 @@ if grep -Eq '^[[:space:]]+uses:[[:space:]]+[^@[:space:]]+@v[0-9]' "${GUARD_WORKF
   fail "Guard workflow Actions must be pinned by full commit SHA."
 fi
 
+# Validate Phase 6.8 Rehearsal Scripts Contract
+REHEARSAL_DIR="${PROJECT_ROOT}/scripts/rehearsal"
+for script in rehearse-ha-failover.sh rehearse-upgrade-rollback.sh rehearse-removal.sh; do
+  SCRIPT_PATH="${REHEARSAL_DIR}/${script}"
+  if [[ ! -f "${SCRIPT_PATH}" ]]; then
+    fail "Rehearsal script ${script} is missing."
+  fi
+  if ! grep -Fq 'set -euo pipefail' "${SCRIPT_PATH}" ||
+     ! grep -Fq -- '--dry-run' "${SCRIPT_PATH}"; then
+    fail "Rehearsal script ${script} must enforce strict mode and dry-run safety flags."
+  fi
+done
+
+if ! grep -Fq -- '--confirm-destructive' "${REHEARSAL_DIR}/rehearse-ha-failover.sh" ||
+  ! grep -Fq 'MAX_WAIT=45' "${REHEARSAL_DIR}/rehearse-ha-failover.sh" ||
+  ! grep -Fq 'compute_workload_fingerprint' "${REHEARSAL_DIR}/rehearse-ha-failover.sh"; then
+  fail "HA rehearsal must retain confirmation, bounded polling and target fingerprint checks."
+fi
+
+for checkpoint_script in rehearse-upgrade-rollback.sh rehearse-removal.sh; do
+  if ! grep -Fq -- '--checkpoint' "${REHEARSAL_DIR}/${checkpoint_script}" ||
+    ! grep -Fq -- '--evidence-dir' "${REHEARSAL_DIR}/${checkpoint_script}" ||
+    grep -Eq 'kubectl[[:space:]]+(apply|delete|patch|replace|scale|set)' "${REHEARSAL_DIR}/${checkpoint_script}"; then
+    fail "${checkpoint_script} must be a read-only, checkpoint-based evidence helper."
+  fi
+done
+
 echo "CI/CD architecture contract validation completed successfully."
