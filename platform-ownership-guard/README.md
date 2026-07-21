@@ -1,135 +1,91 @@
-# platform-ownership-guard
-// TODO(user): Add simple overview of use/purpose
+# PlatformOwnershipGuard
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A read-only Kubernetes operator that continuously audits resource ownership across GitOps-managed clusters. It detects unprotected Argo CD prune candidates and stale owner references, then surfaces findings through status conditions, Kubernetes Events and bounded Prometheus metrics — without ever modifying the resources it inspects.
 
-## Getting Started
+## Why this exists
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+In a GitOps-managed cluster with multiple resource sources (Argo CD, Ansible, Helm, manual apply), resources can silently become prune candidates or lose their intended owners. A single misconfigured annotation or a recreated Secret can lead to data loss on the next Argo CD sync. PlatformOwnershipGuard provides an automated, continuous safety net that catches these issues before they cause outages.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+**Origin story:** This project was born from a real incident where a RabbitMQ connection Secret — created outside Git but tracked by Argo CD — was marked `requiresPruning=true` and nearly deleted during a routine sync, which would have taken down the entire message queue layer.
 
-```sh
-make docker-build docker-push IMG=<some-registry>/platform-ownership-guard:tag
+## What it does
+
+```
+Kubernetes API  ──read──▶  Collector  ──▶  Pure Detectors  ──▶  OwnershipAudit.status
+                                              │                         │
+                                              │                    Kubernetes Events
+                                              │                    Prometheus metrics
+                                              ▼
+                                    Zero writes to target
+                                    Deployments / Secrets / Apps
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+- **ArgoPruneRisk detector** — flags resources marked for pruning that lack `Prune=false` protection, with confidence levels based on available evidence.
+- **StaleOwnerReference detector** — identifies resources pointing to owners that no longer exist or whose UIDs have changed.
+- **Status-first signal pipeline** — persisted-status diff prevents Event/metric storms on process restarts.
+- **Bounded observability** — four Prometheus metric families with strictly enum labels; no object-name or UID cardinality risk.
 
-**Install the CRDs into the cluster:**
+## Key design decisions
 
-```sh
-make install
+| Decision | Rationale |
+|---|---|
+| **Read-only by design** | Detectors are pure functions with no Kubernetes client. RBAC enforces read-only access to target resources. Envtest mutation recorder verifies zero writes in CI. |
+| **Evidence-graded findings** | Each finding carries Severity (impact) and Confidence (evidence quality). Missing evidence yields `Suspected` or `InsufficientEvidence`, never false `Confirmed`. |
+| **Active-passive HA** | Two replicas with controller-runtime Lease-based leader election. Namespaced Lease RBAC keeps coordination scope separate from audit permissions. |
+| **Immutable supply chain** | Release images are Trivy-scanned, SBOM-generated, and Cosign-signed by digest. GitOps deployment pins the exact digest — the scanned artifact is the running artifact. |
+| **Git-only lifecycle** | All rollouts, rollbacks and disable/recovery go through Git commits. No `kubectl rollout undo` or manual live patches. |
+
+## Current state (v0.1 DEV release candidate)
+
+Verified on a self-managed EC2/K3s HA cluster with Argo CD, Prometheus and Grafana. Evidence includes:
+
+- ~16h40m shadow observation (191 scans, zero errors/restarts/transitions)
+- Pod-level leader failover in 20 seconds (SLO ≤ 30s)
+- Exact-digest upgrade/rollback compatibility (N-1 → N → N-1)
+- Negative RBAC verification on live cluster (target writes denied)
+- Target workload fingerprint unchanged across failover
+
+**Not yet proven:** node-loss failover, AWS EKS deployment, full CRD uninstall/reinstall under load, multi-cluster operation, auto-remediation.
+
+## Quick start
+
+```bash
+# Run unit and integration tests (requires envtest binaries)
+cd platform-ownership-guard
+make test
+
+# Build the operator binary
+go build -o bin/manager cmd/main.go
+
+# Validate infrastructure contracts (from repository root)
+bash scripts/validate-infra.sh
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+For GitOps deployment, the release workflow handles image build, scanning, signing and digest pinning automatically on push to the tracked branch.
 
-```sh
-make deploy IMG=<some-registry>/platform-ownership-guard:tag
+## Project structure
+
 ```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
+platform-ownership-guard/
+├── api/v1alpha1/          # CRD types (OwnershipAudit)
+├── cmd/main.go            # Manager entry point with leader election
+├── internal/
+│   ├── controller/        # Reconciler, status builder, transition engine
+│   ├── detectors/         # Pure evaluation functions + stable identity
+│   ├── inventory/         # API evidence collector and normalizer
+│   ├── telemetry/         # Bounded Prometheus metrics
+│   └── security/          # RBAC contract tests
+├── config/
+│   ├── crd/               # Generated CRD manifests
+│   ├── rbac/              # ClusterRole (audit) + Role (Lease)
+│   ├── manager/           # Deployment, PDB
+│   ├── observability/     # Service, ServiceMonitor, alerts, dashboard
+│   ├── dev/               # DEV overlay with pinned digest
+│   └── samples/           # OwnershipAudit example
+└── scripts/
+    └── rehearsal/          # Failover, upgrade/rollback, removal helpers
 ```
-
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/platform-ownership-guard:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/platform-ownership-guard/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Copyright 2026. Licensed under the Apache License, Version 2.0. See the repository root LICENSE file for full terms.
