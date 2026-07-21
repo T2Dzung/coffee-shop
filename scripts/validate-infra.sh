@@ -146,8 +146,11 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
     ! grep -Fq 'maxUnavailable: 1' "${GUARD_PDB}" ||
     ! grep -Fq 'kind: Role' "${GUARD_LEASE_ROLE}" ||
     ! grep -Fq 'coordination.k8s.io' "${GUARD_LEASE_ROLE}" ||
+    ! grep -Fq '  - events' "${GUARD_LEASE_ROLE}" ||
+    ! grep -Fq '  - create' "${GUARD_LEASE_ROLE}" ||
+    ! grep -Fq '  - patch' "${GUARD_LEASE_ROLE}" ||
     ! grep -Fq 'kind: RoleBinding' "${GUARD_LEASE_BINDING}"; then
-    echo "Error: Guard PDB or namespaced Lease RBAC contract is missing." >&2
+    echo "Error: Guard PDB or namespaced Lease/Event RBAC contract is missing." >&2
     exit 1
   fi
 

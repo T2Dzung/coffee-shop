@@ -150,6 +150,12 @@ if ! kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" -o yam
     > "${EVIDENCE_DIR}/guard-deployment.yaml" 2>/dev/null; then
   record_failure "PlatformOwnershipGuard Deployment is missing"
 else
+  if ! kubectl rollout status deployment/"${guard_deployment}" -n "${guard_namespace}" \
+      --timeout="${WAIT_TIMEOUT}" > "${EVIDENCE_DIR}/guard-rollout-status.txt"; then
+    record_failure "PlatformOwnershipGuard Deployment did not finish rolling out within ${WAIT_TIMEOUT}"
+  fi
+  kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" -o yaml \
+    > "${EVIDENCE_DIR}/guard-deployment.yaml"
   guard_image="$(kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" \
     -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')"
   guard_desired="$(kubectl get deployment -n "${guard_namespace}" "${guard_deployment}" \
@@ -194,13 +200,25 @@ if [[ "${guard_ready_pod_count}" == "2" && "${guard_distinct_nodes}" -lt 2 ]]; t
   echo "WARN: PlatformOwnershipGuard HA is running in degraded same-node placement." >&2
 fi
 
-# Verify Leader Election Lease object
+# Verify Leader Election Lease object. A fresh rollout can report available before
+# controller-runtime has acquired and persisted the first Lease, so poll this
+# independent leadership condition instead of racing it with Deployment readiness.
+lease_holder=""
+lease_renew=""
+lease_deadline=$((SECONDS + 60))
+while ((SECONDS < lease_deadline)); do
+  lease_holder="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)"
+  lease_renew="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
+  if [[ -n "${lease_holder}" && -n "${lease_renew}" ]]; then
+    break
+  fi
+  sleep 2
+done
+
 if ! kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o yaml \
     > "${EVIDENCE_DIR}/guard-lease.yaml" 2>/dev/null; then
   record_failure "PlatformOwnershipGuard Leader Election Lease object is missing"
 else
-  lease_holder="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)"
-  lease_renew="$(kubectl get lease -n "${guard_namespace}" platform-ownership-guard-leader -o jsonpath='{.spec.renewTime}' 2>/dev/null || true)"
   if [[ -z "${lease_holder}" || -z "${lease_renew}" ]]; then
     record_failure "PlatformOwnershipGuard Lease is missing valid holderIdentity or renewTime"
   else

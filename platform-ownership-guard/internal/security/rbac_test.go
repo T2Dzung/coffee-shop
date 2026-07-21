@@ -105,22 +105,27 @@ func TestLeaseRoleIsNamespacedAndRestricted(t *testing.T) {
 	}
 
 	foundLeaseRule := false
+	foundLeaderEventRule := false
 	for _, rule := range role.Rules {
-		if !slices.Contains(rule.APIGroups, "coordination.k8s.io") {
-			t.Fatalf("unexpected API group in lease role: %#v", rule.APIGroups)
-		}
 		for _, resource := range rule.Resources {
-			if resource == "leases" {
+			switch {
+			case resource == "leases" && slices.Contains(rule.APIGroups, "coordination.k8s.io"):
 				foundLeaseRule = true
 				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch", "create", "update", "patch")
-			} else {
-				t.Fatalf("unexpected resource in lease role: %s", resource)
+			case resource == "events" && slices.Contains(rule.APIGroups, ""):
+				foundLeaderEventRule = true
+				assertOnlyVerbs(t, rule.Verbs, "create", "patch")
+			default:
+				t.Fatalf("unexpected lease-role rule: groups=%#v resource=%s verbs=%#v", rule.APIGroups, resource, rule.Verbs)
 			}
 		}
 	}
 
 	if !foundLeaseRule {
 		t.Fatal("lease role must contain rules for leases resource")
+	}
+	if !foundLeaderEventRule {
+		t.Fatal("lease role must allow namespaced core events for leader-election reporting")
 	}
 
 	// Validate lease_role_binding.yaml
