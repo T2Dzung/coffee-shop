@@ -27,6 +27,10 @@ locals {
   resolved_haproxy_instance_type    = coalesce(var.haproxy_instance_type, "t3.micro")
   resolved_haproxy_root_volume_size = coalesce(var.haproxy_root_volume_size, 20)
 
+  effective_node_count   = var.dev_runtime_enabled ? var.node_count : 0
+  create_haproxy_runtime = var.dev_runtime_enabled && var.create_haproxy_api_endpoint
+  create_api_nlb_runtime = var.dev_runtime_enabled && var.create_nlb_api_endpoint
+
   common_tags = {
     Environment = var.environment
     Project     = var.project_name

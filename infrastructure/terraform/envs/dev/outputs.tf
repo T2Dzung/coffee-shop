@@ -7,6 +7,11 @@ output "cluster_name" {
   value       = var.cluster_name
 }
 
+output "dev_runtime_enabled" {
+  description = "Whether billable DEV runtime resources are part of the desired state"
+  value       = var.dev_runtime_enabled
+}
+
 output "active_api_endpoint_provider" {
   description = "The active API endpoint provider"
   value       = var.active_api_endpoint_provider

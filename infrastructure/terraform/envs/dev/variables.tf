@@ -61,6 +61,12 @@ variable "node_count" {
   }
 }
 
+variable "dev_runtime_enabled" {
+  description = "Create billable DEV runtime resources (K3s nodes, dedicated Longhorn EBS, and the selected API endpoint). Keep false while DEV is decommissioned."
+  type        = bool
+  default     = false
+}
+
 variable "k3s_instance_type" {
   description = "EC2 instance type for K3s servers"
   type        = string

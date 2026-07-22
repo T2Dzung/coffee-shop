@@ -5,6 +5,7 @@
 check "api_endpoint_provider_match" {
   assert {
     condition = (
+      !var.dev_runtime_enabled ||
       (var.active_api_endpoint_provider == "haproxy" && var.create_haproxy_api_endpoint == true) ||
       (var.active_api_endpoint_provider == "nlb" && var.create_nlb_api_endpoint == true)
     )

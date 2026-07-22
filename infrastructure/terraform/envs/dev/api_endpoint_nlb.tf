@@ -3,7 +3,7 @@
 # ==============================================================================
 
 resource "aws_security_group" "api_nlb_sg" {
-  count       = var.create_nlb_api_endpoint ? 1 : 0
+  count       = local.create_api_nlb_runtime ? 1 : 0
   name        = "${var.cluster_name}-api-nlb-sg"
   description = "Security group for the K3s API NLB"
   vpc_id      = aws_vpc.main.id
@@ -14,7 +14,7 @@ resource "aws_security_group" "api_nlb_sg" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "api_nlb_ingress" {
-  count             = var.create_nlb_api_endpoint ? 1 : 0
+  count             = local.create_api_nlb_runtime ? 1 : 0
   security_group_id = aws_security_group.api_nlb_sg[0].id
   description       = "Allow K8s API traffic from admin CIDRs"
   from_port         = 6443
@@ -24,7 +24,7 @@ resource "aws_vpc_security_group_ingress_rule" "api_nlb_ingress" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "api_nlb_ingress_all" {
-  count             = var.create_nlb_api_endpoint && length(var.admin_cidrs) > 1 ? length(var.admin_cidrs) - 1 : 0
+  count             = local.create_api_nlb_runtime && length(var.admin_cidrs) > 1 ? length(var.admin_cidrs) - 1 : 0
   security_group_id = aws_security_group.api_nlb_sg[0].id
   description       = "Allow K8s API traffic from admin CIDR ${count.index + 1}"
   from_port         = 6443
@@ -34,7 +34,7 @@ resource "aws_vpc_security_group_ingress_rule" "api_nlb_ingress_all" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "api_nlb_egress" {
-  count                        = var.create_nlb_api_endpoint ? 1 : 0
+  count                        = local.create_api_nlb_runtime ? 1 : 0
   security_group_id            = aws_security_group.api_nlb_sg[0].id
   description                  = "Allow traffic to K3s nodes"
   from_port                    = 6443
@@ -44,7 +44,7 @@ resource "aws_vpc_security_group_egress_rule" "api_nlb_egress" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_api_nlb_ingress" {
-  count                        = var.create_nlb_api_endpoint ? 1 : 0
+  count                        = local.create_api_nlb_runtime ? 1 : 0
   security_group_id            = aws_security_group.k3s_node_sg.id
   description                  = "Allow API traffic from NLB"
   from_port                    = 6443
@@ -54,7 +54,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_api_nlb_ingress" {
 }
 
 resource "aws_lb" "api_nlb" {
-  count              = var.create_nlb_api_endpoint ? 1 : 0
+  count              = local.create_api_nlb_runtime ? 1 : 0
   name               = "${var.cluster_name}-api-nlb"
   internal           = var.api_nlb_internal
   load_balancer_type = "network"
@@ -70,7 +70,7 @@ resource "aws_lb" "api_nlb" {
 }
 
 resource "aws_lb_target_group" "k3s_api" {
-  count       = var.create_nlb_api_endpoint ? 1 : 0
+  count       = local.create_api_nlb_runtime ? 1 : 0
   name        = "${var.cluster_name}-api-tg"
   port        = 6443
   protocol    = "TCP"
@@ -90,7 +90,7 @@ resource "aws_lb_target_group" "k3s_api" {
 }
 
 resource "aws_lb_listener" "k3s_api" {
-  count             = var.create_nlb_api_endpoint ? 1 : 0
+  count             = local.create_api_nlb_runtime ? 1 : 0
   load_balancer_arn = aws_lb.api_nlb[0].arn
   port              = 6443
   protocol          = "TCP"
@@ -102,7 +102,7 @@ resource "aws_lb_listener" "k3s_api" {
 }
 
 resource "aws_lb_target_group_attachment" "k3s_api_nodes" {
-  count            = var.create_nlb_api_endpoint ? var.node_count : 0
+  count            = local.create_api_nlb_runtime ? local.effective_node_count : 0
   target_group_arn = aws_lb_target_group.k3s_api[0].arn
   target_id        = module.k3s_servers[count.index].instance_id
   port             = 6443

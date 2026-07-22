@@ -3,7 +3,7 @@
 # ==============================================================================
 
 resource "aws_eip" "haproxy" {
-  count  = var.create_haproxy_api_endpoint ? 1 : 0
+  count  = local.create_haproxy_runtime ? 1 : 0
   domain = "vpc"
   tags = merge(local.common_tags, {
     Name = "${var.cluster_name}-haproxy-eip"
@@ -11,13 +11,13 @@ resource "aws_eip" "haproxy" {
 }
 
 resource "aws_eip_association" "haproxy" {
-  count         = var.create_haproxy_api_endpoint ? 1 : 0
+  count         = local.create_haproxy_runtime ? 1 : 0
   instance_id   = aws_instance.haproxy[0].id
   allocation_id = aws_eip.haproxy[0].id
 }
 
 resource "aws_security_group" "haproxy_sg" {
-  count       = var.create_haproxy_api_endpoint ? 1 : 0
+  count       = local.create_haproxy_runtime ? 1 : 0
   name        = "${var.cluster_name}-haproxy-sg"
   description = "Security group for K3s HAProxy endpoint"
   vpc_id      = aws_vpc.main.id
@@ -85,7 +85,7 @@ resource "aws_security_group" "haproxy_sg" {
 
 # IAM Role with SSM core (no ECR)
 resource "aws_iam_role" "haproxy_role" {
-  count = var.create_haproxy_api_endpoint ? 1 : 0
+  count = local.create_haproxy_runtime ? 1 : 0
   name  = "${var.cluster_name}-haproxy-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -102,13 +102,13 @@ resource "aws_iam_role" "haproxy_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "haproxy_ssm" {
-  count      = var.create_haproxy_api_endpoint ? 1 : 0
+  count      = local.create_haproxy_runtime ? 1 : 0
   role       = aws_iam_role.haproxy_role[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_instance_profile" "haproxy_profile" {
-  count = var.create_haproxy_api_endpoint ? 1 : 0
+  count = local.create_haproxy_runtime ? 1 : 0
   name  = "${var.cluster_name}-haproxy-profile"
   role  = aws_iam_role.haproxy_role[0].name
 }
@@ -116,7 +116,7 @@ resource "aws_iam_instance_profile" "haproxy_profile" {
 
 
 resource "aws_instance" "haproxy" {
-  count                  = var.create_haproxy_api_endpoint ? 1 : 0
+  count                  = local.create_haproxy_runtime ? 1 : 0
   ami                    = local.resolved_ami_id
   instance_type          = local.resolved_haproxy_instance_type
   subnet_id              = aws_subnet.public[0].id
@@ -146,7 +146,7 @@ resource "aws_instance" "haproxy" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_api_haproxy_ingress" {
-  count                        = var.create_haproxy_api_endpoint ? 1 : 0
+  count                        = local.create_haproxy_runtime ? 1 : 0
   security_group_id            = aws_security_group.k3s_node_sg.id
   description                  = "Allow API traffic from HAProxy"
   from_port                    = 6443
@@ -156,7 +156,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_api_haproxy_ingress" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_http_haproxy_ingress" {
-  count                        = var.create_haproxy_api_endpoint ? 1 : 0
+  count                        = local.create_haproxy_runtime ? 1 : 0
   security_group_id            = aws_security_group.k3s_node_sg.id
   description                  = "Allow HTTP Gateway traffic from HAProxy"
   from_port                    = 8080

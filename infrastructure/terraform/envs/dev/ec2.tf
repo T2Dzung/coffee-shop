@@ -4,7 +4,7 @@
 
 module "k3s_servers" {
   source = "../../modules/ec2-instance"
-  count  = var.node_count
+  count  = local.effective_node_count
 
   project_name  = var.project_name
   environment   = var.environment
