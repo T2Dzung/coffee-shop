@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-probe
+  labels:
+    app.kubernetes.io/part-of: coffeeshop-platform
+    environment: prod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nlb-ingress-probe
+  namespace: ingress-probe
+  labels:
+    app: nlb-ingress-probe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nlb-ingress-probe
+  template:
+    metadata:
+      labels:
+        app: nlb-ingress-probe
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: nlb-ingress-probe
+      containers:
+        - name: http-echo
+          image: hashicorp/http-echo:0.2.3
+          args:
+            - "-text=CoffeeShop PROD NLB Ingress Probe OK"
+            - "-listen=:5678"
+          ports:
+            - containerPort: 5678
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5678
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5678
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nlb-ingress-probe-svc
+  namespace: ingress-probe
+  labels:
+    app: nlb-ingress-probe
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-attributes: "load_balancing.cross_zone.enabled=true"
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Project=coffeeshop,Environment=prod,ManagedBy=AWSLoadBalancerController,Owner=PlatformEngineering,Phase=PROD-1"
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  selector:
+    app: nlb-ingress-probe
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5678
+      protocol: TCP

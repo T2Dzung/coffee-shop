@@ -4,6 +4,9 @@ set -Eeuo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANSIBLE_DIR="${PROJECT_ROOT}/infrastructure/ansible"
 DEV_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/envs/dev"
+DEV_BOOTSTRAP_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/bootstrap/dev"
+PROD_BOOTSTRAP_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/bootstrap/prod"
+PROD_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/envs/prod"
 K8S_DIR="${PROJECT_ROOT}/infrastructure/k8s"
 SCHEMA_VERSION="1.35.4"
 VENV_DIR="${CONTROL_VENV_DIR:-${HOME}/.venvs/go-coffeeshop-platform}"
@@ -11,7 +14,78 @@ KUBECONFORM_CACHE_DIR="${KUBECONFORM_CACHE_DIR:-${HOME}/.cache/go-coffeeshop/kub
 KUBECONFORM_CONCURRENCY="${KUBECONFORM_CONCURRENCY:-2}"
 : "${TF_DATA_DIR:=${HOME}/.cache/go-coffeeshop/terraform/dev}"
 export TF_DATA_DIR
-install -d -m 0700 "${TF_DATA_DIR}" "${KUBECONFORM_CACHE_DIR}"
+DEV_BOOTSTRAP_TF_DATA_DIR="${DEV_BOOTSTRAP_TF_DATA_DIR:-${HOME}/.cache/go-coffeeshop/terraform/dev-bootstrap-validation}"
+PROD_BOOTSTRAP_TF_DATA_DIR="${PROD_BOOTSTRAP_TF_DATA_DIR:-${HOME}/.cache/go-coffeeshop/terraform/prod-bootstrap-validation}"
+PROD_TF_DATA_DIR="${PROD_TF_DATA_DIR:-${HOME}/.cache/go-coffeeshop/terraform/prod-validation}"
+
+VALIDATE_ENV="all"
+VALIDATE_SCOPE="all"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/validate-infra.sh [--env all|dev|prod] [--scope all|terraform|platform]
+
+  --env      Select environment expectations. Default: all.
+  --scope    terraform validates Terraform and environment contracts;
+             platform validates DEV Ansible/Kubernetes/GitOps contracts;
+             all runs both. Default: all.
+EOF
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --env)
+      [[ $# -ge 2 ]] || { echo "--env requires a value" >&2; exit 2; }
+      VALIDATE_ENV="$2"
+      shift 2
+      ;;
+    --scope)
+      [[ $# -ge 2 ]] || { echo "--scope requires a value" >&2; exit 2; }
+      VALIDATE_SCOPE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ "${VALIDATE_ENV}" =~ ^(all|dev|prod)$ ]] || {
+  echo "Invalid --env value: ${VALIDATE_ENV}" >&2
+  exit 2
+}
+[[ "${VALIDATE_SCOPE}" =~ ^(all|terraform|platform)$ ]] || {
+  echo "Invalid --scope value: ${VALIDATE_SCOPE}" >&2
+  exit 2
+}
+
+RUN_DEV=false
+RUN_PROD=false
+RUN_TERRAFORM=false
+RUN_PLATFORM=false
+[[ "${VALIDATE_ENV}" == "all" || "${VALIDATE_ENV}" == "dev" ]] && RUN_DEV=true
+[[ "${VALIDATE_ENV}" == "all" || "${VALIDATE_ENV}" == "prod" ]] && RUN_PROD=true
+[[ "${VALIDATE_SCOPE}" == "all" || "${VALIDATE_SCOPE}" == "terraform" ]] && RUN_TERRAFORM=true
+[[ "${VALIDATE_SCOPE}" == "all" || "${VALIDATE_SCOPE}" == "platform" ]] && RUN_PLATFORM=true
+
+# PROD-1 has no PROD Kubernetes platform surface yet. Reject a misleading no-op.
+if [[ "${VALIDATE_ENV}" == "prod" && "${RUN_PLATFORM}" == "true" && "${RUN_TERRAFORM}" == "false" ]]; then
+  echo "PROD platform validation starts in PROD-2; use --env prod --scope terraform for PROD-1." >&2
+  exit 2
+fi
+
+install -d -m 0700 \
+  "${TF_DATA_DIR}" \
+  "${DEV_BOOTSTRAP_TF_DATA_DIR}" \
+  "${PROD_BOOTSTRAP_TF_DATA_DIR}" \
+  "${PROD_TF_DATA_DIR}" \
+  "${KUBECONFORM_CACHE_DIR}"
 export PATH="${HOME}/.local/bin:${VENV_DIR}/bin:${PATH}"
 
 # Keep lint ignore paths deterministic regardless of the caller's directory.
@@ -26,9 +100,18 @@ require_command() {
   }
 }
 
-for command_name in terraform ansible-playbook ansible-lint yamllint kubeconform kubectl shellcheck helm; do
-  require_command "${command_name}"
-done
+require_command shellcheck
+if [[ "${RUN_TERRAFORM}" == "true" ]]; then
+  require_command terraform
+fi
+if [[ "${RUN_PROD}" == "true" && "${RUN_TERRAFORM}" == "true" ]]; then
+  require_command jq
+fi
+if [[ "${RUN_DEV}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
+  for command_name in ansible-playbook ansible-lint yamllint kubeconform kubectl helm; do
+    require_command "${command_name}"
+  done
+fi
 
 KUBECONFORM_COMMON_ARGS=(
   -kubernetes-version "${SCHEMA_VERSION}"
@@ -44,16 +127,35 @@ KUBECONFORM_COMMON_ARGS=(
   -summary
 )
 
-terraform -chdir="${PROJECT_ROOT}/infrastructure/terraform" fmt -check -recursive
-terraform -chdir="${DEV_TF_DIR}" validate -no-color
+if [[ "${RUN_TERRAFORM}" == "true" ]]; then
+  terraform -chdir="${PROJECT_ROOT}/infrastructure/terraform" fmt -check -recursive
 
-# The GitHub OIDC role can publish the Guard artifact, but K3s containerd pulls
-# as the EC2 node role. Keep the dedicated Guard repository in that node-side
-# least-privilege policy or a valid workflow artifact will fail with ECR 403.
-if ! grep -Fq '[aws_ecr_repository.platform_ownership_guard.arn]' "${DEV_TF_DIR}/iam.tf"; then
-  echo "Error: DEV node ECR pull policy does not include PlatformOwnershipGuard." >&2
-  exit 1
+  if [[ "${RUN_DEV}" == "true" ]]; then
+    TF_DATA_DIR="${DEV_BOOTSTRAP_TF_DATA_DIR}" terraform -chdir="${DEV_BOOTSTRAP_TF_DIR}" \
+      init -backend=false -input=false -no-color
+    TF_DATA_DIR="${DEV_BOOTSTRAP_TF_DATA_DIR}" terraform -chdir="${DEV_BOOTSTRAP_TF_DIR}" \
+      validate -no-color
+    terraform -chdir="${DEV_TF_DIR}" validate -no-color
+    bash "${PROJECT_ROOT}/scripts/validation/validate-dev-contracts.sh"
+  fi
+
+  if [[ "${RUN_PROD}" == "true" ]]; then
+    TF_DATA_DIR="${PROD_BOOTSTRAP_TF_DATA_DIR}" terraform -chdir="${PROD_BOOTSTRAP_TF_DIR}" \
+      init -backend=false -input=false -no-color
+    TF_DATA_DIR="${PROD_BOOTSTRAP_TF_DATA_DIR}" terraform -chdir="${PROD_BOOTSTRAP_TF_DIR}" \
+      validate -no-color
+
+    TF_DATA_DIR="${PROD_TF_DATA_DIR}" terraform -chdir="${PROD_TF_DIR}" \
+      init -backend=false -input=false -no-color
+    TF_DATA_DIR="${PROD_TF_DATA_DIR}" terraform -chdir="${PROD_TF_DIR}" \
+      validate -no-color
+    bash "${PROJECT_ROOT}/scripts/validation/validate-prod-contracts.sh"
+  fi
 fi
+
+shellcheck "${PROJECT_ROOT}/scripts/"*.sh "${PROJECT_ROOT}/scripts/validation/"*.sh
+
+if [[ "${RUN_DEV}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
 
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/site.yml"
 ansible-playbook --inventory "localhost," --syntax-check "${ANSIBLE_DIR}/playbooks/post_start.yml"
@@ -71,7 +173,7 @@ yamllint --config-file "${PROJECT_ROOT}/.yamllint.yml" \
   "${ANSIBLE_DIR}" "${K8S_DIR}"
 
 mapfile -d '' manifest_files < <(
-  find "${K8S_DIR}/bootstrap" "${K8S_DIR}/gateway" "${K8S_DIR}/policies" "${K8S_DIR}/gitops" \
+  find "${K8S_DIR}/bootstrap" "${K8S_DIR}/gateway" "${K8S_DIR}/policies" "${K8S_DIR}/gitops" "${K8S_DIR}/prod" \
     -type f \( -name '*.yaml' -o -name '*.yml' \) \
     ! -name '*values.yaml' \
     ! -name 'Chart.yaml' \
@@ -99,16 +201,6 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
 
   if grep -Exq '[[:space:]]*- rules\.yaml' "${PROJECT_ROOT}/platform-ownership-guard/config/observability/kustomization.yaml"; then
     echo "Error: raw rules.yaml must not be in observability kustomization resources." >&2
-    exit 1
-  fi
-
-  if ! grep -Fq "423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard" "${PROJECT_ROOT}/platform-ownership-guard/config/dev/kustomization.yaml"; then
-    echo "Error: DEV kustomization image newName must use AWS account 423623841278." >&2
-    exit 1
-  fi
-
-  if ! grep -Fq "targetRevision: feat/k3s-ha" "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml"; then
-    echo "Error: platform-ownership-guard-app.yaml must target feat/k3s-ha branch." >&2
     exit 1
   fi
 
@@ -204,8 +296,6 @@ if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-rabbitmq" ]; then
   helm template "${K8S_DIR}/gitops/apps/coffeeshop-rabbitmq" | kubeconform \
     "${KUBECONFORM_COMMON_ARGS[@]}"
 fi
-
-shellcheck "${PROJECT_ROOT}/scripts/"*.sh "${PROJECT_ROOT}/scripts/validation/"*.sh
 
 # Terraform is the deployment source of truth. Keep the Ansible standalone
 # default aligned so a direct site.yml recovery cannot validate the wrong disk size.
@@ -545,4 +635,6 @@ if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-postgres" ]; then
     "${KUBECONFORM_COMMON_ARGS[@]}"
 fi
 
-echo "Infrastructure validation completed successfully."
+fi # RUN_DEV && RUN_PLATFORM
+
+echo "Infrastructure validation completed successfully (env=${VALIDATE_ENV}, scope=${VALIDATE_SCOPE})."

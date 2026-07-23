@@ -1,0 +1,20 @@
+# Environment coordinates stay in deploy-prod.sh inputs; this file contains only
+# reviewed chart behavior that should remain source-controlled.
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+podDisruptionBudget:
+  maxUnavailable: 1
+
+priorityClassName: system-cluster-critical
