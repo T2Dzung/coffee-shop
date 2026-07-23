@@ -1,6 +1,5 @@
-# Lock CLI and AWS provider versions to prevent breaking changes in production
 terraform {
-  required_version = ">= 1.0.0"
+  required_version = "= 1.15.7"
 
   required_providers {
     aws = {
