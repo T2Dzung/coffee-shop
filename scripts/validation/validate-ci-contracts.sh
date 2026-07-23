@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/cd.yml"
+CD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/deploy-dev.yml"
 GUARD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/platform-ownership-guard.yml"
-ARC_RUNNER_VALUES="${PROJECT_ROOT}/infrastructure/k8s/gitops/addons/arc/runner-values.yaml"
+ARC_RUNNER_VALUES="${PROJECT_ROOT}/infrastructure/k8s/environments/dev/gitops/addons/arc/runner-values.yaml"
 GUARD_RELEASE_DOCKERFILE="${PROJECT_ROOT}/platform-ownership-guard/Dockerfile.release"
 
 fail() {
@@ -24,7 +24,16 @@ if ! grep -Fq 'GOMODCACHE: /go-cache/mod/${{ matrix.service }}' "${CD_WORKFLOW}"
   fail "ARC/CD service-partitioned cache contract is not preserved."
 fi
 
-# Application Dockerfiles package the already-built binary. Persistent
+# Application Dockerfiles package a binary produced by the shared build contract.
+for workflow in "${PROJECT_ROOT}/.github/workflows/ci.yml" "${CD_WORKFLOW}" \
+  "${PROJECT_ROOT}/.github/workflows/promote-prod.yml"; do
+  grep -Fq 'bash scripts/ci/build-go-service.sh' "${workflow}" || \
+    fail "${workflow} bypasses the shared Go build contract."
+done
+grep -Fq 'COPY ./bin/web ./web-service' "${PROJECT_ROOT}/docker/Dockerfile-web" || \
+  fail "web Dockerfile/build contract is inconsistent."
+
+# Persistent
 # BuildKit cache has little value here, and the scanned image must be pushed
 # without invoking a second image build.
 if grep -Eq 'cache-(from|to):[[:space:]]*type=gha' "${CD_WORKFLOW}"; then
@@ -46,7 +55,7 @@ for push_contract in \
 done
 
 if grep -Fq "'.github/workflows/**'" "${CD_WORKFLOW}" ||
-  ! grep -Fq "'.github/workflows/cd.yml'" "${CD_WORKFLOW}"; then
+  ! grep -Fq "'.github/workflows/deploy-dev.yml'" "${CD_WORKFLOW}"; then
   fail "Application CD workflow path filter is broader than its real dependencies."
 fi
 

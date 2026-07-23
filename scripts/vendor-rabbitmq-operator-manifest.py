@@ -17,7 +17,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VERSIONS_FILE = PROJECT_ROOT / "infrastructure/ansible/playbooks/group_vars/all/versions.yml"
-DESTINATION = PROJECT_ROOT / "infrastructure/k8s/gitops/addons/rabbitmq-operator/cluster-operator.yaml"
+DESTINATION = PROJECT_ROOT / "infrastructure/k8s/environments/dev/gitops/addons/rabbitmq-operator/cluster-operator.yaml"
 
 
 def read_pinned_version() -> str:

@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-DEV_OVERLAY="${REPO_ROOT}/infrastructure/k8s/gitops/apps/coffeeshop/overlays/dev"
+DEV_OVERLAY="${REPO_ROOT}/infrastructure/k8s/apps/coffeeshop/overlays/dev"
 
 # Auto-activate platform environment & KUBECONFIG if not already set
 if [ -f "${SCRIPT_DIR}/../activate-env.sh" ]; then

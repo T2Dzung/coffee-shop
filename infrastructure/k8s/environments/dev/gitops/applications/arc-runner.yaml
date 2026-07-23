@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+  name: arc-runner-coffeeshop
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: ghcr.io/actions/actions-runner-controller-charts
+      chart: gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        valueFiles:
+          - $values/infrastructure/k8s/environments/dev/gitops/addons/arc/runner-values.yaml
+    - repoURL: https://github.com/T2Dzung/coffee-shop.git
+      targetRevision: feat/k3s-ha
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev-ci
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+    syncOptions:
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: actions.github.com
+      kind: AutoscalingRunnerSet
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status

@@ -15,13 +15,13 @@ fail() {
   fail "clone-ready terraform.tfvars.example is missing"
 [[ -x "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" ]] || \
   fail "dynamic PROD hourly estimator is missing or not executable"
-grep -Fq 'productFamily,Value=Load Balancer-Network' \
+grep -Eq 'productFamily,Value=Load Balancer-(Network|Application)' \
   "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" || \
-  fail "PROD hourly estimator must include the fixed NLB price"
+  fail "PROD hourly estimator must include the fixed load balancer price"
 grep -Fq '^(setup|g4|reconcile|teardown)$' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
-  fail "setup/G4 must select the NLB-inclusive hourly estimate"
+  fail "setup/G4 must select the load balancer-inclusive hourly estimate"
 grep -Fq 'public_ipv4_count=3' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
-  fail "G4 estimate must include the NAT and two internet-facing NLB public IPv4 addresses"
+  fail "G4 estimate must include the NAT and two internet-facing load balancer public IPv4 addresses"
 grep -Fq 'Usage: scripts/deploy-prod.sh setup|teardown|' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "PROD operator interface must expose setup and teardown as the primary actions"
@@ -124,24 +124,9 @@ ACTUAL_LBC_POLICY_SHA256="$(jq -cS . "${LBC_POLICY}" | sha256sum | awk '{print $
 [[ "${ACTUAL_LBC_POLICY_SHA256}" == "${EXPECTED_LBC_POLICY_SHA256}" ]] || \
   fail "vendored AWS Load Balancer Controller policy hash does not match the reviewed artifact"
 
-G4_DIR="${PROJECT_ROOT}/infrastructure/k8s/prod/ingress-probe"
-[[ -f "${G4_DIR}/aws-load-balancer-controller-values.yaml" ]] || \
+LBC_VALUES="${PROJECT_ROOT}/infrastructure/k8s/environments/prod/platform/aws-load-balancer-controller-values.yaml"
+[[ -f "${LBC_VALUES}" ]] || \
   fail "AWS Load Balancer Controller Helm values are missing"
-[[ -f "${G4_DIR}/nlb-ingress-probe.yaml" ]] || \
-  fail "NLB ingress probe manifest is missing"
-
-grep -Fq 'service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"' \
-  "${G4_DIR}/nlb-ingress-probe.yaml" || \
-  fail "NLB ingress probe must configure IP-target mode"
-grep -Fq 'loadBalancerClass: service.k8s.aws/nlb' \
-  "${G4_DIR}/nlb-ingress-probe.yaml" || \
-  fail "NLB ingress probe must explicitly select the AWS Load Balancer Controller"
-grep -Fq 'aws-load-balancer-attributes: "load_balancing.cross_zone.enabled=true"' \
-  "${G4_DIR}/nlb-ingress-probe.yaml" || \
-  fail "NLB ingress probe must use the current cross-zone attribute annotation"
-grep -Fq 'aws-load-balancer-additional-resource-tags:' \
-  "${G4_DIR}/nlb-ingress-probe.yaml" || \
-  fail "controller-created NLB resources must receive the PROD tag contract"
 
 grep -Fq 'AWS_LB_CONTROLLER_CHART_VERSION="3.4.2"' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
@@ -161,9 +146,9 @@ grep -Fq 'describe-pod-identity-association' "${PROJECT_ROOT}/scripts/deploy-pro
   fail "G4 must verify the exact Pod Identity role association"
 grep -Fq 'expected exactly one IP target group' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "G4 target group discovery must fail closed"
-grep -Fq 'healthy NLB targets do not span two Availability Zones' \
+grep -Fq 'healthy ALB targets' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
-  fail "G4 must verify healthy IP targets across two Availability Zones"
+  fail "G4 must verify healthy IP targets across Availability Zones"
 
 grep -Fq 'output "aws_load_balancer_controller_role_arn"' "${PROD_TF_DIR}/outputs.tf" || \
   fail "PROD outputs must expose aws_load_balancer_controller_role_arn"
@@ -183,12 +168,12 @@ grep -Fq 'run_teardown' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "WP4 must implement an ordered teardown action"
 grep -Fq 'PROD_CONFIRM_TEARDOWN' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "WP4 teardown must require an account-scoped confirmation"
-grep -Fq 'Deleting ingress-probe namespace while its controller is healthy' \
+grep -Fq 'deleting its ALB Ingress directly while the controller is healthy' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "WP4 teardown must delete controller-owned ingress before Terraform resources"
 teardown_confirm_line="$(grep -n 'confirm_saved_plan "teardown"' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" | head -n 1 | cut -d: -f1)"
-ingress_delete_line="$(grep -n 'kubectl delete namespace ingress-probe' \
+ingress_delete_line="$(grep -n 'kubectl delete ingress coffeeshop-prod-alb-ingress' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" | head -n 1 | cut -d: -f1)"
 [[ -n "${teardown_confirm_line}" && -n "${ingress_delete_line}" &&
   "${teardown_confirm_line}" -lt "${ingress_delete_line}" ]] || \
@@ -197,5 +182,75 @@ grep -Fq 'retained ECR/Budget resources' "${PROJECT_ROOT}/scripts/deploy-prod.sh
   fail "WP4 teardown plan must reject retained-resource deletes"
 grep -Fq 'verify_teardown_inventory' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "WP4 teardown must inventory billable orphans and retained resources"
+
+# PROD-2 GitOps and ALB contracts
+PROD_2_BOOTSTRAP="${PROJECT_ROOT}/infrastructure/k8s/environments/prod/bootstrap"
+PROD_2_OVERLAY="${PROJECT_ROOT}/infrastructure/k8s/apps/coffeeshop/overlays/prod"
+
+[[ -f "${PROD_2_BOOTSTRAP}/appproject.yaml" ]] || \
+  fail "PROD-2 AppProject manifest is missing"
+[[ -f "${PROD_2_BOOTSTRAP}/coffeeshop-prod-app.yaml" ]] || \
+  fail "PROD-2 Argo Application manifest is missing"
+[[ -f "${PROD_2_OVERLAY}/ingress.yaml" ]] || \
+  fail "PROD-2 ALB Ingress manifest is missing"
+[[ -f "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" ]] || \
+  fail "PROD-2 promotion workflow is missing"
+
+awk '
+  /^spec:/ { in_spec=1; next }
+  in_spec && /^[^[:space:]]/ { in_spec=0 }
+  in_spec && /^[[:space:]]+ingressClassName:[[:space:]]+alb[[:space:]]*$/ { found=1 }
+  END { exit(found ? 0 : 1) }
+' "${PROD_2_OVERLAY}/ingress.yaml" || \
+  fail "PROD-2 Ingress must set spec.ingressClassName to alb"
+grep -Fq 'alb.ingress.kubernetes.io/target-type: ip' "${PROD_2_OVERLAY}/ingress.yaml" || \
+  fail "PROD-2 ALB Ingress must specify IP target type"
+grep -Fq 'alb.ingress.kubernetes.io/scheme: internet-facing' "${PROD_2_OVERLAY}/ingress.yaml" || \
+  fail "PROD-2 ALB Ingress must specify internet-facing scheme"
+
+grep -Fq 'environment: prod' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 promotion workflow must require prod environment approval"
+grep -Fq 'id-token: write' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 promotion workflow must request id-token write permission for OIDC"
+grep -Fq -- '-f docker/Dockerfile-web .' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow must build from the repository's web Dockerfile"
+grep -Fq 'bash scripts/ci/build-go-service.sh web' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow must create the binary required by Dockerfile-web"
+grep -Fq 'git rev-parse HEAD' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow must bind promotion to the checked-out commit"
+grep -Fq "exit-code: '1'" "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 vulnerability gate must fail closed"
+grep -Eq 'uses:[[:space:]]+[^[:space:]]+@[0-9a-f]{40}([[:space:]]|$)' \
+  "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow actions must use immutable commit pins"
+if grep -Eq 'uses:[[:space:]]+[^[:space:]]+@(master|main|v[0-9]+)([[:space:]]|$)' \
+  "${PROJECT_ROOT}/.github/workflows/promote-prod.yml"; then
+  fail "PROD-2 workflow contains a mutable action reference"
+fi
+# Literal GitHub expression is intentionally inspected, not expanded by this shell.
+# shellcheck disable=SC2016
+grep -Fq 'HEAD:${{ inputs.gitops_branch }}' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow must push desired state to the selected GitOps revision"
+grep -Fq 'statefulset/argocd-application-controller' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "Argo CD application-controller rollout must use its StatefulSet workload kind"
+grep -Fq 'did not become Synced and Healthy in time' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "Argo CD polling must fail closed on timeout"
+grep -Fq 'healthy ALB target IPs' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "ALB runtime verification must compare healthy targets with Ready Pod IPs"
+grep -Fq 'CoffeeShop POS' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "ALB runtime verification must require the expected application marker"
+grep -Fq 'verify-gitops-health.sh" coffeeshop-prod' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "reconcile must run the standard GitOps health verifier"
+if grep -Fq 'Key=Phase,Values=PROD-1' "${PROJECT_ROOT}/scripts/deploy-prod.sh"; then
+  fail "teardown inventory must cover all PROD phases"
+fi
+for obsolete_tree in bootstrap gateway policies gitops prod legacy; do
+  [[ ! -d "${PROJECT_ROOT}/infrastructure/k8s/${obsolete_tree}" ]] || \
+    fail "obsolete Kubernetes tree remains active: infrastructure/k8s/${obsolete_tree}"
+done
+grep -Fq '__GITOPS_REPO_URL__' "${PROD_2_BOOTSTRAP}/appproject.yaml" || \
+  fail "AppProject repository must remain clone-configurable"
+grep -Fq '__GITOPS_REVISION__' "${PROD_2_BOOTSTRAP}/coffeeshop-prod-app.yaml" || \
+  fail "Argo CD target revision must remain clone-configurable"
 
 echo "PROD static contracts passed."

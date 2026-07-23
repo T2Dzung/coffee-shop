@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coffeeshop-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: coffeeshop-prod
+  source:
+    repoURL: __GITOPS_REPO_URL__
+    targetRevision: __GITOPS_REVISION__
+    path: infrastructure/k8s/apps/coffeeshop/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: coffeeshop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -62,6 +62,7 @@ jobs:
               - 'Makefile'
               - '.golangci.yml'
               - '.github/workflows/**'
+              - 'scripts/ci/**'
             counter:
               - 'cmd/counter/**'
               - 'internal/counter/**'
@@ -127,13 +128,7 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Build Go Binary
-        env:
-          CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: amd64
-        run: |
-          mkdir -p ./bin
-          go build -v -tags migrate -ldflags="-w -s" -o ./bin/${{ matrix.service }} ./cmd/${{ matrix.service }}
+        run: bash scripts/ci/build-go-service.sh "${{ matrix.service }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4

@@ -155,7 +155,11 @@ variable "budget_subscriber_email" {
 variable "github_repository" {
   description = "GitHub repository (owner/repo) for OIDC trust boundary"
   type        = string
-  default     = "trinhdung01000100/go-coffeeshop-main"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must use the owner/repository form."
+  }
 }
 
 variable "github_oidc_provider_arn" {

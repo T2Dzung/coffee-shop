@@ -72,11 +72,6 @@ resource "aws_iam_policy" "github_delivery_policy" {
           "ecr:CompleteLayerUpload"
         ]
         Resource = [for repository in aws_ecr_repository.app : repository.arn]
-      },
-      {
-        Effect   = "Allow"
-        Action   = "eks:DescribeCluster"
-        Resource = module.eks_cluster.cluster_arn
       }
     ]
   })

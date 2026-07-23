@@ -8,6 +8,8 @@ DEV_BOOTSTRAP_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/bootstrap/dev"
 PROD_BOOTSTRAP_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/bootstrap/prod"
 PROD_TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/envs/prod"
 K8S_DIR="${PROJECT_ROOT}/infrastructure/k8s"
+
+bash "${PROJECT_ROOT}/scripts/validation/validate-k8s-layout.sh"
 SCHEMA_VERSION="1.35.4"
 VENV_DIR="${CONTROL_VENV_DIR:-${HOME}/.venvs/go-coffeeshop-platform}"
 KUBECONFORM_CACHE_DIR="${KUBECONFORM_CACHE_DIR:-${HOME}/.cache/go-coffeeshop/kubeconform}"
@@ -74,11 +76,7 @@ RUN_PLATFORM=false
 [[ "${VALIDATE_SCOPE}" == "all" || "${VALIDATE_SCOPE}" == "terraform" ]] && RUN_TERRAFORM=true
 [[ "${VALIDATE_SCOPE}" == "all" || "${VALIDATE_SCOPE}" == "platform" ]] && RUN_PLATFORM=true
 
-# PROD-1 has no PROD Kubernetes platform surface yet. Reject a misleading no-op.
-if [[ "${VALIDATE_ENV}" == "prod" && "${RUN_PLATFORM}" == "true" && "${RUN_TERRAFORM}" == "false" ]]; then
-  echo "PROD platform validation starts in PROD-2; use --env prod --scope terraform for PROD-1." >&2
-  exit 2
-fi
+# PROD-2 platform validation is active.
 
 install -d -m 0700 \
   "${TF_DATA_DIR}" \
@@ -107,8 +105,13 @@ fi
 if [[ "${RUN_PROD}" == "true" && "${RUN_TERRAFORM}" == "true" ]]; then
   require_command jq
 fi
+if [[ "${RUN_PLATFORM}" == "true" ]]; then
+  for command_name in kubeconform kubectl helm; do
+    require_command "${command_name}"
+  done
+fi
 if [[ "${RUN_DEV}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
-  for command_name in ansible-playbook ansible-lint yamllint kubeconform kubectl helm; do
+  for command_name in ansible-playbook ansible-lint yamllint; do
     require_command "${command_name}"
   done
 fi
@@ -173,7 +176,7 @@ yamllint --config-file "${PROJECT_ROOT}/.yamllint.yml" \
   "${ANSIBLE_DIR}" "${K8S_DIR}"
 
 mapfile -d '' manifest_files < <(
-  find "${K8S_DIR}/bootstrap" "${K8S_DIR}/gateway" "${K8S_DIR}/policies" "${K8S_DIR}/gitops" "${K8S_DIR}/prod" \
+  find "${K8S_DIR}/apps" "${K8S_DIR}/environments/dev" \
     -type f \( -name '*.yaml' -o -name '*.yml' \) \
     ! -name '*values.yaml' \
     ! -name 'Chart.yaml' \
@@ -186,13 +189,13 @@ kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}" \
   "${manifest_files[@]}"
 
-kubectl kustomize "${K8S_DIR}/gitops/apps/coffeeshop/overlays/dev" | kubeconform \
+kubectl kustomize "${K8S_DIR}/apps/coffeeshop/overlays/dev" | kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}"
 
-kubectl kustomize "${K8S_DIR}/gitops/addons/arc/hardening" | kubeconform \
+kubectl kustomize "${K8S_DIR}/environments/dev/gitops/addons/arc/hardening" | kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}"
 
-kubectl kustomize "${K8S_DIR}/gitops/addons/monitoring-rules" | kubeconform \
+kubectl kustomize "${K8S_DIR}/environments/dev/gitops/addons/monitoring-rules" | kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}"
 
 if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
@@ -262,14 +265,14 @@ if [ -d "${PROJECT_ROOT}/platform-ownership-guard/config/dev" ]; then
   GUARD_DIGEST="${GUARD_IMAGE##*@}"
   GUARD_AUTOSYNC=$(awk '
     $1 == "automated:" { print "true"; exit }
-  ' "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml")
+  ' "${K8S_DIR}/environments/dev/gitops/applications/platform-ownership-guard.yaml")
 
   if awk '
     $1 == "automated:" { in_automated=1; next }
     in_automated && $1 == "enabled:" { found=1; exit }
     in_automated && $1 !~ /^(prune:|selfHeal:)/ { in_automated=0 }
     END { exit !found }
-  ' "${K8S_DIR}/gitops/platform-ownership-guard-app.yaml"; then
+  ' "${K8S_DIR}/environments/dev/gitops/applications/platform-ownership-guard.yaml"; then
     echo "Error: Guard Application must not use automated.enabled; the deployed ArgoCD CRD prunes that field and causes perpetual drift." >&2
     exit 1
   fi
@@ -289,11 +292,11 @@ fi
 
 # Validate local coffeeshop-rabbitmq helm chart template rendering early, before
 # version consistency checks, so manifest/schema issues fail close to the source.
-if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-rabbitmq" ]; then
+if [ -d "${K8S_DIR}/environments/dev/gitops/apps/coffeeshop-rabbitmq" ]; then
   # RabbitmqCluster is a CRD and kubeconform may fail on external schema
   # downloads before falling back to the CRD catalog. Validate built-in
   # resources here; the CRD is installed and reconciled by the operator app.
-  helm template "${K8S_DIR}/gitops/apps/coffeeshop-rabbitmq" | kubeconform \
+  helm template "${K8S_DIR}/environments/dev/gitops/apps/coffeeshop-rabbitmq" | kubeconform \
     "${KUBECONFORM_COMMON_ARGS[@]}"
 fi
 
@@ -313,19 +316,20 @@ if [ "${TF_LONGHORN_SIZE}" != "${ANSIBLE_LONGHORN_SIZE}" ]; then
   exit 1
 fi
 
-if ! grep -Fxq '/infrastructure/k8s/gitops/apps/coffeeshop/base/secrets.yaml' "${PROJECT_ROOT}/.gitignore"; then
+if ! grep -Fxq '/infrastructure/k8s/apps/coffeeshop/base/secrets.yaml' "${PROJECT_ROOT}/.gitignore"; then
   echo "The runtime Kubernetes secret manifest is not ignored." >&2
   exit 1
 fi
 
-if find "${K8S_DIR}/gitops" -maxdepth 1 -type f -name 'root-app.y*ml' | grep -q .; then
+if find "${K8S_DIR}/environments/dev/gitops/applications" \
+  -maxdepth 1 -type f -name 'root-app.y*ml' | grep -q .; then
   echo "The root application must stay outside the directory it manages." >&2
   exit 1
 fi
 
 # Validate version consistency for kube-prometheus-stack between Ansible and GitOps
 VERSION_IN_ANSIBLE=$(grep 'kube_prometheus_stack_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-VERSION_IN_GITOPS=$(grep 'chart: kube-prometheus-stack' -A 1 "${K8S_DIR}/gitops/monitoring-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+VERSION_IN_GITOPS=$(grep 'chart: kube-prometheus-stack' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/monitoring.yaml" | grep 'targetRevision:' | awk '{print $2}')
 
 if [ "${VERSION_IN_ANSIBLE}" != "${VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for kube-prometheus-stack chart." >&2
@@ -335,7 +339,7 @@ fi
 
 # Validate version consistency for longhorn between Ansible and GitOps
 LONGHORN_VERSION_IN_ANSIBLE=$(grep 'longhorn_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-LONGHORN_VERSION_IN_GITOPS=$(grep 'chart: longhorn' -A 1 "${K8S_DIR}/gitops/longhorn-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+LONGHORN_VERSION_IN_GITOPS=$(grep 'chart: longhorn' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/longhorn.yaml" | grep 'targetRevision:' | awk '{print $2}')
 
 if [ "${LONGHORN_VERSION_IN_ANSIBLE}" != "${LONGHORN_VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for longhorn chart." >&2
@@ -345,7 +349,7 @@ fi
 
 # Validate version consistency for the Loki backend chart.
 LOKI_VERSION_IN_ANSIBLE=$(grep 'loki_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-LOKI_VERSION_IN_GITOPS=$(grep 'chart: loki' -A 1 "${K8S_DIR}/gitops/loki-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+LOKI_VERSION_IN_GITOPS=$(grep 'chart: loki' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/loki.yaml" | grep 'targetRevision:' | awk '{print $2}')
 
 if [ "${LOKI_VERSION_IN_ANSIBLE}" != "${LOKI_VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for Loki chart." >&2
@@ -362,13 +366,13 @@ helm template loki loki \
   --version "${LOKI_VERSION_IN_ANSIBLE}" \
   --namespace observability \
   --kube-version "${SCHEMA_VERSION}" \
-  --values "${K8S_DIR}/gitops/addons/loki/values.yaml" | kubeconform \
+  --values "${K8S_DIR}/environments/dev/gitops/addons/loki/values.yaml" | kubeconform \
   "${KUBECONFORM_COMMON_ARGS[@]}"
 
 # Validate version consistency and the rendered least-privilege contract for
 # the node-local Alloy log collector.
 ALLOY_VERSION_IN_ANSIBLE=$(grep 'alloy_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-ALLOY_VERSION_IN_GITOPS=$(grep 'chart: alloy' -A 1 "${K8S_DIR}/gitops/alloy-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+ALLOY_VERSION_IN_GITOPS=$(grep 'chart: alloy' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/alloy.yaml" | grep 'targetRevision:' | awk '{print $2}')
 ALLOY_APP_VERSION_IN_ANSIBLE=$(grep 'alloy_app_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
 
 if [ "${ALLOY_VERSION_IN_ANSIBLE}" != "${ALLOY_VERSION_IN_GITOPS}" ]; then
@@ -385,7 +389,7 @@ helm template alloy alloy \
   --version "${ALLOY_VERSION_IN_ANSIBLE}" \
   --namespace observability \
   --kube-version "${SCHEMA_VERSION}" \
-  --values "${K8S_DIR}/gitops/addons/alloy/values.yaml" >"${ALLOY_RENDERED}"
+  --values "${K8S_DIR}/environments/dev/gitops/addons/alloy/values.yaml" >"${ALLOY_RENDERED}"
 
 kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" "${ALLOY_RENDERED}"
 
@@ -449,7 +453,7 @@ fi
 # backend/gateway failure domains. Rendered config assertions prevent remote
 # chart defaults from silently enabling extra protocols or signal pipelines.
 TEMPO_VERSION_IN_ANSIBLE=$(grep 'tempo_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-TEMPO_VERSION_IN_GITOPS=$(grep 'chart: tempo' -A 1 "${K8S_DIR}/gitops/tempo-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+TEMPO_VERSION_IN_GITOPS=$(grep 'chart: tempo' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/tempo.yaml" | grep 'targetRevision:' | awk '{print $2}')
 TEMPO_APP_VERSION_IN_ANSIBLE=$(grep 'tempo_app_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
 
 if [ "${TEMPO_VERSION_IN_ANSIBLE}" != "${TEMPO_VERSION_IN_GITOPS}" ]; then
@@ -459,7 +463,7 @@ if [ "${TEMPO_VERSION_IN_ANSIBLE}" != "${TEMPO_VERSION_IN_GITOPS}" ]; then
 fi
 
 OTEL_VERSION_IN_ANSIBLE=$(grep 'otel_collector_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-OTEL_VERSION_IN_GITOPS=$(grep 'chart: opentelemetry-collector' -A 1 "${K8S_DIR}/gitops/otel-collector-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+OTEL_VERSION_IN_GITOPS=$(grep 'chart: opentelemetry-collector' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/otel-collector.yaml" | grep 'targetRevision:' | awk '{print $2}')
 OTEL_APP_VERSION_IN_ANSIBLE=$(grep 'otel_collector_app_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
 
 if [ "${OTEL_VERSION_IN_ANSIBLE}" != "${OTEL_VERSION_IN_GITOPS}" ]; then
@@ -476,14 +480,14 @@ helm template tempo tempo \
   --version "${TEMPO_VERSION_IN_ANSIBLE}" \
   --namespace observability \
   --kube-version "${SCHEMA_VERSION}" \
-  --values "${K8S_DIR}/gitops/addons/tempo/values.yaml" >"${TEMPO_RENDERED}"
+  --values "${K8S_DIR}/environments/dev/gitops/addons/tempo/values.yaml" >"${TEMPO_RENDERED}"
 
 helm template otel-collector opentelemetry-collector \
   --repo https://open-telemetry.github.io/opentelemetry-helm-charts \
   --version "${OTEL_VERSION_IN_ANSIBLE}" \
   --namespace observability \
   --kube-version "${SCHEMA_VERSION}" \
-  --values "${K8S_DIR}/gitops/addons/otel-collector/values.yaml" >"${OTEL_RENDERED}"
+  --values "${K8S_DIR}/environments/dev/gitops/addons/otel-collector/values.yaml" >"${OTEL_RENDERED}"
 
 kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" "${TEMPO_RENDERED}" "${OTEL_RENDERED}"
 
@@ -556,7 +560,7 @@ if grep -Eq 'jaeger|zipkin|hostPort:|^kind: (Ingress|HTTPRoute)$|type: (LoadBala
 fi
 
 if ! grep -Fq 'url: http://tempo.observability.svc.cluster.local:3200' \
-  "${K8S_DIR}/gitops/addons/monitoring/values.yaml"; then
+  "${K8S_DIR}/environments/dev/gitops/addons/monitoring/values.yaml"; then
   echo "Error: Grafana Tempo datasource is missing or not internal-only." >&2
   exit 1
 fi
@@ -565,7 +569,7 @@ fi
 # three synchronous services. Keep their shared OTLP endpoint and sampling
 # configuration Git-managed so an image rollout cannot silently fall back to
 # localhost or a different sampler.
-COFFEESHOP_CONFIG="${K8S_DIR}/gitops/apps/coffeeshop/base/configmap.yaml"
+COFFEESHOP_CONFIG="${K8S_DIR}/apps/coffeeshop/base/configmap.yaml"
 if ! grep -Fq 'OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"' "${COFFEESHOP_CONFIG}" ||
   ! grep -Fq 'OTEL_TRACES_SAMPLER: "parentbased_traceidratio"' "${COFFEESHOP_CONFIG}" ||
   ! grep -Fq 'OTEL_TRACES_SAMPLER_ARG: "1.0"' "${COFFEESHOP_CONFIG}" ||
@@ -575,7 +579,7 @@ if ! grep -Fq 'OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cl
 fi
 
 for workload in proxy counter product; do
-  workload_manifest="${K8S_DIR}/gitops/apps/coffeeshop/base/${workload}.yaml"
+  workload_manifest="${K8S_DIR}/apps/coffeeshop/base/${workload}.yaml"
   for telemetry_env in OTEL_EXPORTER_OTLP_ENDPOINT OTEL_TRACES_SAMPLER OTEL_TRACES_SAMPLER_ARG OTEL_RESOURCE_ATTRIBUTES; do
     if ! grep -Fq "name: ${telemetry_env}" "${workload_manifest}"; then
       echo "Error: CoffeeShop ${workload} is missing ${telemetry_env}." >&2
@@ -586,7 +590,7 @@ done
 
 bash "${PROJECT_ROOT}/scripts/validation/validate-ci-contracts.sh"
 
-OBSERVABILITY_POLICIES=$(kubectl kustomize "${K8S_DIR}/gitops/addons/observability-policies")
+OBSERVABILITY_POLICIES=$(kubectl kustomize "${K8S_DIR}/environments/dev/gitops/addons/observability-policies")
 if ! grep -Fq 'name: tempo-ingress' <<<"${OBSERVABILITY_POLICIES}" ||
   ! grep -Fq 'name: otel-collector-ingress-egress' <<<"${OBSERVABILITY_POLICIES}" ||
   ! grep -Fq 'port: 4317' <<<"${OBSERVABILITY_POLICIES}" ||
@@ -598,7 +602,7 @@ fi
 # Validate version consistency for cloudnative-pg between Ansible and GitOps.
 # CNPG uses separate Helm chart and operator app versions; ArgoCD must pin the chart version.
 CNPG_VERSION_IN_ANSIBLE=$(grep 'cloudnativepg_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-CNPG_VERSION_IN_GITOPS=$(grep 'chart: cloudnative-pg' -A 1 "${K8S_DIR}/gitops/cloudnativepg-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+CNPG_VERSION_IN_GITOPS=$(grep 'chart: cloudnative-pg' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/cloudnativepg.yaml" | grep 'targetRevision:' | awk '{print $2}')
 
 if [ "${CNPG_VERSION_IN_ANSIBLE}" != "${CNPG_VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for cloudnative-pg chart." >&2
@@ -608,7 +612,7 @@ fi
 
 # Validate version consistency for Barman Cloud Plugin between Ansible and GitOps.
 BARMAN_VERSION_IN_ANSIBLE=$(grep 'barman_cloud_plugin_chart_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"')
-BARMAN_VERSION_IN_GITOPS=$(grep 'chart: plugin-barman-cloud' -A 1 "${K8S_DIR}/gitops/barman-cloud-plugin-app.yaml" | grep 'targetRevision:' | awk '{print $2}')
+BARMAN_VERSION_IN_GITOPS=$(grep 'chart: plugin-barman-cloud' -A 1 "${K8S_DIR}/environments/dev/gitops/applications/barman-cloud-plugin.yaml" | grep 'targetRevision:' | awk '{print $2}')
 
 if [ "${BARMAN_VERSION_IN_ANSIBLE}" != "${BARMAN_VERSION_IN_GITOPS}" ]; then
   echo "Error: Version mismatch for Barman Cloud Plugin chart." >&2
@@ -618,7 +622,7 @@ fi
 
 # Validate version consistency for vendored RabbitMQ Cluster Operator manifest.
 RABBITMQ_VERSION_IN_ANSIBLE=$(grep 'rabbitmq_cluster_operator_version:' "${ANSIBLE_DIR}/playbooks/group_vars/all/versions.yml" | awk '{print $2}' | tr -d '"v')
-RABBITMQ_VERSION_IN_MANIFEST=$(grep 'image: ghcr.io/rabbitmq/cluster-operator:' "${K8S_DIR}/gitops/addons/rabbitmq-operator/cluster-operator.yaml" | head -1 | sed 's/.*cluster-operator://' | tr -d '\r')
+RABBITMQ_VERSION_IN_MANIFEST=$(grep 'image: ghcr.io/rabbitmq/cluster-operator:' "${K8S_DIR}/environments/dev/gitops/addons/rabbitmq-operator/cluster-operator.yaml" | head -1 | sed 's/.*cluster-operator://' | tr -d '\r')
 
 if [ "${RABBITMQ_VERSION_IN_ANSIBLE}" != "${RABBITMQ_VERSION_IN_MANIFEST}" ]; then
   echo "Error: Version mismatch for RabbitMQ Cluster Operator." >&2
@@ -629,12 +633,35 @@ fi
 # Validate local coffeeshop-postgres helm chart template rendering.
 # The production chart intentionally requires backup.bucketName, which is supplied
 # by Ansible from Terraform output when creating the ArgoCD Application.
-if [ -d "${K8S_DIR}/gitops/apps/coffeeshop-postgres" ]; then
-  helm template "${K8S_DIR}/gitops/apps/coffeeshop-postgres" \
+if [ -d "${K8S_DIR}/environments/dev/gitops/apps/coffeeshop-postgres" ]; then
+  helm template "${K8S_DIR}/environments/dev/gitops/apps/coffeeshop-postgres" \
     --set backup.bucketName=coffeeshop-static-validation-bucket | kubeconform \
     "${KUBECONFORM_COMMON_ARGS[@]}"
 fi
 
 fi # RUN_DEV && RUN_PLATFORM
+
+if [[ "${RUN_PROD}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
+  if [[ -d "${K8S_DIR}/environments/prod/bootstrap" ]]; then
+    mapfile -d '' prod_bootstrap_manifests < <(
+      find "${K8S_DIR}/environments/prod/bootstrap" \
+        -type f \( -name '*.yaml' -o -name '*.yml' \) \
+        -print0
+    )
+    if [[ "${#prod_bootstrap_manifests[@]}" -gt 0 ]]; then
+      kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" "${prod_bootstrap_manifests[@]}"
+    fi
+  fi
+
+  if [[ -d "${K8S_DIR}/apps/coffeeshop/overlays/prod" ]]; then
+    PROD_RENDERED="$(kubectl kustomize "${K8S_DIR}/apps/coffeeshop/overlays/prod" --load-restrictor LoadRestrictionsNone)"
+    kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" <<<"${PROD_RENDERED}"
+
+    if ! grep -Fq "ingressClassName: alb" <<<"${PROD_RENDERED}"; then
+      echo "Error: PROD rendered manifest must contain ALB ingress." >&2
+      exit 1
+    fi
+  fi
+fi
 
 echo "Infrastructure validation completed successfully (env=${VALIDATE_ENV}, scope=${VALIDATE_SCOPE})."

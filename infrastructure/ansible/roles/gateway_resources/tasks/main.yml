@@ -13,7 +13,7 @@
   kubernetes.core.k8s:
     kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
     state: present
-    src: "{{ playbook_dir }}/../../k8s/gateway/{{ item }}"
+    src: "{{ playbook_dir }}/../../k8s/environments/dev/network/gateway/{{ item }}"
   loop:
     - gateway.yaml
     - httproute.yaml

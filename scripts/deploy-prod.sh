@@ -45,6 +45,9 @@ EXPECTED_ACCOUNT_ID="${PROD_EXPECTED_AWS_ACCOUNT_ID:-$(read_tfvar_string expecte
 PROJECT_NAME="${PROD_PROJECT_NAME:-$(read_tfvar_string project_name)}"
 ENVIRONMENT="${PROD_ENVIRONMENT:-$(read_tfvar_string environment)}"
 ENVIRONMENT="${ENVIRONMENT:-prod}"
+GITHUB_REPOSITORY="${PROD_GITHUB_REPOSITORY:-$(read_tfvar_string github_repository)}"
+GITOPS_REPO_URL="${PROD_GITOPS_REPO_URL:-https://github.com/${GITHUB_REPOSITORY}.git}"
+GITOPS_REVISION="${PROD_GITOPS_REVISION:-main}"
 CLUSTER_PUBLIC_CIDRS="${TF_VAR_cluster_endpoint_public_access_cidrs:-$(read_tfvar_expression cluster_endpoint_public_access_cidrs)}"
 NODE_INSTANCE_TYPES_EXPR="$(read_tfvar_expression node_instance_types)"
 NODE_INSTANCE_TYPES_EXPR="${NODE_INSTANCE_TYPES_EXPR:-[\"t3.medium\"]}"
@@ -58,8 +61,9 @@ BOOTSTRAP_STATE_KEY="${PROD_BOOTSTRAP_STATE_KEY:-prod/bootstrap.tfstate}"
 FOUNDATION_STATE_KEY="${PROD_FOUNDATION_STATE_KEY:-prod/foundation.tfstate}"
 KUBECONFIG_PATH="${PROD_KUBECONFIG:-${HOME}/.kube/${PROJECT_NAME}-prod.yaml}"
 WAIT_TIMEOUT="${PROD_WAIT_TIMEOUT:-20m}"
-NLB_WAIT_ATTEMPTS="${PROD_NLB_WAIT_ATTEMPTS:-60}"
+POLL_ATTEMPTS="${PROD_POLL_ATTEMPTS:-60}"
 AWS_LB_CONTROLLER_CHART_VERSION="3.4.2"
+ARGO_CD_CHART_VERSION="6.7.18"
 RUNTIME_TF_DATA_ROOT="${PROD_TF_DATA_ROOT:-${HOME}/.cache/go-coffeeshop/terraform/prod-runtime-${EXPECTED_ACCOUNT_ID}}"
 BOOTSTRAP_TF_DATA_DIR="${RUNTIME_TF_DATA_ROOT}/bootstrap"
 FOUNDATION_TF_DATA_DIR="${RUNTIME_TF_DATA_ROOT}/foundation"
@@ -85,7 +89,10 @@ Optional:
                                      first bootstrap; only accepted when the
                                      PROD bucket exists and its state key does not
   PROD_KUBECONFIG                    Dedicated PROD kubeconfig path
-  PROD_NLB_WAIT_ATTEMPTS             Ten-second polling attempts. Default: 60
+  PROD_GITHUB_REPOSITORY             Override owner/repository from tfvars
+  PROD_GITOPS_REPO_URL               Override the HTTPS repository read by Argo CD
+  PROD_GITOPS_REVISION               Desired-state branch. Default: main
+  PROD_POLL_ATTEMPTS             Ten-second polling attempts. Default: 60
   PROD_CONFIRM_TEARDOWN              Must equal the 12-digit target account ID
                                      before teardown can create a destroy plan
 
@@ -103,11 +110,11 @@ Recovery/debug actions:
   g1   Verify caller/Region/cost window; create or reopen isolated backend
   g2   Target VPC and EKS control plane only; verify cluster ACTIVE
   g3   Target required add-ons and managed nodes; verify node/add-on health
-  g4   Deploy AWS Load Balancer Controller & NLB IP-target probe; verify NLB & HTTP reachability
+  g4   Provision delivery identity, deploy Argo CD and ALB IP-target ingress
   wp2  Run g1, g2 and g3 in order; stops immediately on any failed gate
   reconcile
        Create and review one non-targeted saved plan, apply that exact plan,
-       then require an empty follow-up plan and healthy EKS/NLB runtime
+       then require an empty follow-up plan and healthy EKS/ALB runtime
 EOF
 }
 
@@ -203,13 +210,18 @@ validate_base_inputs() {
   [[ "${EXPECTED_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]] || \
     fail "PROD_EXPECTED_AWS_ACCOUNT_ID must be a valid 12-digit account ID"
   require_nonempty "PROD_EXPECTED_AWS_REGION" "${EXPECTED_REGION}"
+  require_nonempty "github_repository" "${GITHUB_REPOSITORY}"
+  [[ "${GITHUB_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || \
+    fail "github_repository must use owner/repository form"
+  [[ "${GITOPS_REVISION}" =~ ^[A-Za-z0-9._/-]+$ ]] || \
+    fail "PROD_GITOPS_REVISION contains unsupported characters"
   require_nonempty "TF_VAR_cluster_endpoint_public_access_cidrs" \
     "${CLUSTER_PUBLIC_CIDRS}"
 
-  [[ "${NLB_WAIT_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || \
-    fail "PROD_NLB_WAIT_ATTEMPTS must be a positive integer"
+  [[ "${POLL_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || \
+    fail "PROD_POLL_ATTEMPTS must be a positive integer"
 
-  for command_name in aws terraform kubectl helm curl jq awk mktemp cp rm sleep; do
+  for command_name in aws terraform kubectl helm curl jq awk git mktemp cp rm sleep; do
     require_command "${command_name}"
   done
 
@@ -223,6 +235,65 @@ validate_base_inputs() {
     "${BOOTSTRAP_TF_DATA_DIR}" \
     "${FOUNDATION_TF_DATA_DIR}" \
     "$(dirname "${KUBECONFIG_PATH}")"
+}
+
+wait_for_promoted_digest() {
+  local overlay_path remote_digest attempt
+  overlay_path="infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml"
+
+  echo "Delivery identity and ECR are ready."
+  echo "Run the protected 'PROD Immutable Web Promotion' workflow for branch ${GITOPS_REVISION}."
+  echo "Waiting for that branch to contain a non-placeholder image digest..."
+  for ((attempt = 1; attempt <= POLL_ATTEMPTS; attempt++)); do
+    if git fetch --quiet "${GITOPS_REPO_URL}" "${GITOPS_REVISION}" 2>/dev/null; then
+      remote_digest="$(
+        git show "FETCH_HEAD:${overlay_path}" 2>/dev/null |
+          awk '/^[[:space:]]*digest:[[:space:]]*sha256:/ {print $2; exit}'
+      )"
+      if [[ "${remote_digest}" =~ ^sha256:[0-9a-f]{64}$ &&
+        "${remote_digest}" != "sha256:0000000000000000000000000000000000000000000000000000000000000000" ]]; then
+        echo "Promoted immutable digest found: ${remote_digest}"
+        return
+      fi
+    fi
+    echo "Attempt ${attempt}/${POLL_ATTEMPTS}: promoted digest not visible yet. Waiting 10s..."
+    sleep 10
+  done
+  fail "no valid promoted digest appeared on ${GITOPS_REPO_URL}@${GITOPS_REVISION}"
+}
+
+apply_argocd_bootstrap() {
+  local manifest
+  for manifest in appproject.yaml coffeeshop-prod-app.yaml; do
+    sed \
+      -e "s|__GITOPS_REPO_URL__|${GITOPS_REPO_URL}|g" \
+      -e "s|__GITOPS_REVISION__|${GITOPS_REVISION}|g" \
+      "${PROJECT_ROOT}/infrastructure/k8s/environments/prod/bootstrap/${manifest}" |
+      kubectl apply -f -
+  done
+}
+
+remote_promoted_digest() {
+  local overlay_path
+  overlay_path="infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml"
+  git fetch --quiet "${GITOPS_REPO_URL}" "${GITOPS_REVISION}"
+  git show "FETCH_HEAD:${overlay_path}" |
+    awk '/^[[:space:]]*digest:[[:space:]]*sha256:/ {print $2; exit}'
+}
+
+verify_argocd_self_heal() {
+  echo "Verifying Argo CD self-heal by drifting web replicas to zero..."
+  kubectl patch deployment web -n coffeeshop --type=merge -p '{"spec":{"replicas":0}}'
+  for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
+    if [[ "$(kubectl get deployment web -n coffeeshop -o jsonpath='{.spec.replicas}' 2>/dev/null || true)" == "1" ]]; then
+      kubectl rollout status deployment/web -n coffeeshop --timeout="${WAIT_TIMEOUT}"
+      echo "Argo CD self-heal restored the Git-declared replica count."
+      return
+    fi
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: waiting for Argo CD self-heal. Waiting 10s..."
+    sleep 10
+  done
+  fail "Argo CD did not self-heal the drifted web Deployment"
 }
 
 verify_caller() {
@@ -467,11 +538,10 @@ run_g3() {
 
 run_g4() {
   local cluster_name cluster_arn vpc_id controller_role_arn association_list association_count association_id association_json
-  local nlb_hostname load_balancers_json load_balancer_arn load_balancer_az_count
-  local target_groups_json target_group_arn target_type target_health_json
-  local ready_pods_json ready_pod_ips healthy_count healthy_az_count unexpected_target_count
-  local http_response
-  echo "=== G4: managed ingress probe (AWS Load Balancer Controller + NLB IP-target) ==="
+  local load_balancers_json load_balancer_arn load_balancer_az_count
+  local target_groups_json target_group_arn target_health_json listener_json
+  local healthy_count healthy_az_count ready_pod_ips healthy_target_ips http_response
+  echo "=== G4: protected delivery, Argo CD and ALB IP-target ingress ==="
   verify_caller
   show_hourly_estimate
   initialize_foundation_backend
@@ -479,6 +549,10 @@ run_g4() {
   terraform_apply "${PROD_TF_DIR}" \
     -target=aws_ecr_repository.app \
     -target=aws_ecr_lifecycle_policy.app \
+    -target=aws_iam_openid_connect_provider.github \
+    -target=aws_iam_role.github_delivery_role \
+    -target=aws_iam_policy.github_delivery_policy \
+    -target=aws_iam_role_policy_attachment.github_delivery_attach \
     -target=aws_iam_role.aws_lb_controller \
     -target=aws_iam_policy.aws_lb_controller_policy \
     -target=aws_iam_role_policy_attachment.aws_lb_controller_attach \
@@ -488,6 +562,8 @@ run_g4() {
   cluster_arn="$(terraform_run "${PROD_TF_DIR}" output -raw cluster_arn)"
   vpc_id="$(terraform_run "${PROD_TF_DIR}" output -raw vpc_id)"
   controller_role_arn="$(terraform_run "${PROD_TF_DIR}" output -raw aws_load_balancer_controller_role_arn)"
+  echo "GitHub Environment PROD_AWS_ROLE_ARN: $(terraform_run "${PROD_TF_DIR}" output -raw github_delivery_role_arn)"
+  echo "GitHub Environment PROD_AWS_REGION:   ${EXPECTED_REGION}"
   [[ "${vpc_id}" =~ ^vpc-[0-9a-f]+$ ]] || \
     fail "Terraform returned an invalid VPC ID: ${vpc_id}"
 
@@ -516,7 +592,7 @@ run_g4() {
   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
     --namespace kube-system \
     --version "${AWS_LB_CONTROLLER_CHART_VERSION}" \
-    --values "${PROJECT_ROOT}/infrastructure/k8s/prod/ingress-probe/aws-load-balancer-controller-values.yaml" \
+    --values "${PROJECT_ROOT}/infrastructure/k8s/environments/prod/platform/aws-load-balancer-controller-values.yaml" \
     --set-string clusterName="${cluster_name}" \
     --set-string region="${EXPECTED_REGION}" \
     --set-string vpcId="${vpc_id}" \
@@ -533,40 +609,64 @@ run_g4() {
   kubectl rollout status deployment/aws-load-balancer-controller \
     -n kube-system --timeout="${WAIT_TIMEOUT}"
 
-  echo "Deploying NLB Ingress Probe after the controller webhook is ready..."
-  kubectl apply -f "${PROJECT_ROOT}/infrastructure/k8s/prod/ingress-probe/nlb-ingress-probe.yaml"
-  echo "Waiting for NLB Ingress Probe deployment to become healthy..."
-  kubectl rollout status deployment/nlb-ingress-probe -n ingress-probe --timeout="${WAIT_TIMEOUT}"
+  echo "Deploying pinned Argo CD chart ${ARGO_CD_CHART_VERSION}..."
+  helm repo add argo https://argoproj.github.io/argo-helm --force-update
+  helm upgrade --install argocd argo/argo-cd \
+    --namespace argocd \
+    --create-namespace \
+    --version "${ARGO_CD_CHART_VERSION}" \
+    --values "${PROJECT_ROOT}/infrastructure/k8s/environments/prod/platform/argocd-values.yaml" \
+    --atomic \
+    --wait \
+    --timeout "${WAIT_TIMEOUT}"
 
-  ready_pods_json="$(kubectl get pods -n ingress-probe -l app=nlb-ingress-probe -o json)"
-  ready_pod_ips="$(jq -c '[.items[] | select(any(.status.conditions[]?; .type == "Ready" and .status == "True")) | .status.podIP]' <<<"${ready_pods_json}")"
-  [[ "$(jq 'length' <<<"${ready_pod_ips}")" -ge 2 ]] || \
-    fail "fewer than two ready NLB probe Pod IPs were found"
+  kubectl rollout status deployment/argocd-server -n argocd --timeout="${WAIT_TIMEOUT}"
+  kubectl rollout status deployment/argocd-repo-server -n argocd --timeout="${WAIT_TIMEOUT}"
+  kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout="${WAIT_TIMEOUT}"
 
-  echo "Waiting for AWS Load Balancer Controller to provision NLB and assign external hostname..."
-  nlb_hostname=""
-  for ((i = 1; i <= NLB_WAIT_ATTEMPTS; i++)); do
-    nlb_hostname="$(kubectl get svc nlb-ingress-probe-svc -n ingress-probe -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
-    if [[ -n "${nlb_hostname}" ]]; then
-      echo "NLB Hostname assigned: ${nlb_hostname}"
+  wait_for_promoted_digest
+  echo "Applying PROD-2 AppProject and Argo CD Bootstrap Application..."
+  apply_argocd_bootstrap
+
+  echo "Waiting for Argo CD Application coffeeshop-prod to become Synced and Healthy..."
+  for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
+    sync_status="$(kubectl get application coffeeshop-prod -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    health_status="$(kubectl get application coffeeshop-prod -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+    if [[ "${sync_status}" == "Synced" && "${health_status}" == "Healthy" ]]; then
+      echo "Argo CD Application coffeeshop-prod is Synced and Healthy."
       break
     fi
-    echo "Attempt ${i}/${NLB_WAIT_ATTEMPTS}: Waiting for NLB hostname assignment... (10s)"
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: Argo CD Application status: sync=${sync_status:-unknown}, health=${health_status:-unknown}. Waiting 10s..."
     sleep 10
   done
-  [[ -n "${nlb_hostname}" ]] || fail "AWS Load Balancer Controller failed to assign NLB hostname in time"
+  [[ "${sync_status}" == "Synced" && "${health_status}" == "Healthy" ]] || \
+    fail "Argo CD Application coffeeshop-prod did not become Synced and Healthy in time"
+
+  echo "Waiting for AWS Load Balancer Controller to provision ALB and assign external hostname..."
+  alb_hostname=""
+  for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
+    alb_hostname="$(kubectl get ingress coffeeshop-prod-alb-ingress -n coffeeshop -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+    if [[ -n "${alb_hostname}" ]]; then
+      echo "ALB Hostname assigned: ${alb_hostname}"
+      break
+    fi
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: Waiting for ALB hostname assignment... (10s)"
+    sleep 10
+  done
+  [[ -n "${alb_hostname}" ]] || fail "AWS Load Balancer Controller failed to assign ALB hostname in time"
 
   load_balancers_json="$(aws elbv2 describe-load-balancers --region "${EXPECTED_REGION}" --output json)"
-  load_balancer_arn="$(jq -r --arg dns "${nlb_hostname}" \
-    '[.LoadBalancers[] | select(.DNSName == $dns and .Type == "network" and .Scheme == "internet-facing")] | if length == 1 then .[0].LoadBalancerArn else empty end' \
+  load_balancer_arn="$(jq -r --arg dns "${alb_hostname}" \
+    '[.LoadBalancers[] | select(.DNSName == $dns and .Type == "application" and .Scheme == "internet-facing")] | if length == 1 then .[0].LoadBalancerArn else empty end' \
     <<<"${load_balancers_json}")"
   [[ -n "${load_balancer_arn}" ]] || \
-    fail "could not resolve exactly one internet-facing NLB from Service hostname ${nlb_hostname}"
+    fail "could not resolve exactly one internet-facing ALB from Ingress hostname ${alb_hostname}"
+
   load_balancer_az_count="$(jq -r --arg arn "${load_balancer_arn}" \
     '[.LoadBalancers[] | select(.LoadBalancerArn == $arn) | .AvailabilityZones[].ZoneName] | unique | length' \
     <<<"${load_balancers_json}")"
   [[ "${load_balancer_az_count}" -ge 2 ]] || \
-    fail "NLB is attached to only ${load_balancer_az_count} Availability Zone(s)"
+    fail "ALB is attached to only ${load_balancer_az_count} Availability Zone(s)"
 
   target_groups_json="$(aws elbv2 describe-target-groups \
     --load-balancer-arn "${load_balancer_arn}" \
@@ -576,15 +676,17 @@ run_g4() {
     <<<"${target_groups_json}")"
   [[ -n "${target_group_arn}" ]] || \
     fail "expected exactly one IP target group owned by ${load_balancer_arn}"
-  target_type="$(jq -r --arg arn "${target_group_arn}" '.TargetGroups[] | select(.TargetGroupArn == $arn) | .TargetType' \
-    <<<"${target_groups_json}")"
-  [[ "${target_type}" == "ip" ]] || fail "NLB target group type is ${target_type}, expected ip"
+  listener_json="$(aws elbv2 describe-listeners \
+    --load-balancer-arn "${load_balancer_arn}" \
+    --region "${EXPECTED_REGION}" \
+    --output json)"
+  [[ "$(jq '[.Listeners[] | select(.Port == 80 and .Protocol == "HTTP")] | length' <<<"${listener_json}")" -eq 1 ]] || \
+    fail "expected exactly one HTTP:80 listener on ${load_balancer_arn}"
 
-  echo "Waiting for Pod IP targets across two AZs to become healthy..."
+  echo "Waiting for healthy ALB targets that exactly match Ready web Pod IPs..."
   healthy_count=0
   healthy_az_count=0
-  unexpected_target_count=0
-  for ((i = 1; i <= NLB_WAIT_ATTEMPTS; i++)); do
+  for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
     target_health_json="$(aws elbv2 describe-target-health \
       --target-group-arn "${target_group_arn}" \
       --region "${EXPECTED_REGION}" \
@@ -593,42 +695,47 @@ run_g4() {
       <<<"${target_health_json}")"
     healthy_az_count="$(jq '[.TargetHealthDescriptions[] | select(.TargetHealth.State == "healthy") | .Target.AvailabilityZone] | unique | length' \
       <<<"${target_health_json}")"
-    unexpected_target_count="$(jq --argjson pod_ips "${ready_pod_ips}" \
-      '[.TargetHealthDescriptions[] | select(.TargetHealth.State == "healthy" and (.Target.Id as $id | $pod_ips | index($id) | not))] | length' \
-      <<<"${target_health_json}")"
-    if [[ "${healthy_count}" -ge 2 && "${healthy_az_count}" -ge 2 && "${unexpected_target_count}" -eq 0 ]]; then
+    if [[ "${healthy_count}" -ge 1 && "${healthy_az_count}" -ge 1 ]]; then
       break
     fi
-    echo "Attempt ${i}/${NLB_WAIT_ATTEMPTS}: healthy=${healthy_count}, AZs=${healthy_az_count}, unexpected targets=${unexpected_target_count}. Waiting 10s..."
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: ALB healthy targets=${healthy_count}, AZs=${healthy_az_count}. Waiting 10s..."
     sleep 10
   done
-  [[ "${healthy_count}" -ge 2 ]] || fail "fewer than two NLB targets became healthy"
-  [[ "${healthy_az_count}" -ge 2 ]] || fail "healthy NLB targets do not span two Availability Zones"
-  [[ "${unexpected_target_count}" -eq 0 ]] || fail "target group contains healthy targets that are not current probe Pod IPs"
+  [[ "${healthy_count}" -ge 1 ]] || fail "no ALB targets became healthy"
+  ready_pod_ips="$(kubectl get pods -n coffeeshop -l app=web -o json |
+    jq -c '[.items[]
+      | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+      | .status.podIP] | sort')"
+  healthy_target_ips="$(jq -c \
+    '[.TargetHealthDescriptions[]
+      | select(.TargetHealth.State == "healthy")
+      | .Target.Id] | sort' <<<"${target_health_json}")"
+  [[ "${healthy_target_ips}" == "${ready_pod_ips}" ]] || \
+    fail "healthy ALB target IPs ${healthy_target_ips} do not match Ready web Pod IPs ${ready_pod_ips}"
 
-  echo "Verifying external HTTP reachability via NLB..."
+  echo "Verifying external HTTP reachability via ALB..."
   http_response=""
-  for ((i = 1; i <= NLB_WAIT_ATTEMPTS; i++)); do
-    http_response="$(curl --fail --silent --show-error --max-time 5 "http://${nlb_hostname}/" 2>/dev/null || true)"
-    if [[ "${http_response}" == *"CoffeeShop PROD NLB Ingress Probe OK"* ]]; then
-      echo "HTTP Reachability Success: Received '${http_response}'"
+  for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
+    http_response="$(curl --fail --silent --show-error --max-time 5 "http://${alb_hostname}/" 2>/dev/null || true)"
+    if [[ -n "${http_response}" ]]; then
+      echo "HTTP Reachability Success via ALB: Received response from ${alb_hostname}"
       break
     fi
-    echo "Attempt ${i}/${NLB_WAIT_ATTEMPTS}: NLB HTTP endpoint not ready yet. Waiting 10s..."
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: ALB HTTP endpoint not ready yet. Waiting 10s..."
     sleep 10
   done
+  grep -Fq 'CoffeeShop POS' <<<"${http_response}" || \
+    fail "ALB endpoint did not return the expected CoffeeShop POS marker"
 
-  [[ "${http_response}" == *"CoffeeShop PROD NLB Ingress Probe OK"* ]] || \
-    fail "NLB HTTP reachability probe failed for http://${nlb_hostname}/"
-
-  echo "G4 PASSED: Managed NLB IP-target ingress probe is healthy and reachable across 2 AZs (${nlb_hostname})."
+  echo "G4 PASSED: Managed ALB IP-target Ingress and GitOps web slice are healthy and reachable (${alb_hostname})."
 }
 
 verify_reconciled_runtime() {
   local cluster_name cluster_arn node_group_name desired_size ready_count
-  local nlb_hostname load_balancers_json load_balancer_arn nlb_az_count
-  local target_groups_json target_group_arn target_health_json healthy_count healthy_az_count
-  local http_response
+  local alb_hostname load_balancers_json load_balancer_arn alb_az_count
+  local target_groups_json target_group_arn target_health_json listener_json
+  local healthy_count healthy_az_count ready_pod_ips healthy_target_ips
+  local desired_digest git_digest running_image_id http_response
 
   cluster_name="$(terraform_run "${PROD_TF_DIR}" output -raw cluster_name)"
   cluster_arn="$(terraform_run "${PROD_TF_DIR}" output -raw cluster_arn)"
@@ -660,25 +767,31 @@ verify_reconciled_runtime() {
   kubectl rollout status deployment/coredns -n kube-system --timeout="${WAIT_TIMEOUT}"
   kubectl rollout status deployment/aws-load-balancer-controller \
     -n kube-system --timeout="${WAIT_TIMEOUT}"
-  kubectl rollout status deployment/nlb-ingress-probe \
-    -n ingress-probe --timeout="${WAIT_TIMEOUT}"
+  kubectl rollout status deployment/argocd-server -n argocd --timeout="${WAIT_TIMEOUT}"
+  kubectl rollout status statefulset/argocd-application-controller \
+    -n argocd --timeout="${WAIT_TIMEOUT}"
 
-  nlb_hostname="$(kubectl get service nlb-ingress-probe-svc \
-    -n ingress-probe \
+  [[ "$(kubectl get application coffeeshop-prod -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)" == "Synced" ]] || \
+    fail "Argo CD application coffeeshop-prod is not Synced after reconcile"
+  [[ "$(kubectl get application coffeeshop-prod -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)" == "Healthy" ]] || \
+    fail "Argo CD application coffeeshop-prod is not Healthy after reconcile"
+
+  alb_hostname="$(kubectl get ingress coffeeshop-prod-alb-ingress \
+    -n coffeeshop \
     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
-  require_nonempty "reconciled NLB hostname" "${nlb_hostname}"
+  require_nonempty "reconciled ALB hostname" "${alb_hostname}"
   load_balancers_json="$(aws elbv2 describe-load-balancers --output json)"
-  load_balancer_arn="$(jq -r --arg dns "${nlb_hostname}" \
-    '[.LoadBalancers[] | select(.DNSName == $dns and .Type == "network" and .State.Code == "active")]
+  load_balancer_arn="$(jq -r --arg dns "${alb_hostname}" \
+    '[.LoadBalancers[] | select(.DNSName == $dns and .Type == "application" and .State.Code == "active")]
      | if length == 1 then .[0].LoadBalancerArn else empty end' \
     <<<"${load_balancers_json}")"
   [[ -n "${load_balancer_arn}" ]] || \
-    fail "reconcile could not resolve exactly one ACTIVE NLB for ${nlb_hostname}"
-  nlb_az_count="$(jq -r --arg arn "${load_balancer_arn}" \
+    fail "reconcile could not resolve exactly one ACTIVE ALB for ${alb_hostname}"
+  alb_az_count="$(jq -r --arg arn "${load_balancer_arn}" \
     '[.LoadBalancers[] | select(.LoadBalancerArn == $arn) | .AvailabilityZones[].ZoneName]
      | unique | length' <<<"${load_balancers_json}")"
-  [[ "${nlb_az_count}" -ge 2 ]] || \
-    fail "reconciled NLB spans only ${nlb_az_count} Availability Zone(s)"
+  [[ "${alb_az_count}" -ge 2 ]] || \
+    fail "reconciled ALB spans only ${alb_az_count} Availability Zone(s)"
 
   target_groups_json="$(aws elbv2 describe-target-groups \
     --load-balancer-arn "${load_balancer_arn}" \
@@ -689,6 +802,11 @@ verify_reconciled_runtime() {
     <<<"${target_groups_json}")"
   [[ -n "${target_group_arn}" ]] || \
     fail "reconcile expected exactly one IP target group for ${load_balancer_arn}"
+  listener_json="$(aws elbv2 describe-listeners \
+    --load-balancer-arn "${load_balancer_arn}" \
+    --output json)"
+  [[ "$(jq '[.Listeners[] | select(.Port == 80 and .Protocol == "HTTP")] | length' <<<"${listener_json}")" -eq 1 ]] || \
+    fail "reconciled ALB does not have exactly one HTTP:80 listener"
   target_health_json="$(aws elbv2 describe-target-health \
     --target-group-arn "${target_group_arn}" \
     --output json)"
@@ -701,13 +819,46 @@ verify_reconciled_runtime() {
       | .Target.AvailabilityZone]
      | unique | length' \
     <<<"${target_health_json}")"
-  [[ "${healthy_count}" -ge 2 && "${healthy_az_count}" -ge 2 ]] || \
-    fail "reconciled NLB has ${healthy_count} healthy target(s) across ${healthy_az_count} AZ(s)"
+  [[ "${healthy_count}" -ge 1 ]] || \
+    fail "reconciled ALB target group has no healthy targets"
+  ready_pod_ips="$(kubectl get pods -n coffeeshop -l app=web -o json |
+    jq -c '[.items[]
+      | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+      | .status.podIP] | sort')"
+  healthy_target_ips="$(jq -c \
+    '[.TargetHealthDescriptions[]
+      | select(.TargetHealth.State == "healthy")
+      | .Target.Id] | sort' <<<"${target_health_json}")"
+  [[ "${healthy_target_ips}" == "${ready_pod_ips}" ]] || \
+    fail "reconciled healthy target IPs do not match Ready web Pod IPs"
 
-  http_response="$(curl --fail --silent --show-error --max-time 10 "http://${nlb_hostname}/")"
-  [[ "${http_response}" == *"CoffeeShop PROD NLB Ingress Probe OK"* ]] || \
-    fail "reconciled NLB returned an unexpected HTTP response"
-  echo "Runtime verification passed: EKS/nodes/controller/probe healthy; ${healthy_count} NLB targets healthy across ${healthy_az_count} AZs."
+  desired_digest="$(kubectl get deployment web -n coffeeshop \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="web")].image}' |
+    awk -F@ '{print $2}')"
+  [[ "${desired_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+    fail "web Deployment is not pinned to a valid immutable digest"
+  git_digest="$(remote_promoted_digest)"
+  [[ "${git_digest}" == "${desired_digest}" ]] || \
+    fail "Git desired digest ${git_digest} does not match Deployment digest ${desired_digest}"
+  aws ecr describe-images \
+    --repository-name go-coffeeshop-web \
+    --image-ids "imageDigest=${desired_digest}" \
+    --output json >/dev/null || \
+    fail "desired digest ${desired_digest} is not present in PROD ECR"
+  running_image_id="$(kubectl get pods -n coffeeshop -l app=web -o json |
+    jq -r '[.items[].status.containerStatuses[]
+      | select(.name == "web")
+      | .imageID
+      | split("@")[1]] | unique | if length == 1 then .[0] else empty end')"
+  [[ "${running_image_id}" == "${desired_digest}" ]] || \
+    fail "running web Pod digest ${running_image_id} does not match desired ${desired_digest}"
+
+  http_response="$(curl --fail --silent --show-error --max-time 5 "http://${alb_hostname}/" 2>/dev/null || true)"
+  grep -Fq 'CoffeeShop POS' <<<"${http_response}" || \
+    fail "reconciled ALB endpoint did not return the CoffeeShop POS marker"
+  verify_argocd_self_heal
+  "${PROJECT_ROOT}/scripts/verify-gitops-health.sh" coffeeshop-prod
+  echo "Runtime verification passed: EKS/nodes/controllers/GitOps healthy; ${healthy_count} ALB targets healthy across ${healthy_az_count} AZs."
 }
 
 run_reconcile() {
@@ -753,22 +904,22 @@ run_reconcile() {
   echo "WP4 RECONCILE PASSED: full plan applied exactly, follow-up plan is empty, and runtime remains healthy."
 }
 
-wait_for_nlb_deletion() {
+wait_for_alb_deletion() {
   local load_balancer_arn="$1"
   local attempt
 
   [[ -n "${load_balancer_arn}" ]] || return
-  for ((attempt = 1; attempt <= NLB_WAIT_ATTEMPTS; attempt++)); do
+  for ((attempt = 1; attempt <= POLL_ATTEMPTS; attempt++)); do
     if ! aws elbv2 describe-load-balancers \
       --load-balancer-arns "${load_balancer_arn}" \
       >/dev/null 2>&1; then
-      echo "Controller-owned NLB deletion confirmed."
+      echo "Controller-owned ALB deletion confirmed."
       return
     fi
-    echo "Attempt ${attempt}/${NLB_WAIT_ATTEMPTS}: waiting for controller-owned NLB deletion... (10s)"
+    echo "Attempt ${attempt}/${POLL_ATTEMPTS}: waiting for controller-owned ALB deletion... (10s)"
     sleep 10
   done
-  fail "controller-owned NLB still exists; keep the controller running and diagnose finalizers/events"
+  fail "controller-owned ALB still exists; keep the controller running and diagnose finalizers/events"
 }
 
 tagged_resource_count() {
@@ -778,7 +929,6 @@ tagged_resource_count() {
     --tag-filters \
       "Key=Project,Values=${PROJECT_NAME}" \
       "Key=Environment,Values=${ENVIRONMENT}" \
-      "Key=Phase,Values=PROD-1" \
     --query 'length(ResourceTagMappingList)' \
     --output text
 }
@@ -786,7 +936,7 @@ tagged_resource_count() {
 verify_teardown_inventory() {
   local cluster_name="$1"
   local vpc_id="$2"
-  local instance_count volume_count nat_count eip_count nlb_count target_group_count log_group_count
+  local instance_count volume_count nat_count eip_count load_balancer_count target_group_count security_group_count log_group_count
   local repository
   local retained_repositories=(
     go-coffeeshop-web
@@ -830,8 +980,9 @@ verify_teardown_inventory() {
       "Name=tag:Environment,Values=${ENVIRONMENT}" \
     --query 'length(Addresses)' \
     --output text)"
-  nlb_count="$(tagged_resource_count elasticloadbalancing:loadbalancer)"
+  load_balancer_count="$(tagged_resource_count elasticloadbalancing:loadbalancer)"
   target_group_count="$(tagged_resource_count elasticloadbalancing:targetgroup)"
+  security_group_count="$(tagged_resource_count ec2:security-group)"
   log_group_count="$(aws logs describe-log-groups \
     --log-group-name-prefix "/aws/eks/${cluster_name}/cluster" \
     --query 'length(logGroups)' \
@@ -841,9 +992,12 @@ verify_teardown_inventory() {
   [[ "${volume_count}" -eq 0 ]] || fail "billable orphan inventory: ${volume_count} EBS volume(s) remain"
   [[ "${nat_count}" -eq 0 ]] || fail "billable orphan inventory: ${nat_count} NAT Gateway(s) remain"
   [[ "${eip_count}" -eq 0 ]] || fail "billable orphan inventory: ${eip_count} Elastic IP(s) remain"
-  [[ "${nlb_count}" -eq 0 ]] || fail "billable orphan inventory: ${nlb_count} tagged load balancer(s) remain"
+  [[ "${load_balancer_count}" -eq 0 ]] || \
+    fail "billable orphan inventory: ${load_balancer_count} tagged load balancer(s) remain"
   [[ "${target_group_count}" -eq 0 ]] || \
     fail "billable orphan inventory: ${target_group_count} tagged target group(s) remain"
+  [[ "${security_group_count}" -eq 0 ]] || \
+    fail "orphan inventory: ${security_group_count} tagged security group(s) remain"
   [[ "${log_group_count}" -eq 0 ]] || \
     fail "billable orphan inventory: ${log_group_count} EKS control-plane log group(s) remain"
 
@@ -868,7 +1022,7 @@ verify_teardown_inventory() {
 }
 
 run_teardown() {
-  local cluster_name cluster_arn vpc_id nlb_hostname load_balancer_arn
+  local cluster_name cluster_arn vpc_id
   local plan_dir plan_file plan_json delete_count retained_delete_count unexpected_delete_count
   local destroy_targets=(
     -target=aws_eks_pod_identity_association.aws_lb_controller
@@ -963,25 +1117,43 @@ run_teardown() {
     --kubeconfig "${KUBECONFIG_PATH}" --alias "${cluster_arn}"
   export KUBECONFIG="${KUBECONFIG_PATH}"
 
-  nlb_hostname="$(kubectl get service nlb-ingress-probe-svc \
-    -n ingress-probe \
+  # PROD-2 ALB Ingress cleanup must complete while the controller is healthy.
+  local alb_hostname="" alb_arn=""
+  alb_hostname="$(kubectl get ingress coffeeshop-prod-alb-ingress \
+    -n coffeeshop \
     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
-  load_balancer_arn=""
-  if [[ -n "${nlb_hostname}" ]]; then
-    kubectl rollout status deployment/aws-load-balancer-controller \
-      -n kube-system --timeout="${WAIT_TIMEOUT}"
-    load_balancer_arn="$(aws elbv2 describe-load-balancers \
-      --query "LoadBalancers[?DNSName=='${nlb_hostname}'].LoadBalancerArn | [0]" \
-      --output text)"
-    [[ "${load_balancer_arn}" != "None" ]] || load_balancer_arn=""
-    echo "Deleting ingress-probe namespace while its controller is healthy..."
-    kubectl delete namespace ingress-probe --wait=true --timeout="${WAIT_TIMEOUT}"
-    wait_for_nlb_deletion "${load_balancer_arn}"
-  elif [[ "$(tagged_resource_count elasticloadbalancing:loadbalancer)" -ne 0 ]]; then
-    fail "tagged PROD-1 load balancer exists but the owning Service cannot be found; diagnose before teardown"
+
+  if [[ -n "${alb_hostname}" ]]; then
+    alb_arn="$(aws elbv2 describe-load-balancers \
+      --query "LoadBalancers[?DNSName=='${alb_hostname}'].LoadBalancerArn | [0]" \
+      --output text 2>/dev/null || true)"
+    [[ "${alb_arn}" != "None" ]] || alb_arn=""
+  fi
+
+  if kubectl get application coffeeshop-prod -n argocd >/dev/null 2>&1; then
+    echo "Deleting Argo CD Application coffeeshop-prod while controller is healthy..."
+    kubectl delete application coffeeshop-prod -n argocd --wait=true --timeout="${WAIT_TIMEOUT}"
+  elif kubectl get ingress coffeeshop-prod-alb-ingress -n coffeeshop >/dev/null 2>&1; then
+    echo "Argo CD Application is absent; deleting its ALB Ingress directly while the controller is healthy..."
+    kubectl delete ingress coffeeshop-prod-alb-ingress \
+      -n coffeeshop --wait=true --timeout="${WAIT_TIMEOUT}"
+  elif [[ -n "${alb_arn}" ]]; then
+    fail "tagged ALB exists but neither its Argo CD Application nor Ingress owner can be found"
+  fi
+  if [[ -n "${alb_arn}" ]]; then
+    wait_for_alb_deletion "${alb_arn}"
+  fi
+
+  if helm status argocd -n argocd >/dev/null 2>&1; then
+    echo "Uninstalling Argo CD Helm release..."
+    helm uninstall argocd \
+      --namespace argocd \
+      --wait \
+      --timeout "${WAIT_TIMEOUT}"
   fi
 
   if helm status aws-load-balancer-controller -n kube-system >/dev/null 2>&1; then
+    echo "Uninstalling AWS Load Balancer Controller Helm release..."
     helm uninstall aws-load-balancer-controller \
       --namespace kube-system \
       --wait \
