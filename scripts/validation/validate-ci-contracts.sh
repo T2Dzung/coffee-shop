@@ -24,6 +24,16 @@ for workflow in "${PROJECT_ROOT}/.github/workflows/ci.yml" "${CD_WORKFLOW}"; do
     fail "${workflow} bypasses the shared Go build contract."
 done
 
+# Legacy CoffeeShop application lint is advisory by deliberate scope decision.
+# PlatformOwnershipGuard remains a strict, blocking lint/build gate.
+awk '
+  /- name: Run GolangCI-Lint/ { in_lint=1; next }
+  in_lint && /continue-on-error:[[:space:]]+true/ { advisory=1; exit }
+  in_lint && /^[[:space:]]+with:/ { exit }
+  END { exit(advisory ? 0 : 1) }
+' "${PROJECT_ROOT}/.github/workflows/ci.yml" || \
+  fail "Legacy CoffeeShop GolangCI-Lint must remain advisory until application remediation enters scope."
+
 # PR and merge-queue validation must not encode a repository-specific branch name.
 for workflow in "${PROJECT_ROOT}/.github/workflows/ci.yml" "${DEVSECOPS_WORKFLOW}"; do
   grep -Fq 'merge_group:' "${workflow}" || \
