@@ -1,6 +1,7 @@
 # Kubernetes source-of-truth layout
 
 Thư mục này phân loại theo ownership, env
+
 ```text
 apps/
 └── coffeeshop/
@@ -23,6 +24,10 @@ environments/
 
 ## Ownership rules
 
+- Repository default branch là Git source of truth duy nhất cho cả hai environment.
+  Git-backed Argo sources dùng `HEAD`; chart source vẫn pin version cụ thể.
+- PR validation không publish release artifact. Sau merge, workflow build source SHA tối
+  đa một lần, pin DEV bằng digest và chỉ PROD-promote candidate có QA evidence khớp.
 - `apps/coffeeshop/base` và `components` không được chứa AWS account ID, registry của một
   môi trường hoặc bootstrap của cluster.
 - Environment-owned image identity chỉ nằm trong `overlays/dev` hoặc `overlays/prod`.

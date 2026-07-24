@@ -51,6 +51,10 @@ resource "aws_cloudwatch_log_group" "cluster" {
 # EKS Cluster Resource
 # ==============================================================================
 
+# Trivy AWS-0040 assumes every public EKS endpoint is unrestricted. This
+# module also enables the private endpoint and requires a non-empty reviewed
+# CIDR allowlist; callers are explicitly forbidden from passing 0.0.0.0/0.
+# trivy:ignore:AWS-0040
 resource "aws_eks_cluster" "this" {
   name                      = var.cluster_name
   version                   = var.cluster_version

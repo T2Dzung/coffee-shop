@@ -92,6 +92,11 @@ output "github_actions_role_arn" {
   value       = aws_iam_role.github_actions.arn
 }
 
+output "github_prod_artifact_reader_role_arn" {
+  description = "Read-only DEV ECR role assumed by the protected PROD promotion workflow"
+  value       = aws_iam_role.github_prod_artifact_reader.arn
+}
+
 output "longhorn_data_volume_ids" {
   description = "EBS volume IDs allocated for Longhorn data"
   value       = aws_ebs_volume.longhorn[*].id

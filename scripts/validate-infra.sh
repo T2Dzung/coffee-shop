@@ -138,7 +138,10 @@ if [[ "${RUN_TERRAFORM}" == "true" ]]; then
       init -backend=false -input=false -no-color
     TF_DATA_DIR="${DEV_BOOTSTRAP_TF_DATA_DIR}" terraform -chdir="${DEV_BOOTSTRAP_TF_DIR}" \
       validate -no-color
-    terraform -chdir="${DEV_TF_DIR}" validate -no-color
+    TF_DATA_DIR="${TF_DATA_DIR}" terraform -chdir="${DEV_TF_DIR}" \
+      init -backend=false -input=false -no-color
+    TF_DATA_DIR="${TF_DATA_DIR}" terraform -chdir="${DEV_TF_DIR}" \
+      validate -no-color
     bash "${PROJECT_ROOT}/scripts/validation/validate-dev-contracts.sh"
   fi
 
@@ -316,7 +319,11 @@ if [ "${TF_LONGHORN_SIZE}" != "${ANSIBLE_LONGHORN_SIZE}" ]; then
   exit 1
 fi
 
-if ! grep -Fxq '/infrastructure/k8s/apps/coffeeshop/base/secrets.yaml' "${PROJECT_ROOT}/.gitignore"; then
+if ! awk '
+  { sub(/\r$/, "") }
+  $0 == "/infrastructure/k8s/apps/coffeeshop/base/secrets.yaml" { found=1 }
+  END { exit !found }
+' "${PROJECT_ROOT}/.gitignore"; then
   echo "The runtime Kubernetes secret manifest is not ignored." >&2
   exit 1
 fi

@@ -39,7 +39,7 @@ if [[ "${DRY_RUN}" == true ]]; then
   cat <<EOF
 Phase 6.8 upgrade/rollback rehearsal (DRY-RUN)
 1. baseline: record N-1 digest, CRD/CR state, and GitOps health.
-2. Commit digest N to the branch tracked by Argo CD (currently feat/k3s-ha).
+2. Merge the digest N desired-state PR into the protected default branch tracked by Argo CD HEAD.
 3. upgrade: assert digest N and compatibility with the existing CR.
 4. Revert the Git commit and wait for Argo CD to converge to N-1.
 5. rollback: assert digest N-1 and compatibility; optionally restore accepted N.

@@ -2,7 +2,6 @@ name: PlatformOwnershipGuard - Supply Chain and GitOps
 
 on:
   push:
-    branches: [main, feat/k3s-ha]
     paths:
       - 'platform-ownership-guard/**'
       - '!platform-ownership-guard/config/dev/kustomization.yaml'
@@ -14,7 +13,6 @@ on:
       - 'scripts/validation/validate-ci-contracts.sh'
       - 'scripts/verify-dev-runtime.sh'
   pull_request:
-    branches: [main, feat/k3s-ha]
     paths:
       - 'platform-ownership-guard/**'
       - '.github/workflows/platform-ownership-guard.yml'
@@ -39,6 +37,9 @@ env:
 jobs:
   test:
     name: Unit, Envtest and Static Check
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -65,17 +66,22 @@ jobs:
 
   build-and-supply-chain:
     name: Push, Scan, SBOM, Sign and Pin Digest
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_name == github.event.repository.default_branch
     needs: [test]
     runs-on: coffeeshop-runner-v3
+    environment: dev
     permissions:
       contents: write
       id-token: write
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: ${{ github.ref_name }}
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
 
       - name: Set up Go for release build
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
@@ -193,7 +199,8 @@ jobs:
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           DIGEST: ${{ steps.build-image.outputs.digest }}
-          CURRENT_BRANCH: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITOPS_PR_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -212,9 +219,12 @@ jobs:
           if git diff --cached --quiet; then
             echo "GitOps already pins the verified digest; no commit required."
           else
-            git commit -m "chore(gitops): pin PlatformOwnershipGuard digest ${DIGEST} [skip ci]"
-            git pull --rebase origin "${CURRENT_BRANCH}"
-            git push origin "HEAD:${CURRENT_BRANCH}"
+            git commit -m "chore(gitops): pin PlatformOwnershipGuard digest ${DIGEST}"
+            bash scripts/ci/create-gitops-pr.sh \
+              "${DEFAULT_BRANCH}" \
+              "automation/guard-digest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              "chore(gitops): promote PlatformOwnershipGuard digest" \
+              "Automated DEV desired-state update for the image that passed test, scan, SBOM generation and signature verification in workflow run ${GITHUB_RUN_ID}."
           fi
 
       - name: Supply-chain summary
@@ -228,5 +238,5 @@ jobs:
             echo "- Trivy CRITICAL policy: passed"
             echo "- SPDX-JSON SBOM: uploaded"
             echo "- Cosign keyless signature and identity verification: passed"
-            echo "- GitOps digest pin: verified on \`${{ github.ref_name }}\`"
+            echo "- GitOps digest pin: submitted to the protected default branch through a pull request"
           } >>"${GITHUB_STEP_SUMMARY}"

@@ -22,6 +22,16 @@ variable "cluster_name" {
   default     = "coffeeshop-dev"
 }
 
+variable "github_repository" {
+  description = "GitHub repository (owner/repo) whose protected dev/prod Environments may assume delivery roles"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must use the owner/repository form."
+  }
+}
+
 variable "vpc_cidr" {
   description = "CIDR block for the dedicated VPC"
   type        = string

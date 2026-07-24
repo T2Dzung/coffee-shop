@@ -1,10 +1,8 @@
 name: DevSecOps — Infrastructure & Security Gate
 
 on:
-  push:
-    branches: [ feat/k3s-ha ]
   pull_request:
-    branches: [ main, feat/k3s-ha ]
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -22,7 +20,7 @@ jobs:
     name: Detect Infra/Security Changes
     runs-on: ubuntu-latest
     outputs:
-      infra-changed: ${{ steps.filter.outputs.infra }}
+      infra-changed: ${{ steps.result.outputs.infra }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -43,6 +41,18 @@ jobs:
               - '.gitleaks.toml'
               - 'go.mod'
               - 'go.sum'
+
+      - name: Normalize Merge Queue Scope
+        id: result
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INFRA_CHANGED: ${{ steps.filter.outputs.infra }}
+        run: |
+          if [[ "${EVENT_NAME}" == "merge_group" ]]; then
+            echo "infra=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "infra=${INFRA_CHANGED:-false}" >>"${GITHUB_OUTPUT}"
+          fi
 
   # 2. Infra Correctness Validation (Offline checks)
   infra-correctness:
@@ -149,8 +159,8 @@ jobs:
 
       - name: Run TFLint on Deployable Environments
         run: |
-          tflint --config=$(pwd)/.tflint.hcl --chdir=infrastructure/terraform/envs/dev
-          tflint --config=$(pwd)/.tflint.hcl --chdir=infrastructure/terraform/bootstrap
+          tflint --config="$(pwd)/.tflint.hcl" --chdir=infrastructure/terraform/envs/dev
+          tflint --config="$(pwd)/.tflint.hcl" --chdir=infrastructure/terraform/bootstrap
 
   # 4. IaC & Container Config Scan (Trivy Config Scan)
   trivy-config:
@@ -169,7 +179,6 @@ jobs:
           scan-type: 'config'
           hide-progress: false
           exit-code: '1'
-          ignore-unfixed: true
           severity: 'CRITICAL'
           scan-ref: '.'
           trivyignores: '.trivyignore'
@@ -199,7 +208,6 @@ jobs:
     if: always() && !cancelled()
     steps:
       - name: Verify DevSecOps Results
-        id: status_check
         run: |
           DETECT_RESULT="${{ needs.detect-changes.result }}"
           CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
@@ -207,14 +215,12 @@ jobs:
           # Fail early if detect-changes job failed or was cancelled
           if [ "$DETECT_RESULT" != "success" ]; then
             echo "Error: The pre-requisite job 'detect-changes' failed or was cancelled."
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           
           # If no infra changes were detected, this workflow is skipped and counts as pass
           if [ "$CHANGED" != "true" ]; then
             echo "No infra changes detected. Skipping checks."
-            echo "exit_code=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -233,12 +239,6 @@ jobs:
              [ "$TRIVY" = "failure" ] || [ "$TRIVY" = "cancelled" ] || \
              [ "$SECRETS" = "failure" ] || [ "$SECRETS" = "cancelled" ]; then
             echo "One or more required DevSecOps checks failed."
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "All DevSecOps checks passed."
-            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
-
-      - name: Enforce Pipeline Result
-        run: |
-          exit ${{ steps.status_check.outputs.exit_code }}
+          echo "All DevSecOps checks passed."

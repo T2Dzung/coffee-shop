@@ -47,7 +47,7 @@ ENVIRONMENT="${PROD_ENVIRONMENT:-$(read_tfvar_string environment)}"
 ENVIRONMENT="${ENVIRONMENT:-prod}"
 GITHUB_REPOSITORY="${PROD_GITHUB_REPOSITORY:-$(read_tfvar_string github_repository)}"
 GITOPS_REPO_URL="${PROD_GITOPS_REPO_URL:-https://github.com/${GITHUB_REPOSITORY}.git}"
-GITOPS_REVISION="${PROD_GITOPS_REVISION:-main}"
+GITOPS_REVISION="${PROD_GITOPS_REVISION:-HEAD}"
 CLUSTER_PUBLIC_CIDRS="${TF_VAR_cluster_endpoint_public_access_cidrs:-$(read_tfvar_expression cluster_endpoint_public_access_cidrs)}"
 NODE_INSTANCE_TYPES_EXPR="$(read_tfvar_expression node_instance_types)"
 NODE_INSTANCE_TYPES_EXPR="${NODE_INSTANCE_TYPES_EXPR:-[\"t3.medium\"]}"
@@ -91,7 +91,7 @@ Optional:
   PROD_KUBECONFIG                    Dedicated PROD kubeconfig path
   PROD_GITHUB_REPOSITORY             Override owner/repository from tfvars
   PROD_GITOPS_REPO_URL               Override the HTTPS repository read by Argo CD
-  PROD_GITOPS_REVISION               Desired-state branch. Default: main
+  PROD_GITOPS_REVISION               Desired-state Git revision. Default: HEAD
   PROD_POLL_ATTEMPTS             Ten-second polling attempts. Default: 60
   PROD_CONFIRM_TEARDOWN              Must equal the 12-digit target account ID
                                      before teardown can create a destroy plan
@@ -242,8 +242,8 @@ wait_for_promoted_digest() {
   overlay_path="infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml"
 
   echo "Delivery identity and ECR are ready."
-  echo "Run the protected 'PROD Immutable Web Promotion' workflow for branch ${GITOPS_REVISION}."
-  echo "Waiting for that branch to contain a non-placeholder image digest..."
+  echo "Run the protected 'PROD — Commission Service Without DEV' workflow for service=web."
+  echo "Waiting for ${GITOPS_REVISION} to contain a non-placeholder promoted digest..."
   for ((attempt = 1; attempt <= POLL_ATTEMPTS; attempt++)); do
     if git fetch --quiet "${GITOPS_REPO_URL}" "${GITOPS_REVISION}" 2>/dev/null; then
       remote_digest="$(
@@ -322,7 +322,7 @@ show_hourly_estimate() {
     public_ipv4_count=3
   fi
 
-  "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" \
+  bash "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" \
     "${EXPECTED_REGION}" \
     "${NODE_INSTANCE_TYPE}" \
     "${NODE_COUNT}" \

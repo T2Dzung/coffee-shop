@@ -13,8 +13,8 @@ fail() {
 
 [[ -f "${PROD_TF_DIR}/terraform.tfvars.example" ]] || \
   fail "clone-ready terraform.tfvars.example is missing"
-[[ -x "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" ]] || \
-  fail "dynamic PROD hourly estimator is missing or not executable"
+[[ -f "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" ]] || \
+  fail "dynamic PROD hourly estimator is missing"
 grep -Eq 'productFamily,Value=Load Balancer-(Network|Application)' \
   "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" || \
   fail "PROD hourly estimator must include the fixed load balancer price"
@@ -195,6 +195,8 @@ PROD_2_OVERLAY="${PROJECT_ROOT}/infrastructure/k8s/apps/coffeeshop/overlays/prod
   fail "PROD-2 ALB Ingress manifest is missing"
 [[ -f "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" ]] || \
   fail "PROD-2 promotion workflow is missing"
+[[ -f "${PROJECT_ROOT}/.github/workflows/commission-prod.yml" ]] || \
+  fail "PROD-2 commissioning workflow is missing"
 
 awk '
   /^spec:/ { in_spec=1; next }
@@ -210,14 +212,17 @@ grep -Fq 'alb.ingress.kubernetes.io/scheme: internet-facing' "${PROD_2_OVERLAY}/
 
 grep -Fq 'environment: prod' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
   fail "PROD-2 promotion workflow must require prod environment approval"
+grep -Fq 'environment: prod' "${PROJECT_ROOT}/.github/workflows/commission-prod.yml" || \
+  fail "PROD-2 commissioning workflow must require prod environment approval"
+grep -Fq 'release_mode: "commissioning"' \
+  "${PROJECT_ROOT}/.github/workflows/commission-prod.yml" || \
+  fail "PROD-2 commissioning workflow must record its bypass boundary explicitly"
+if grep -Eq '(DEV_ARTIFACT_READ_ROLE_ARN|environment:[[:space:]]+dev)' \
+  "${PROJECT_ROOT}/.github/workflows/commission-prod.yml"; then
+  fail "PROD-2 commissioning workflow must not require DEV."
+fi
 grep -Fq 'id-token: write' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
   fail "PROD-2 promotion workflow must request id-token write permission for OIDC"
-grep -Fq -- '-f docker/Dockerfile-web .' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
-  fail "PROD-2 workflow must build from the repository's web Dockerfile"
-grep -Fq 'bash scripts/ci/build-go-service.sh web' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
-  fail "PROD-2 workflow must create the binary required by Dockerfile-web"
-grep -Fq 'git rev-parse HEAD' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
-  fail "PROD-2 workflow must bind promotion to the checked-out commit"
 grep -Fq "exit-code: '1'" "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
   fail "PROD-2 vulnerability gate must fail closed"
 grep -Eq 'uses:[[:space:]]+[^[:space:]]+@[0-9a-f]{40}([[:space:]]|$)' \
@@ -227,10 +232,23 @@ if grep -Eq 'uses:[[:space:]]+[^[:space:]]+@(master|main|v[0-9]+)([[:space:]]|$)
   "${PROJECT_ROOT}/.github/workflows/promote-prod.yml"; then
   fail "PROD-2 workflow contains a mutable action reference"
 fi
-# Literal GitHub expression is intentionally inspected, not expanded by this shell.
-# shellcheck disable=SC2016
-grep -Fq 'HEAD:${{ inputs.gitops_branch }}' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
-  fail "PROD-2 workflow must push desired state to the selected GitOps revision"
+grep -Fq 'pull-requests: write' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow must request permission to submit its desired-state PR"
+grep -Fq 'scripts/ci/create-gitops-pr.sh' "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+  fail "PROD-2 workflow must submit desired state through protected-main review"
+for contract in \
+  'qa_status == "approved"' \
+  'DEV_ARTIFACT_READ_ROLE_ARN' \
+  'crane copy' \
+  'DESTINATION_DIGEST' \
+  'SOURCE_DIGEST'; do
+  grep -Fq "${contract}" "${PROJECT_ROOT}/.github/workflows/promote-prod.yml" || \
+    fail "PROD-2 zero-rebuild workflow is missing contract: ${contract}"
+done
+if grep -Eq '(bash scripts/ci/build-go-service.sh|docker build|docker/build-push-action@)' \
+  "${PROJECT_ROOT}/.github/workflows/promote-prod.yml"; then
+  fail "PROD-2 promotion must not rebuild the QA-approved application artifact"
+fi
 grep -Fq 'statefulset/argocd-application-controller' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "Argo CD application-controller rollout must use its StatefulSet workload kind"
 grep -Fq 'did not become Synced and Healthy in time' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \

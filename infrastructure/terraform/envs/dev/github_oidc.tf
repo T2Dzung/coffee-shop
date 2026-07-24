@@ -23,7 +23,7 @@ resource "aws_iam_role" "github_actions" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:T2Dzung/coffee-shop:*"
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:dev"
           }
         }
       }
@@ -31,6 +31,59 @@ resource "aws_iam_role" "github_actions" {
   })
 
   tags = local.common_tags
+}
+
+# PROD promotion may read QA-approved service candidates from DEV ECR, but it cannot
+# publish, mutate DEV runtime, or access any non-artifact AWS service.
+resource "aws_iam_role" "github_prod_artifact_reader" {
+  name        = "${var.cluster_name}-prod-artifact-reader-role"
+  description = "Read-only DEV service candidate access for protected PROD promotion"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github.arn
+        }
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:prod"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "github_prod_artifact_reader" {
+  name = "${var.cluster_name}-prod-artifact-reader"
+  role = aws_iam_role.github_prod_artifact_reader.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = [for repository in aws_ecr_repository.services : repository.arn]
+      }
+    ]
+  })
 }
 
 # ECR Push Policy limited to our microservices and PlatformOwnershipGuard

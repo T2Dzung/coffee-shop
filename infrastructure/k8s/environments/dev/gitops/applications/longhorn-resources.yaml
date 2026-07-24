@@ -11,7 +11,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/T2Dzung/coffee-shop.git
-    targetRevision: feat/k3s-ha
+    targetRevision: HEAD
     path: infrastructure/k8s/environments/dev/gitops/addons/longhorn/resources
   destination:
     server: https://kubernetes.default.svc

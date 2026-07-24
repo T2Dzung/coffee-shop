@@ -15,7 +15,7 @@ spec:
         valueFiles:
           - $values/infrastructure/k8s/environments/dev/gitops/addons/monitoring/values.yaml
     - repoURL: https://github.com/T2Dzung/coffee-shop.git
-      targetRevision: feat/k3s-ha
+      targetRevision: HEAD
       ref: values
   destination:
     server: https://kubernetes.default.svc
