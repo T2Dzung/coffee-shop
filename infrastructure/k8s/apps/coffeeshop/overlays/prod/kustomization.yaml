@@ -14,4 +14,4 @@ resources:
 images:
   - name: go-coffeeshop-web
     newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    digest: sha256:e213205bfea0c6fd9efd2d2ec0d89a284afe4321d570e31ecbdcbb1a8700fe71
