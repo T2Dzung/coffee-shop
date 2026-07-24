@@ -9,7 +9,7 @@ import (
 	"github.com/google/wire"
 	"github.com/pkg/errors"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 const (
@@ -51,11 +51,12 @@ func NewPublisher(amqpConn *amqp.Connection) (EventPublisher, error) {
 }
 
 func (p *publisher) Configure(opts ...Option) EventPublisher {
+	configured := *p
 	for _, opt := range opts {
-		opt(p)
+		opt(&configured)
 	}
 
-	return p
+	return &configured
 }
 
 func (p *publisher) PublishEvents(ctx context.Context, events []any) error {
@@ -82,6 +83,12 @@ func (p *publisher) Publish(ctx context.Context, body []byte, contentType string
 	}
 	defer ch.Close()
 
+	if err := ch.Confirm(false); err != nil {
+		return errors.Wrap(err, "ConfirmMode")
+	}
+
+	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+
 	slog.Info("publish message", "exchange", p.exchangeName, "routing_key", p.bindingKey)
 
 	if err := ch.PublishWithContext(
@@ -100,6 +107,20 @@ func (p *publisher) Publish(ctx context.Context, body []byte, contentType string
 		},
 	); err != nil {
 		return errors.Wrap(err, "ch.Publish")
+	}
+
+	select {
+	case confirm, ok := <-confirms:
+		if !ok {
+			return errors.New("channel closed before publish confirmation received")
+		}
+		if !confirm.Ack {
+			return errors.New("message nacked by broker")
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		return errors.New("timeout waiting for publish confirmation")
 	}
 
 	return nil

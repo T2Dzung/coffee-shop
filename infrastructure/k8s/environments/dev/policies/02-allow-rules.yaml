@@ -1,0 +1,116 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: coffeeshop
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: coffeeshop
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - web
+          - proxy
+          - gateway-smoke
+  ingress:
+    - fromEntities:
+        - ingress
+        - host
+        - remote-node
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-proxy-to-services
+  namespace: coffeeshop
+spec:
+  endpointSelector:
+    matchLabels:
+      app: proxy
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: product
+      toPorts:
+        - ports:
+            - port: "5001"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app: counter
+      toPorts:
+        - ports:
+            - port: "5002"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-apps-to-db-rabbitmq
+  namespace: coffeeshop
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - counter
+          - barista
+          - kitchen
+          - product
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: postgres
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app: rabbitmq
+        - matchLabels:
+            app.kubernetes.io/name: coffeeshop-rabbitmq
+      toPorts:
+        - ports:
+            - port: "5672"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-postgres-egress-s3
+  namespace: coffeeshop
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  egress:
+    - toFQDNs:
+        - matchPattern: "*.s3.amazonaws.com"
+        - matchPattern: "*.s3.ap-southeast-1.amazonaws.com"
+        - matchPattern: "s3.ap-southeast-1.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

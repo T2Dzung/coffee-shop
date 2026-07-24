@@ -88,3 +88,27 @@ variable "spot_instance_interruption_behavior" {
   type        = string
   default     = "stop"
 }
+
+variable "associate_public_ip_address" {
+  description = "Whether to associate a public IP address"
+  type        = bool
+  default     = null
+}
+
+variable "ami_id" {
+  description = "The AMI ID to use. If null, defaults to latest Ubuntu 24.04."
+  type        = string
+  default     = null
+}
+
+variable "root_volume_iops" {
+  description = "IOPS for the root EBS volume"
+  type        = number
+  default     = null
+}
+
+variable "root_volume_throughput" {
+  description = "Throughput for the root EBS volume in MiB/s"
+  type        = number
+  default     = null
+}

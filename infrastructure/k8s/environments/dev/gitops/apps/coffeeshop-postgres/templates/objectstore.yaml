@@ -1,0 +1,21 @@
+{{- if .Values.backup.enabled }}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: coffeeshop-postgres-s3-store
+  namespace: coffeeshop
+spec:
+  configuration:
+    destinationPath: {{ printf "s3://%s/" (required "backup.bucketName is required when backup.enabled=true" .Values.backup.bucketName) | quote }}
+    s3Credentials:
+      accessKeyId:
+        name: coffeeshop-postgres-backup
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: coffeeshop-postgres-backup
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+  instanceSidecarConfiguration:
+    retentionPolicyIntervalSeconds: 1800
+{{- end }}

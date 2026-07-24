@@ -1,62 +1,145 @@
 ---
-- name: Install AWS CLI
+- name: Install process locking support (util-linux)
   ansible.builtin.apt:
-    name: awscli
+    name: util-linux
     state: present
-    update_cache: yes
+    update_cache: true
 
-- name: Create ECR Token Refresher Script
+- name: Download and extract AWS CLI v2
+  ansible.builtin.unarchive:
+    src: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+    dest: "/tmp"
+    remote_src: true
+    creates: /usr/local/bin/aws
+
+- name: Install AWS CLI v2
+  ansible.builtin.command: /tmp/aws/install --update
+  args:
+    creates: /usr/local/bin/aws
+
+- name: Install the atomic ECR credential refresh script
   ansible.builtin.copy:
     dest: /usr/local/bin/refresh-ecr-token.sh
     owner: root
     group: root
-    mode: '0755'
+    mode: "0750"
     content: |
-      #!/bin/bash
-      # Script dynamically refreshes AWS ECR authorization credentials for K3s containerd runtime.
-      set -e
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
 
-      # Fetch metadata token (IMDSv2)
-      IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-      REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
-      export AWS_DEFAULT_REGION=$REGION
+      exec 9>/run/lock/refresh-ecr-token.lock
+      flock --nonblock 9 || exit 0
 
-      ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-      PASSWORD=$(aws ecr get-login-password --region ${REGION})
-
-      mkdir -p /etc/rancher/k3s
-      cat <<EOF > /etc/rancher/k3s/registries.yaml
-      configs:
-        "${ECR_URL}":
-          auth:
-            username: AWS
-            password: "${PASSWORD}"
-      EOF
-
-      echo "ECR Token updated for registry: ${ECR_URL}"
-
-      # Apply changes dynamically by restarting K3s/K3s-Agent
-      if systemctl is-active --quiet k3s; then
-        systemctl restart k3s
-        echo "Restarted K3s master control plane"
-      elif systemctl is-active --quiet k3s-agent; then
-        systemctl restart k3s-agent
-        echo "Restarted K3s worker agent"
+      registry_file=/etc/rancher/k3s/registries.yaml
+      if [[ -f "${registry_file}" ]]; then
+        file_age=$(($(date +%s) - $(stat -c %Y "${registry_file}")))
+        if (( file_age < 21600 )); then
+          exit 0
+        fi
       fi
 
-- name: Run ECR Token Refresher script once immediately
-  ansible.builtin.shell: /usr/local/bin/refresh-ecr-token.sh
-  register: script_run
-  changed_when: true
+      temporary_file="$(mktemp /etc/rancher/k3s/registries.yaml.XXXXXX)"
+      trap 'rm -f "${temporary_file}"' EXIT
 
-- name: Print ECR script output
-  ansible.builtin.debug:
-    var: script_run.stdout
+      imds_token="$(curl --fail --silent --show-error --request PUT \
+        --header 'X-aws-ec2-metadata-token-ttl-seconds: 21600' \
+        http://169.254.169.254/latest/api/token)"
+      region="$(curl --fail --silent --show-error \
+        --header "X-aws-ec2-metadata-token: ${imds_token}" \
+        http://169.254.169.254/latest/meta-data/placement/region)"
+      account_id="$(AWS_DEFAULT_REGION="${region}" aws sts get-caller-identity \
+        --query Account --output text)"
+      ecr_url="${account_id}.dkr.ecr.${region}.amazonaws.com"
+      password="$(AWS_DEFAULT_REGION="${region}" aws ecr get-login-password)"
 
-- name: Configure periodic cron job to refresh ECR token (every 6 hours)
+      install -d -m 0755 /etc/rancher/k3s
+      umask 077
+      cat >"${temporary_file}" <<EOF
+      configs:
+        "${ecr_url}":
+          auth:
+            username: AWS
+            password: "${password}"
+      EOF
+      chmod 0600 "${temporary_file}"
+
+      if [[ -f "${registry_file}" ]] && cmp --silent "${temporary_file}" "${registry_file}"; then
+        exit 0
+      fi
+
+      mv "${temporary_file}" "${registry_file}"
+      echo "Updated"
+      trap - EXIT
+
+      # K3s reads registries.yaml while generating the containerd config, so a
+      # service restart is required. Site provisioning runs this role serially;
+      # the timer adds jitter to avoid synchronized periodic restarts.
+      if systemctl is-active --quiet k3s; then
+        systemctl restart k3s
+      elif systemctl is-active --quiet k3s-agent; then
+        systemctl restart k3s-agent
+      else
+        echo "Neither k3s nor k3s-agent is active." >&2
+        exit 1
+      fi
+
+- name: Install the ECR refresh systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/refresh-ecr-token.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Refresh AWS ECR credentials for K3s containerd
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/refresh-ecr-token.sh
+      User=root
+      Group=root
+  register: ecr_auth_service_unit
+
+- name: Install the jittered ECR refresh systemd timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/refresh-ecr-token.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Refresh AWS ECR credentials every six hours with jitter
+
+      [Timer]
+      OnBootSec=10min
+      OnUnitActiveSec=6h
+      RandomizedDelaySec=30min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  register: ecr_auth_timer_unit
+
+- name: Remove the legacy synchronized ECR cron job
   ansible.builtin.cron:
-    name: "Refresh AWS ECR containerd registry credentials"
-    minute: "0"
-    hour: "*/6"
-    job: "/usr/local/bin/refresh-ecr-token.sh > /dev/null 2>&1"
+    name: Refresh AWS ECR containerd registry credentials
+    state: absent
+
+- name: Reload systemd after installing ECR units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: ecr_auth_service_unit.changed or ecr_auth_timer_unit.changed
+
+- name: Enable and start the ECR refresh timer
+  ansible.builtin.systemd:
+    name: refresh-ecr-token.timer
+    state: started
+    enabled: true
+
+- name: Refresh ECR credentials once during provisioning
+  ansible.builtin.command: /usr/local/bin/refresh-ecr-token.sh
+  register: ecr_auth_refresh
+  changed_when: "'Updated' in ecr_auth_refresh.stdout"
+  no_log: true

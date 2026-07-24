@@ -1,0 +1,32 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: coffeeshop-rabbitmq
+  namespace: coffeeshop
+  labels:
+    app.kubernetes.io/name: coffeeshop-rabbitmq
+    app.kubernetes.io/part-of: coffee-shop
+spec:
+  replicas: {{ .Values.replicas }}
+{{- if .Values.image }}
+  image: {{ .Values.image | quote }}
+{{- end }}
+  secretBackend:
+    externalSecret:
+      name: coffeeshop-rabbitmq-default-user
+  service:
+    type: ClusterIP
+  persistence:
+    storageClassName: {{ .Values.storage.storageClass | quote }}
+    storage: {{ .Values.storage.size | quote }}
+{{- with .Values.resources }}
+  resources:
+{{ toYaml . | nindent 4 }}
+{{- end }}
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: coffeeshop-rabbitmq

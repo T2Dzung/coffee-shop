@@ -1,0 +1,45 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - replicasets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - argoproj.io
+  resources:
+  - applications
+  verbs:
+  - get
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - guard.platform.t2dzung.github.io
+  resources:
+  - ownershipaudits
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - guard.platform.t2dzung.github.io
+  resources:
+  - ownershipaudits/status
+  verbs:
+  - get
+  - patch
+  - update

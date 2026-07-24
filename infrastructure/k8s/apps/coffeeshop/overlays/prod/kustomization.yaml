@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: coffeeshop
+
+resources:
+  - ../../components/namespace
+  - ../../components/web
+  - configmap.yaml
+  - ingress.yaml
+
+# Pinned immutable ECR digest for PROD web slice
+# Updated automatically by GitHub Actions promote-prod workflow
+images:
+  - name: go-coffeeshop-web
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

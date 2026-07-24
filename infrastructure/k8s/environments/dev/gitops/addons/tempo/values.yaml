@@ -1,0 +1,107 @@
+replicas: 1
+
+tempo:
+  reportingEnabled: false
+  memBallastSizeMbs: 0
+  retention: 72h
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  metricsGenerator:
+    enabled: false
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+securityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+service:
+  type: ClusterIP
+
+tempoQuery:
+  enabled: false
+  ingress:
+    enabled: false
+
+persistence:
+  enabled: true
+  enableStatefulSetAutoDeletePVC: false
+  storageClassName: longhorn-observability
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+
+networkPolicy:
+  enabled: false
+
+# The chart's Service template dereferences its default receiver map and cannot
+# remove legacy ports safely. Override the runtime config so Tempo only starts
+# OTLP receivers; NetworkPolicy separately restricts reachable ports.
+config: |
+  stream_over_http_enabled: false
+  memberlist:
+    cluster_label: tempo.observability
+  multitenancy_enabled: false
+  usage_report:
+    reporting_enabled: false
+  compactor:
+    compaction:
+      block_retention: 72h
+  distributor:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+  ingester: {}
+  server:
+    http_listen_port: 3200
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  querier: {}
+  query_frontend: {}
+  overrides:
+    defaults: {}
+    per_tenant_override_config: /conf/overrides.yaml

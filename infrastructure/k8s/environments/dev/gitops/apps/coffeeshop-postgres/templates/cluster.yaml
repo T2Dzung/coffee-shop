@@ -1,0 +1,39 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coffeeshop-postgres
+  namespace: coffeeshop
+  labels:
+    app: postgres
+spec:
+  instances: {{ .Values.instances }}
+  imageName: {{ .Values.imageName | quote }}
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: coffeeshop-postgres-superuser
+
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+      secret:
+        name: coffeeshop-postgres-superuser
+
+  storage:
+    storageClass: {{ .Values.storage.storageClass }}
+    size: {{ .Values.storage.size }}
+
+  primaryUpdateStrategy: supervised
+
+  inheritedMetadata:
+    labels:
+      app: postgres
+      app.kubernetes.io/name: coffeeshop-postgres
+
+  {{- if .Values.backup.enabled }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: coffeeshop-postgres-s3-store
+  {{- end }}

@@ -1,0 +1,8 @@
+---
+# ==============================================================================
+# Default variables for longhorn_prereqs role
+# ==============================================================================
+longhorn_prereqs_data_volume_enabled: true
+longhorn_prereqs_data_volume_size: 50
+longhorn_prereqs_data_volume_type: "gp3"
+longhorn_prereqs_data_device_name: "/dev/sdf"

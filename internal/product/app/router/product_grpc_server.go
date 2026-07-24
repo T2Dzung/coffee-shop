@@ -6,8 +6,8 @@ import (
 	"github.com/google/wire"
 	"github.com/pkg/errors"
 	"github.com/thangchung/go-coffeeshop/internal/product/usecases/products"
+	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	"github.com/thangchung/go-coffeeshop/proto/gen"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -40,7 +40,7 @@ func (g *productGRPCServer) GetItemTypes(
 	ctx context.Context,
 	request *gen.GetItemTypesRequest,
 ) (*gen.GetItemTypesResponse, error) {
-	slog.Info("gRPC client", "http_method", "GET", "http_name", "GetItemTypes")
+	logger.InfoContext(ctx, "gRPC request", "rpc_method", "GetItemTypes")
 
 	res := gen.GetItemTypesResponse{}
 
@@ -65,7 +65,7 @@ func (g *productGRPCServer) GetItemsByType(
 	ctx context.Context,
 	request *gen.GetItemsByTypeRequest,
 ) (*gen.GetItemsByTypeResponse, error) {
-	slog.Info("gRPC client", "http_method", "GET", "http_name", "GetItemsByType", "item_types", request.ItemTypes)
+	logger.InfoContext(ctx, "gRPC request", "rpc_method", "GetItemsByType", "item_type_count", len(request.ItemTypes))
 
 	res := gen.GetItemsByTypeResponse{}
 

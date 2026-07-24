@@ -6,7 +6,7 @@ import (
 	"github.com/google/wire"
 	"github.com/pkg/errors"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 const (
@@ -99,7 +99,7 @@ func (c *consumer) StartConsumer(fn worker) error {
 	}
 
 	chanErr := <-ch.NotifyClose(make(chan *amqp.Error))
-	slog.Error("ch.NotifyClose", chanErr)
+	slog.ErrorContext(ctx, "RabbitMQ channel closed", "error", chanErr)
 	<-forever
 
 	return chanErr
@@ -133,7 +133,9 @@ func (c *consumer) createChannel() (*amqp.Channel, error) {
 		_queueAutoDelete,
 		_queueExclusive,
 		_queueNoWait,
-		nil,
+		amqp.Table{
+			"x-queue-type": "quorum",
+		},
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "Error ch.QueueDeclare")

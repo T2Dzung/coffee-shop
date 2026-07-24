@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coffeeshop-config
+  namespace: coffeeshop
+data:
+  APP_NAME_PRODUCT: "product-service"
+  APP_NAME_COUNTER: "counter-service"
+  APP_NAME_BARISTA: "barista-service"
+  APP_NAME_KITCHEN: "kitchen-service"
+  APP_NAME_PROXY: "proxy-service"
+
+  GRPC_PRODUCT_HOST: "product"
+  GRPC_PRODUCT_PORT: "5001"
+  GRPC_COUNTER_HOST: "counter"
+  GRPC_COUNTER_PORT: "5002"
+  PRODUCT_CLIENT_URL: "product:5001"
+
+  REVERSE_PROXY_URL: "/api"
+  WEB_PORT: "8888"
+  IN_DOCKER: "true"
+
+  OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=dev"

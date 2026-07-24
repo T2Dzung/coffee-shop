@@ -2,46 +2,63 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/thangchung/go-coffeeshop/cmd/product/config"
 	"github.com/thangchung/go-coffeeshop/internal/product/app"
 	"github.com/thangchung/go-coffeeshop/pkg/logger"
+	"github.com/thangchung/go-coffeeshop/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/automaxprocs/maxprocs"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
+	"log/slog"
 )
 
 func main() {
+	logger.SetDefault(logger.Config{Service: "product", Environment: logger.Environment(), Level: os.Getenv("LOG_LEVEL")})
+
 	// set GOMAXPROCS
 	_, err := maxprocs.Set()
 	if err != nil {
-		slog.Error("failed set max procs", err)
+		slog.Error("failed set max procs", "error", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, err := config.NewConfig()
 	if err != nil {
-		slog.Error("failed get config", err)
+		slog.Error("failed get config", "error", err)
+		return
 	}
+	logger.SetDefault(logger.Config{Service: cfg.Name, Environment: logger.Environment(), Version: cfg.Version, Level: cfg.Log.Level})
+	slog.Info("app initialized")
 
-	slog.Info("⚡ init app", "name", cfg.Name, "version", cfg.Version)
+	telCfg, err := telemetry.ParseConfig(cfg.Name, logger.Environment(), cfg.Version)
+	if err != nil {
+		slog.Error("failed to parse telemetry config", "error", err)
+		return
+	}
+	telemetryShutdown, err := telemetry.New(telCfg)
+	if err != nil {
+		slog.Error("failed to init telemetry", "error", err)
+		return
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := telemetryShutdown(shutdownCtx); err != nil {
+			slog.Error("failed to shutdown telemetry", "error", err)
+		}
+	}()
 
-	// set up logrus
-	logrus.SetFormatter(&logrus.JSONFormatter{})
-	logrus.SetOutput(os.Stdout)
-	logrus.SetLevel(logger.ConvertLogLevel(cfg.Log.Level))
-
-	// integrate Logrus with the slog logger
-	slog.New(logger.NewLogrusHandler(logrus.StandardLogger()))
-
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 
 	go func() {
 		defer server.GracefulStop()
@@ -50,8 +67,8 @@ func main() {
 
 	_, err = app.InitApp(cfg, server)
 	if err != nil {
-		slog.Error("failed init app", err)
-		cancel()
+		slog.Error("failed init app", "error", err)
+		return
 	}
 
 	// gRPC Server.
@@ -60,31 +77,20 @@ func main() {
 
 	l, err := net.Listen(network, address)
 	if err != nil {
-		slog.Error("failed to listen to address", err, "network", network, "address", address)
-		cancel()
+		slog.Error("failed to listen to address", "error", err, "network", network, "address", address)
+		return
 	}
 
 	slog.Info("🌏 start server...", "address", address)
 
 	defer func() {
-		if err1 := l.Close(); err != nil {
-			slog.Error("failed to close", err1, "network", network, "address", address)
+		if err1 := l.Close(); err != nil && !errors.Is(err1, net.ErrClosed) {
+			slog.Error("failed to close", "error", err1, "network", network, "address", address)
 		}
 	}()
 
 	err = server.Serve(l)
-	if err != nil {
-		slog.Error("failed start gRPC server", err, "network", network, "address", address)
-		cancel()
-	}
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-
-	select {
-	case v := <-quit:
-		slog.Info("signal.Notify", v)
-	case done := <-ctx.Done():
-		slog.Info("ctx.Done", done)
+	if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+		slog.Error("failed start gRPC server", "error", err, "network", network, "address", address)
 	}
 }

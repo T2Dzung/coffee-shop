@@ -12,8 +12,8 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/counter/domain"
 	"github.com/thangchung/go-coffeeshop/internal/counter/usecases/orders"
 	shared "github.com/thangchung/go-coffeeshop/internal/pkg/shared_kernel"
+	"github.com/thangchung/go-coffeeshop/pkg/logger"
 	gen "github.com/thangchung/go-coffeeshop/proto/gen"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -49,7 +49,7 @@ func (g *counterGRPCServer) GetListOrderFulfillment(
 	ctx context.Context,
 	request *gen.GetListOrderFulfillmentRequest,
 ) (*gen.GetListOrderFulfillmentResponse, error) {
-	slog.Info("GET: GetListOrderFulfillment")
+	logger.InfoContext(ctx, "gRPC request", "rpc_method", "GetListOrderFulfillment")
 
 	res := gen.GetListOrderFulfillmentResponse{}
 
@@ -85,10 +85,11 @@ func (g *counterGRPCServer) PlaceOrder(
 	ctx context.Context,
 	request *gen.PlaceOrderRequest,
 ) (*gen.PlaceOrderResponse, error) {
-	slog.Info("POST: PlaceOrder")
+	logger.InfoContext(ctx, "gRPC request", "rpc_method", "PlaceOrder")
 
 	loyaltyMemberID, err := uuid.Parse(request.LoyaltyMemberId)
 	if err != nil {
+		logger.ErrorContext(ctx, "invalid place order request", "rpc_method", "PlaceOrder", "error", err)
 		return nil, errors.Wrap(err, "uuid.Parse")
 	}
 

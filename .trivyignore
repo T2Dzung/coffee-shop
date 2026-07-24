@@ -1,0 +1,13 @@
+# Trivy configuration exceptions file
+# Documented justifications for ignoring specific findings globally in this repository
+
+# Ignore unrestricted egress rules globally in this development project
+# Justification: K3s cluster nodes and HAProxy endpoints require public outbound access to download OS patches, tools, and resolve external DNS.
+AVD-AWS-0104
+AWS-0104
+
+# The pinned upstream RabbitMQ Cluster Operator reconciles credentials,
+# default-user and TLS Secrets for RabbitmqCluster resources. Removing this
+# permission would break the operator; changes to the vendored RBAC are instead
+# reviewed when the pinned operator version is upgraded.
+KSV-0041

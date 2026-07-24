@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 const (
@@ -25,7 +25,7 @@ type postgres struct {
 var _ DBEngine = (*postgres)(nil)
 
 func NewPostgresDB(url DBConnString) (DBEngine, error) {
-	slog.Info("CONN", "connect string", url)
+	slog.Info("connecting to postgres")
 
 	pg := &postgres{
 		connAttempts: _defaultConnAttempts,

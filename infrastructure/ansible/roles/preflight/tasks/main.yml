@@ -1,0 +1,61 @@
+---
+- name: Validate supported operating system and minimum node capacity
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Ubuntu'
+      - ansible_distribution_version is version('24.04', '>=')
+      - ansible_memtotal_mb | int >= 3500
+      - ansible_processor_vcpus | int >= 2
+    fail_msg: >-
+      Node {{ inventory_hostname }} must run Ubuntu 24.04+ with at least
+      2 vCPU and 3.5 GiB RAM.
+
+- name: Select the root filesystem fact
+  ansible.builtin.set_fact:
+    preflight_root_mount: "{{ ansible_facts['mounts'] | selectattr('mount', 'equalto', '/') | first }}"
+
+- name: Validate minimum free space on the root filesystem
+  ansible.builtin.assert:
+    that:
+      - preflight_root_mount.size_available | int >= 10737418240
+    fail_msg: "Node {{ inventory_hostname }} requires at least 10 GiB free space on /."
+
+- name: Collect service state for first-install port checks
+  ansible.builtin.service_facts:
+
+- name: Require the Kubernetes API port to be free before first server install
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: 6443
+    state: stopped
+    timeout: 1
+  when:
+    - "'k3s_servers' in group_names"
+    - "'k3s.service' not in ansible_facts.services"
+
+- name: Require the kubelet port to be free before first K3s install
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: 10250
+    state: stopped
+    timeout: 1
+  when:
+    - "'k3s.service' not in ansible_facts.services"
+    - "'k3s-agent.service' not in ansible_facts.services"
+
+- name: Read clock synchronization state
+  ansible.builtin.command: timedatectl show --property=NTPSynchronized --value
+  register: preflight_ntp_state
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: preflight_ntp_state.stdout | trim == 'yes'
+
+- name: Validate unique hostnames across the inventory
+  ansible.builtin.assert:
+    that:
+      - >-
+        (groups['all'] | map('extract', hostvars, 'ansible_hostname') | list | unique | length)
+        == (groups['all'] | length)
+    fail_msg: "Every K3s node must have a unique hostname."
+  run_once: true

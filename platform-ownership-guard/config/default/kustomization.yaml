@@ -1,0 +1,15 @@
+namespace: platform-ownership-guard-system
+
+namePrefix: platform-ownership-guard-
+
+resources:
+- ../crd
+- ../rbac
+- ../manager
+
+# Webhooks are deliberately deferred.
+
+# +kubebuilder:scaffold:crdkustomizecainjectionns
+# +kubebuilder:scaffold:crdkustomizecainjectionname
+# +kubebuilder:scaffold:webhookcainjectionns
+# +kubebuilder:scaffold:webhookcainjectionname

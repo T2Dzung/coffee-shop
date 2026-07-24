@@ -1,0 +1,265 @@
+crds:
+  create: false
+
+global:
+  podSecurityContext:
+    fsGroup: 473
+    seccompProfile:
+      type: RuntimeDefault
+
+alloy:
+  clustering:
+    enabled: false
+  stabilityLevel: generally-available
+  enableReporting: false
+  storagePath: /var/lib/alloy
+  listenAddr: 0.0.0.0
+  mounts:
+    varlog: true
+    dockercontainers: false
+    extra:
+      - name: alloy-storage
+        mountPath: /var/lib/alloy
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsGroup: 0
+    runAsNonRoot: false
+    runAsUser: 0
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  configMap:
+    create: true
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      discovery.kubernetes "pod" {
+        role = "pod"
+
+        selectors {
+          role  = "pod"
+          field = "spec.nodeName=" + sys.env("HOSTNAME")
+        }
+      }
+
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pod.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_controller_name"]
+          regex         = "(.+?)(-[0-9a-f]{8,10})?"
+          replacement   = "$1"
+          target_label  = "workload"
+        }
+
+        // Prefer the standard app name, with legacy app as a bounded fallback.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app"]
+          regex         = "(.+)"
+          target_label  = "service_name"
+        }
+
+        rule {
+          source_labels = [
+            "__meta_kubernetes_pod_label_app_kubernetes_io_name",
+          ]
+          regex        = "(.+)"
+          target_label = "service_name"
+        }
+
+        rule {
+          source_labels = [
+            "__meta_kubernetes_pod_uid",
+            "__meta_kubernetes_pod_container_name",
+          ]
+          separator    = "/"
+          replacement  = "/var/log/pods/*$1/*.log"
+          target_label = "__path__"
+        }
+      }
+
+      loki.source.file "pod_logs" {
+        targets                 = discovery.relabel.pod_logs.output
+        forward_to              = [loki.process.pod_logs.receiver]
+        tail_from_end           = false
+        on_positions_file_error = "restart_from_end"
+
+        // __path__ contains a glob. Enable the source's built-in file matcher
+        // so Alloy expands it to the concrete CRI log files on this node.
+        file_match {
+          enabled           = true
+          ignore_older_than = "1h"
+          sync_period       = "10s"
+        }
+      }
+
+      loki.process "pod_logs" {
+        // CRI stage restores timestamps/streams and joins bounded partial lines.
+        stage.cri {
+          max_partial_lines              = 100
+          max_partial_line_size          = 262144
+          max_partial_line_size_truncate = true
+        }
+
+        // Current services emit JSON or logfmt-like levels. Unknown values stay
+        // in the body and never become labels.
+        stage.regex {
+          expression = `(?i)(?:"level"\s*:\s*"|level=)(?P<level>trace|debug|info|warn|warning|error|fatal)`
+        }
+
+        stage.labels {
+          values = {
+            level = "",
+          }
+        }
+
+        stage.static_labels {
+          values = {
+            cluster = "coffeeshop-dev",
+          }
+        }
+
+        forward_to = [loki.relabel.bounded_labels.receiver]
+      }
+
+      loki.relabel "bounded_labels" {
+        forward_to = [loki.write.local.receiver]
+
+        // filename and every non-contract label are removed before ingestion.
+        rule {
+          action = "labelkeep"
+          regex  = "cluster|namespace|workload|pod|container|service_name|level"
+        }
+      }
+
+      loki.write "local" {
+        max_streams = 5000
+
+        endpoint {
+          name                = "loki-gateway"
+          url                 = "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/push"
+          batch_size          = "256KiB"
+          batch_wait          = "1s"
+          min_backoff_period  = "500ms"
+          max_backoff_period  = "30s"
+          max_backoff_retries = 20
+          remote_timeout      = "10s"
+          retry_on_http_429   = true
+        }
+      }
+
+controller:
+  type: daemonset
+  minReadySeconds: 10
+  terminationGracePeriodSeconds: 30
+  tolerations:
+    - operator: Exists
+  volumes:
+    extra:
+      - name: alloy-storage
+        hostPath:
+          # One positions directory per node survives Alloy Pod replacement.
+          path: /var/lib/alloy/coffeeshop-positions
+          type: DirectoryOrCreate
+
+rbac:
+  # Chart 1.10.1 renders an invalid literal [] when rules are non-empty and
+  # clusterRules are intentionally empty. Own the minimal RBAC as extraObjects.
+  create: false
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+
+configReloader:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+
+service:
+  enabled: true
+  type: ClusterIP
+
+serviceMonitor:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+  egress: []
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 12345
+          protocol: TCP
+
+extraObjects:
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: alloy-pod-reader
+    rules:
+      - apiGroups:
+          - ""
+        resources:
+          - pods
+        verbs:
+          - get
+          - list
+          - watch
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: alloy-pod-reader
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: alloy-pod-reader
+    subjects:
+      - kind: ServiceAccount
+        name: alloy
+        namespace: observability

@@ -1,0 +1,16 @@
+# Gitleaks configuration file
+# Reference: https://github.com/gitleaks/gitleaks
+
+[allowlist]
+description = "Global allowlist for dummy values and test patterns"
+regexes = [
+    '''(?i)CHANGE_ME''',
+    '''(?i)dummy_value''',
+    '''(?i)example_key''',
+    '''(?i)YOUR_TELEGRAM_TOKEN''',
+    '''(?i)YOUR_CHAT_ID'''
+]
+paths = [
+    '''\.gitleaks\.toml''',
+    '''\.trivyignore'''
+]

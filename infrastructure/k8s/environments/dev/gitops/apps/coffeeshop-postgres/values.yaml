@@ -1,0 +1,11 @@
+instances: 3
+postgresVersion: "14"
+imageName: ghcr.io/cloudnative-pg/postgresql:14.23-202606221003-system-bullseye@sha256:e22a8b53731bf24b195f645fc7613cbd6b62c040ec429a53a0252a9c775daafc
+storage:
+  storageClass: longhorn-cnpg
+  size: 5Gi
+backup:
+  enabled: true
+  bucketName: ""
+  schedule: "0 0 0 * * *"
+  retentionPolicy: "30d"

@@ -1,0 +1,237 @@
+name: PROD — Commission Service Without DEV
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service artifact to commission
+        required: true
+        type: choice
+        options:
+          - barista
+          - counter
+          - kitchen
+          - product
+          - proxy
+          - web
+      source_commit:
+        description: Full 40-character commit from the protected default branch
+        required: true
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: commission-prod-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  commission:
+    name: Build Once, Verify & Submit PROD Desired State
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+
+      - name: Validate commissioning source
+        env:
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          if [[ ! "${SERVICE}" =~ ^(barista|counter|kitchen|product|proxy|web)$ ]]; then
+            echo "Unsupported service: ${SERVICE}" >&2
+            exit 1
+          fi
+          if [[ ! "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_commit must be a full lowercase Git SHA." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD; then
+            echo "Commissioning source is not contained in the protected default branch." >&2
+            exit 1
+          fi
+
+      - name: Checkout exact application source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: source
+
+      - name: Configure PROD credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.PROD_AWS_REGION || 'ap-southeast-1' }}
+          mask-aws-account-id: true
+
+      - name: Log in to PROD ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Reuse existing immutable commissioning artifact
+        id: artifact
+        env:
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          DIGEST="$(aws ecr describe-images \
+            --repository-name "go-coffeeshop-${SERVICE}" \
+            --image-ids "imageTag=commissioning-${SOURCE_COMMIT}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text 2>/dev/null || true)"
+          if [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Existing immutable commissioning artifact: ${DIGEST}"
+            echo "exists=true" >>"${GITHUB_OUTPUT}"
+            echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >>"${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up Go
+        if: steps.artifact.outputs.exists != 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: source/go.mod
+          cache: true
+          cache-dependency-path: source/go.sum
+
+      - name: Build application binary
+        if: steps.artifact.outputs.exists != 'true'
+        working-directory: source
+        run: bash scripts/ci/build-go-service.sh "${{ inputs.service }}"
+
+      - name: Set up Docker Buildx
+        if: steps.artifact.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build commissioning image once
+        if: steps.artifact.outputs.exists != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: ./source
+          file: ./source/docker/Dockerfile-${{ inputs.service }}
+          push: false
+          tags: go-coffeeshop-${{ inputs.service }}:${{ inputs.source_commit }}
+          load: true
+
+      - name: Scan exact local image
+        if: steps.artifact.outputs.exists != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          image-ref: go-coffeeshop-${{ inputs.service }}:${{ inputs.source_commit }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          cache: 'true'
+
+      - name: Push immutable commissioning artifact
+        if: steps.artifact.outputs.exists != 'true'
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          LOCAL_IMAGE="go-coffeeshop-${SERVICE}:${SOURCE_COMMIT}"
+          REMOTE_IMAGE="${REGISTRY}/go-coffeeshop-${SERVICE}:commissioning-${SOURCE_COMMIT}"
+          docker tag "${LOCAL_IMAGE}" "${REMOTE_IMAGE}"
+          docker push "${REMOTE_IMAGE}"
+
+      - name: Resolve immutable PROD digest
+        id: promoted
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          DIGEST="$(aws ecr describe-images \
+            --repository-name "go-coffeeshop-${SERVICE}" \
+            --image-ids "imageTag=commissioning-${SOURCE_COMMIT}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid PROD ECR digest: ${DIGEST}" >&2
+            exit 1
+          fi
+          echo "image=${REGISTRY}/go-coffeeshop-${SERVICE}" >>"${GITHUB_OUTPUT}"
+          echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+
+      - name: Pin commissioned web digest in PROD overlay
+        if: inputs.service == 'web'
+        env:
+          PROD_IMAGE: ${{ steps.promoted.outputs.image }}
+          PROD_DIGEST: ${{ steps.promoted.outputs.digest }}
+        run: |
+          OVERLAY_FILE="infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml"
+          sed -i "s|newName:.*|newName: ${PROD_IMAGE}|g" "${OVERLAY_FILE}"
+          sed -i "s|digest:.*|digest: ${PROD_DIGEST}|g" "${OVERLAY_FILE}"
+
+      - name: Record commissioning evidence
+        env:
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PROD_IMAGE: ${{ steps.promoted.outputs.image }}
+          PROD_DIGEST: ${{ steps.promoted.outputs.digest }}
+        run: |
+          RELEASE_DIR="infrastructure/releases/prod/${SERVICE}"
+          mkdir -p "${RELEASE_DIR}"
+          if [[ "${SERVICE}" == "web" ]]; then
+            RUNTIME_SCOPE="desired-state"
+          else
+            RUNTIME_SCOPE="artifact-only"
+          fi
+          jq -n \
+            --arg service "${SERVICE}" \
+            --arg source_commit "${SOURCE_COMMIT}" \
+            --arg prod_image "${PROD_IMAGE}" \
+            --arg prod_digest "${PROD_DIGEST}" \
+            --arg runtime_scope "${RUNTIME_SCOPE}" \
+            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg commissioned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              schema_version: 1,
+              release_mode: "commissioning",
+              service: $service,
+              source_commit: $source_commit,
+              prod_image: $prod_image,
+              prod_digest: $prod_digest,
+              runtime_scope: $runtime_scope,
+              workflow_run: $workflow_run,
+              commissioned_at: $commissioned_at
+            }' >"${RELEASE_DIR}/${SOURCE_COMMIT}.json"
+
+      - name: Open protected commissioning PR
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_TOKEN: ${{ secrets.GITOPS_PR_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PROD_DIGEST: ${{ steps.promoted.outputs.digest }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "infrastructure/releases/prod/${SERVICE}/${SOURCE_COMMIT}.json"
+          if [[ "${SERVICE}" == "web" ]]; then
+            git add infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml
+          fi
+
+          if git diff --cached --quiet; then
+            echo "This commissioning artifact is already recorded."
+            exit 0
+          fi
+
+          git commit -m "chore(prod): commission ${SERVICE} digest ${PROD_DIGEST}"
+          bash scripts/ci/create-gitops-pr.sh \
+            "${DEFAULT_BRANCH}" \
+            "automation/commission-prod-${SERVICE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            "chore(prod): commission ${SERVICE} ${SOURCE_COMMIT::12}" \
+            "Controlled commissioning without DEV runtime. PROD Environment approval, Trivy scan, immutable ECR digest and post-deploy runtime verification remain mandatory."

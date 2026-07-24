@@ -1,0 +1,64 @@
+---
+- name: Ensure python3-kubernetes is installed
+  ansible.builtin.apt:
+    name: python3-kubernetes
+    state: present
+    update_cache: true
+  become: true
+
+- name: Create argocd namespace
+  kubernetes.core.k8s:
+    name: argocd
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Add ArgoCD Helm repository
+  kubernetes.core.helm_repository:
+    name: argo
+    repo_url: https://argoproj.github.io/argo-helm
+
+- name: Install ArgoCD via Helm
+  kubernetes.core.helm:
+    name: argocd
+    chart_ref: argo/argo-cd
+    namespace: argocd
+    create_namespace: true
+    state: present
+    chart_version: "{{ argocd_chart_version | default('7.3.11') }}"
+    wait: true
+    values:
+      configs:
+        params:
+          server.insecure: true # We terminate TLS at Gateway if needed
+      controller:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+      server:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+      repoServer:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+
+- name: Apply root App-of-Apps
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('file', playbook_dir + '/../../k8s/environments/dev/bootstrap/root-app.yaml') | from_yaml }}"
+    namespace: argocd
+
+- name: Wait for ArgoCD server to be ready
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: argocd-server
+    namespace: argocd
+  register: argocd_server
+  until: argocd_server.resources[0].status.readyReplicas | default(0) > 0
+  retries: 30
+  delay: 10

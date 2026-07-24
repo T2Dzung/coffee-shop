@@ -1,0 +1,37 @@
+---
+- name: Resolve Grafana admin secret inputs
+  ansible.builtin.set_fact:
+    monitoring_secrets_resolved_grafana_admin_password: >-
+      {{ monitoring_grafana_admin_password | default(lookup('env', 'GRAFANA_ADMIN_PASSWORD'), true) }}
+  no_log: true
+
+- name: Require Grafana admin secret before GitOps bootstrap
+  ansible.builtin.assert:
+    that:
+      - monitoring_secrets_resolved_grafana_admin_password | string | length > 0
+    fail_msg: >-
+      Define the monitoring_grafana_admin_password variable in Ansible Vault or
+      provide the documented GRAFANA_ADMIN_PASSWORD environment variable.
+  no_log: true
+
+- name: Create monitoring namespace before ArgoCD reconciliation
+  kubernetes.core.k8s:
+    name: monitoring
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Create Grafana admin bootstrap secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: grafana-admin-secret
+        namespace: monitoring
+      type: Opaque
+      stringData:
+        admin-user: "admin"
+        admin-password: "{{ monitoring_secrets_resolved_grafana_admin_password }}"
+  no_log: true

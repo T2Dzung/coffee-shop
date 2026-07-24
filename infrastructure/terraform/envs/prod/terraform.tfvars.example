@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars. The real file is intentionally ignored by Git.
+project_name  = "coffeeshop"
+environment   = "prod"
+aws_region    = "ap-southeast-1"
+
+expected_aws_account_id = "REPLACE_WITH_12_DIGIT_ACCOUNT_ID"
+github_repository       = "REPLACE_WITH_GITHUB_OWNER/REPOSITORY"
+
+# Restrict the public EKS endpoint to the operator's current public IP.
+cluster_endpoint_public_access_cidrs = ["203.0.113.10/32"]
+
+# Optional. Keep null when no Budget email notification is required.
+budget_subscriber_email = null
+
+# Optional capacity overrides; the estimator reads the same values.
+node_instance_types = ["t3.medium"]
+node_desired_size   = 2
+node_disk_size      = 20

@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coffeeshop-rabbitmq
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/T2Dzung/coffee-shop.git
+    targetRevision: HEAD
+    path: infrastructure/k8s/environments/dev/gitops/apps/coffeeshop-rabbitmq
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: coffeeshop
+  ignoreDifferences:
+    # RabbitMQ Cluster Operator defaults/injects fields into RabbitmqCluster.spec.
+    # Ignoring them to prevent perpetual OutOfSync in ArgoCD.
+    - group: rabbitmq.com
+      kind: RabbitmqCluster
+      jsonPointers:
+        - /spec/rabbitmq/additionalConfig
+        - /spec/rabbitmq/advancedConfig
+        - /spec/rabbitmq/envConfig
+        - /spec/tls
+        - /spec/service
+        - /spec/imagePullSecrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true

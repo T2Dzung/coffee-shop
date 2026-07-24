@@ -12,7 +12,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/pkg/postgres"
 	pkgConsumer "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/consumer"
 	pkgPublisher "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/publisher"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type App struct {
@@ -48,8 +48,7 @@ func New(
 
 func (c *App) Worker(ctx context.Context, messages <-chan amqp091.Delivery) {
 	for delivery := range messages {
-		slog.Info("processDeliveries", "delivery_tag", delivery.DeliveryTag)
-		slog.Info("received", "delivery_type", delivery.Type)
+		slog.InfoContext(ctx, "processing delivery", "delivery_tag", delivery.DeliveryTag, "delivery_type", delivery.Type)
 
 		switch delivery.Type {
 		case "barista-order-created":
@@ -57,27 +56,27 @@ func (c *App) Worker(ctx context.Context, messages <-chan amqp091.Delivery) {
 
 			err := json.Unmarshal(delivery.Body, &payload)
 			if err != nil {
-				slog.Error("failed to Unmarshal", err)
+				slog.ErrorContext(ctx, "failed to unmarshal delivery", "error", err)
 			}
 
 			err = c.handler.Handle(ctx, payload)
 
 			if err != nil {
 				if err = delivery.Reject(false); err != nil {
-					slog.Error("failed to delivery.Reject", err)
+					slog.ErrorContext(ctx, "failed to reject delivery", "error", err)
 				}
 
-				slog.Error("failed to process delivery", err)
+				slog.ErrorContext(ctx, "failed to process delivery", "error", err)
 			} else {
 				err = delivery.Ack(false)
 				if err != nil {
-					slog.Error("failed to acknowledge delivery", err)
+					slog.ErrorContext(ctx, "failed to acknowledge delivery", "error", err)
 				}
 			}
 		default:
-			slog.Info("default")
+			slog.WarnContext(ctx, "unsupported delivery type", "delivery_type", delivery.Type)
 		}
 	}
 
-	slog.Info("Deliveries channel closed")
+	slog.InfoContext(ctx, "deliveries channel closed")
 }

@@ -1,0 +1,167 @@
+---
+- name: Resolve Coffee Shop application secret inputs
+  ansible.builtin.set_fact:
+    coffeeshop_secrets_postgres_rw_host: >-
+      {{ coffeeshop_secrets_postgres_rw_host | default('coffeeshop-postgres-rw', true) }}
+    coffeeshop_secrets_resolved_pg_password: >-
+      {{ coffeeshop_pg_password | default(lookup('env', 'COFFEESHOP_PG_PASSWORD'), true) }}
+    coffeeshop_secrets_raw_pg_url: >-
+      {{ coffeeshop_pg_url | default(lookup('env', 'COFFEESHOP_PG_URL'), true) }}
+    coffeeshop_secrets_raw_pg_dsn_url: >-
+      {{ coffeeshop_pg_dsn_url | default(lookup('env', 'COFFEESHOP_PG_DSN_URL'), true) }}
+    coffeeshop_secrets_resolved_rabbitmq_user: >-
+      {{ coffeeshop_rabbitmq_user | default(lookup('env', 'COFFEESHOP_RABBITMQ_USER'), true) }}
+    coffeeshop_secrets_resolved_rabbitmq_password: >-
+      {{ coffeeshop_rabbitmq_password | default(lookup('env', 'COFFEESHOP_RABBITMQ_PASSWORD'), true) }}
+    coffeeshop_secrets_raw_rabbitmq_url: >-
+      {{ coffeeshop_rabbitmq_url | default(lookup('env', 'COFFEESHOP_RABBITMQ_URL'), true) }}
+    coffeeshop_secrets_resolved_postgres_backup_bucket_name: >-
+      {{ postgres_backup_bucket_name | default(lookup('env', 'POSTGRES_BACKUP_BUCKET_NAME'), true) }}
+    coffeeshop_secrets_resolved_postgres_backup_access_key: >-
+      {{ postgres_backup_iam_access_key_id | default(lookup('env', 'POSTGRES_BACKUP_IAM_ACCESS_KEY_ID'), true) }}
+    coffeeshop_secrets_resolved_postgres_backup_secret_key: >-
+      {{ postgres_backup_iam_secret_access_key | default(lookup('env', 'POSTGRES_BACKUP_IAM_SECRET_ACCESS_KEY'), true) }}
+  no_log: true
+
+- name: Derive Coffee Shop connection strings for CNPG and RabbitMQ HA
+  ansible.builtin.set_fact:
+    coffeeshop_secrets_resolved_pg_url: >-
+      {{
+        coffeeshop_secrets_raw_pg_url
+        | regex_replace('@postgres([:/?]|$)', '@' ~ coffeeshop_secrets_postgres_rw_host ~ '\g<1>')
+      }}
+    coffeeshop_secrets_resolved_pg_dsn_url: >-
+      {{
+        coffeeshop_secrets_raw_pg_dsn_url
+        | regex_replace('host=postgres([ ]|$)', 'host=' ~ coffeeshop_secrets_postgres_rw_host ~ '\g<1>')
+      }}
+    coffeeshop_secrets_resolved_rabbitmq_url: >-
+      {{
+        coffeeshop_secrets_raw_rabbitmq_url
+        | regex_replace('@rabbitmq([.:/?]|$)', '@coffeeshop-rabbitmq\g<1>')
+      }}
+  no_log: true
+
+- name: Require Coffee Shop application secrets before GitOps bootstrap
+  ansible.builtin.assert:
+    that:
+      - coffeeshop_secrets_resolved_pg_password | length > 0
+      - coffeeshop_secrets_resolved_pg_url | length > 0
+      - coffeeshop_secrets_resolved_pg_dsn_url | length > 0
+      - coffeeshop_secrets_postgres_rw_host in coffeeshop_secrets_resolved_pg_url
+      - coffeeshop_secrets_postgres_rw_host in coffeeshop_secrets_resolved_pg_dsn_url
+      - coffeeshop_secrets_resolved_rabbitmq_user | length > 0
+      - coffeeshop_secrets_resolved_rabbitmq_password | length > 0
+      - coffeeshop_secrets_resolved_rabbitmq_url | length > 0
+      - "'coffeeshop-rabbitmq' in coffeeshop_secrets_resolved_rabbitmq_url"
+      - coffeeshop_secrets_resolved_postgres_backup_bucket_name | length > 0
+      - coffeeshop_secrets_resolved_postgres_backup_access_key | length > 0
+      - coffeeshop_secrets_resolved_postgres_backup_secret_key | length > 0
+    fail_msg: >-
+      Define the coffeeshop application and PostgreSQL backup variables in Ansible Vault
+      or provide the documented COFFEESHOP_* and POSTGRES_BACKUP_* environment variables.
+      PG_URL and PG_DSN_URL must contain either @postgres or host=postgres so they can
+      be safely moved to the CNPG read-write service.
+  no_log: true
+
+- name: Create Coffee Shop namespace before ArgoCD reconciliation
+  kubernetes.core.k8s:
+    name: coffeeshop
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Create Coffee Shop application bootstrap secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: coffeeshop-secret
+        namespace: coffeeshop
+      type: Opaque
+      stringData:
+        PG_PASSWORD: "{{ coffeeshop_secrets_resolved_pg_password }}"
+        PG_URL: "{{ coffeeshop_secrets_resolved_pg_url }}"
+        PG_DSN_URL: "{{ coffeeshop_secrets_resolved_pg_dsn_url }}"
+        RABBITMQ_DEFAULT_USER: "{{ coffeeshop_secrets_resolved_rabbitmq_user }}"
+        RABBITMQ_DEFAULT_PASS: "{{ coffeeshop_secrets_resolved_rabbitmq_password }}"
+        RABBITMQ_URL: "{{ coffeeshop_secrets_resolved_rabbitmq_url }}"
+  no_log: true
+
+- name: Create RabbitMQ default-user secret for Operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: coffeeshop-rabbitmq-default-user
+        namespace: coffeeshop
+        annotations:
+          argocd.argoproj.io/compare-options: IgnoreExtraneous
+          argocd.argoproj.io/sync-options: Prune=false
+      type: Opaque
+      stringData:
+        username: "{{ coffeeshop_secrets_resolved_rabbitmq_user }}"
+        password: "{{ coffeeshop_secrets_resolved_rabbitmq_password }}"
+        default_user.conf: |
+          default_user = {{ coffeeshop_secrets_resolved_rabbitmq_user }}
+          default_pass = {{ coffeeshop_secrets_resolved_rabbitmq_password }}
+  no_log: true
+
+- name: Read RabbitMQ default-user secret metadata
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: coffeeshop-rabbitmq-default-user
+    namespace: coffeeshop
+  register: coffeeshop_secrets_rabbitmq_default_user_secret_info
+  no_log: true
+
+- name: Remove ArgoCD tracking label from RabbitMQ bootstrap secret
+  kubernetes.core.k8s_json_patch:
+    api_version: v1
+    kind: Secret
+    name: coffeeshop-rabbitmq-default-user
+    namespace: coffeeshop
+    patch:
+      - op: remove
+        path: /metadata/labels/argocd.argoproj.io~1instance
+  when:
+    - coffeeshop_secrets_rabbitmq_default_user_secret_info.resources | length > 0
+    - >-
+      (coffeeshop_secrets_rabbitmq_default_user_secret_info.resources[0].metadata.labels | default({}))
+      .get('argocd.argoproj.io/instance') is not none
+  no_log: true
+
+- name: Create CloudNativePG postgres basic-auth secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: coffeeshop-postgres-superuser
+        namespace: coffeeshop
+      type: kubernetes.io/basic-auth
+      stringData:
+        username: postgres
+        password: "{{ coffeeshop_secrets_resolved_pg_password }}"
+  no_log: true
+
+- name: Create Coffee Shop PostgreSQL backup secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: coffeeshop-postgres-backup
+        namespace: coffeeshop
+      type: Opaque
+      stringData:
+        ACCESS_KEY_ID: "{{ coffeeshop_secrets_resolved_postgres_backup_access_key }}"
+        ACCESS_SECRET_KEY: "{{ coffeeshop_secrets_resolved_postgres_backup_secret_key }}"
+  no_log: true

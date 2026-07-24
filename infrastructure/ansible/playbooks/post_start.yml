@@ -1,44 +1,41 @@
 ---
-- name: Post-start Cluster Recovery Playbook
-  hosts: all
-  become: yes
+- name: Recover HAProxy
+  hosts: haproxy
+  become: true
   tasks:
-    - name: Gather system facts
-      ansible.builtin.setup:
-
-    - name: Refresh AWS ECR Token
-      ansible.builtin.shell: |
-        /usr/local/bin/refresh-ecr-token.sh
-      register: ecr_refresh
-      changed_when: true
-      ignore_errors: yes
-
-    - name: Remount NFS Shared Directory
-      ansible.builtin.mount:
-        path: /mnt/go-cache
-        state: mounted
-      when: "'k3s_worker' in group_names"
-      ignore_errors: yes
-
-    - name: Restart K3s Agent on workers
+    - name: Ensure HAProxy is running
       ansible.builtin.systemd:
-        name: k3s-agent
-        state: restarted
-      when: "'k3s_worker' in group_names"
+        name: haproxy
+        state: started
 
-    - name: Restart K3s Server on master
+- name: Recover K3s Servers
+  hosts: k3s_servers
+  become: true
+  serial: 1
+  tasks:
+    - name: Refresh ECR credentials through the managed systemd service
+      ansible.builtin.systemd:
+        name: refresh-ecr-token.service
+        state: started
+      no_log: true
+
+    - name: Ensure the K3s server is running
       ansible.builtin.systemd:
         name: k3s
-        state: restarted
-      when: "'k3s_master' in group_names"
+        state: started
 
+- name: Verify cluster
+  hosts: k3s_bootstrap_server
+  become: true
+  tasks:
     - name: Verify K3s cluster nodes
       ansible.builtin.command: kubectl get nodes
       register: nodes_output
-      when: "'k3s_master' in group_names"
       changed_when: false
+      retries: 12
+      delay: 10
+      until: nodes_output.rc == 0
 
-    - name: Print cluster nodes status
+    - name: Print cluster node status
       ansible.builtin.debug:
         var: nodes_output.stdout_lines
-      when: "'k3s_master' in group_names"

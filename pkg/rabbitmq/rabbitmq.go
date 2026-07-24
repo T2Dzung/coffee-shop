@@ -5,7 +5,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 const (
@@ -26,7 +26,7 @@ func NewRabbitMQConn(rabbitMqURL RabbitMQConnStr) (*amqp.Connection, error) {
 	for {
 		connection, err := amqp.Dial(string(rabbitMqURL))
 		if err != nil {
-			slog.Error("failed to connect to RabbitMq...", err, rabbitMqURL)
+			slog.Error("failed to connect to RabbitMQ", "error", err)
 			counts++
 		} else {
 			amqpConn = connection
@@ -35,7 +35,7 @@ func NewRabbitMQConn(rabbitMqURL RabbitMQConnStr) (*amqp.Connection, error) {
 		}
 
 		if counts > _retryTimes {
-			slog.Error("failed to retry", err)
+			slog.Error("failed to retry RabbitMQ connection", "error", err)
 
 			return nil, ErrCannotConnectRabbitMQ
 		}

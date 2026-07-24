@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../default
+- ../observability
+- ../samples
+
+patches:
+- patch: |-
+    - op: replace
+      path: /metadata/namespace
+      value: coffeeshop
+  target:
+    group: guard.platform.t2dzung.github.io
+    kind: OwnershipAudit
+    name: coffeeshop-ownership
+    version: v1alpha1
+
+images:
+- digest: sha256:6d32c92c00680075b6195ae9a92b601d83951891c2842a0faa1f2f1cf853d327
+  name: controller
+  newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard

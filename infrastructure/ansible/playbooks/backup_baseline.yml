@@ -1,0 +1,87 @@
+---
+- name: Capture the HA K3s datastore safety snapshot
+  hosts: k3s_bootstrap_server
+  become: true
+  gather_facts: true
+  vars:
+    baseline_backup_destination: "{{ lookup('env', 'HOME') }}/coffeeshop-evidence/phase1"
+    baseline_snapshot_name: "phase1-ha-baseline-{{ ansible_date_time.iso8601_basic_short }}"
+  tasks:
+    - name: Save the embedded-etcd snapshot
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - etcd-snapshot
+          - save
+          - "--name={{ baseline_snapshot_name }}"
+      register: baseline_snapshot_result
+      changed_when: baseline_snapshot_result.rc == 0
+
+    - name: Locate the new embedded-etcd snapshot
+      ansible.builtin.find:
+        paths: /var/lib/rancher/k3s/server/db/snapshots
+        patterns: "{{ baseline_snapshot_name }}*"
+        file_type: file
+      register: baseline_snapshot_files
+
+    - name: Require exactly one matching snapshot
+      ansible.builtin.assert:
+        that:
+          - baseline_snapshot_files.matched == 1
+          - baseline_snapshot_files.files[0].size > 0
+        fail_msg: "Expected one non-empty etcd snapshot matching {{ baseline_snapshot_name }}."
+
+    - name: Create local backup destination
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ baseline_backup_destination }}/etcd"
+        state: directory
+        mode: '0755'
+
+    - name: Fetch the embedded-etcd snapshot to the control node
+      ansible.builtin.fetch:
+        src: "{{ baseline_snapshot_files.files[0].path }}"
+        dest: "{{ baseline_backup_destination }}/etcd/"
+        flat: true
+        validate_checksum: true
+
+    - name: Verify fetched snapshot file exists locally
+      delegate_to: localhost
+      become: false
+      ansible.builtin.stat:
+        path: "{{ baseline_backup_destination }}/etcd/{{ baseline_snapshot_files.files[0].path | basename }}"
+      register: local_snapshot_stat
+      failed_when: not local_snapshot_stat.stat.exists or local_snapshot_stat.stat.size == 0
+
+    - name: Calculate the local snapshot SHA-256 digest
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - "{{ baseline_snapshot_files.files[0].path | basename }}"
+        chdir: "{{ baseline_backup_destination }}/etcd"
+      register: baseline_snapshot_sha256
+      changed_when: false
+
+    - name: Persist the snapshot SHA-256 digest
+      delegate_to: localhost
+      become: false
+      ansible.builtin.copy:
+        content: "{{ baseline_snapshot_sha256.stdout }}\n"
+        dest: "{{ baseline_backup_destination }}/etcd/{{ baseline_snapshot_files.files[0].path | basename }}.sha256"
+        mode: '0644'
+
+    - name: Verify the persisted snapshot SHA-256 digest
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - --check
+          - "{{ baseline_snapshot_files.files[0].path | basename }}.sha256"
+        chdir: "{{ baseline_backup_destination }}/etcd"
+      register: baseline_snapshot_checksum_verification
+      changed_when: false
+      failed_when: baseline_snapshot_checksum_verification.rc != 0

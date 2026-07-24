@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+  name: barman-cloud-plugin
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: plugin-barman-cloud
+    targetRevision: 0.7.0
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  ignoreDifferences:
+    # ArgoCD 2.11 structured-merge diff is triggered by ServerSideApply=true.
+    # Kubernetes 1.33+ may expose Deployment.status.terminatingReplicas before
+    # ArgoCD's typed schema knows that field, causing ComparisonError.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status/terminatingReplicas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

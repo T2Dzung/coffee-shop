@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-smoke
+  namespace: coffeeshop
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway-smoke
+  template:
+    metadata:
+      labels:
+        app: gateway-smoke
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: gateway-smoke
+      containers:
+        - name: echoserver
+          image: ealen/echo-server:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: PORT
+              value: "80"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-smoke
+  namespace: coffeeshop
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app: gateway-smoke
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: smoke-route
+  namespace: coffeeshop
+spec:
+  parentRefs:
+    - name: coffeeshop-gateway
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /smoke
+        - path:
+            type: Exact
+            value: /healthz
+      backendRefs:
+        - name: gateway-smoke
+          port: 80

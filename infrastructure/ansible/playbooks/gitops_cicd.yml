@@ -1,0 +1,32 @@
+---
+- name: Phase 3 GitOps and CI/CD Bootstrap
+  hosts: k3s_bootstrap_server
+  run_once: true
+  gather_facts: false
+
+  vars:
+    helm_skip_update: false
+
+  roles:
+    # Bootstrap secrets and namespaces before ArgoCD creates workloads that
+    # consume them. This removes the race that left application pods degraded.
+    - role: coffeeshop_secrets
+      tags: ['coffeeshop_secrets']
+
+    - role: monitoring_secrets
+      tags: ['monitoring_secrets']
+
+    - role: gateway_resources
+      tags: ['gateway_resources']
+
+    - role: arc_runner
+      tags: ['arc_runner']
+
+    - role: argocd
+      tags: ['argocd']
+
+    - role: coffeeshop_postgres_app
+      tags: ['coffeeshop_postgres_app']
+
+    - role: coffeeshop_rabbitmq_app
+      tags: ['coffeeshop_rabbitmq_app']
