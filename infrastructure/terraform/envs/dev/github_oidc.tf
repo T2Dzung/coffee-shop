@@ -78,6 +78,7 @@ resource "aws_iam_role_policy" "github_prod_artifact_reader" {
         Action = [
           "ecr:BatchCheckLayerAvailability",
           "ecr:BatchGetImage",
+          "ecr:DescribeImages",
           "ecr:GetDownloadUrlForLayer"
         ]
         Resource = [for repository in aws_ecr_repository.services : repository.arn]
@@ -105,6 +106,7 @@ resource "aws_iam_role_policy" "github_actions_ecr_push" {
           "ecr:BatchCheckLayerAvailability",
           "ecr:BatchGetImage",
           "ecr:CompleteLayerUpload",
+          "ecr:DescribeImages",
           "ecr:GetDownloadUrlForLayer",
           "ecr:InitiateLayerUpload",
           "ecr:PutImage",
