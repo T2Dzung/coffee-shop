@@ -58,3 +58,42 @@ output "aws_load_balancer_controller_role_arn" {
   value       = aws_iam_role.aws_lb_controller.arn
 }
 
+output "rds_endpoint" {
+  description = "The connection endpoint for RDS PostgreSQL"
+  value       = aws_db_instance.postgres.endpoint
+}
+
+output "rds_address" {
+  description = "The hostname address for RDS PostgreSQL"
+  value       = aws_db_instance.postgres.address
+}
+
+output "rds_port" {
+  description = "The port for RDS PostgreSQL"
+  value       = aws_db_instance.postgres.port
+}
+
+output "rds_master_secret_arn" {
+  description = "The ARN of the Secrets Manager secret for RDS master user password"
+  value       = aws_db_instance.postgres.master_user_secret[0].secret_arn
+}
+
+output "coffeeshop_app_secret_arn" {
+  description = "The ARN of the AWS Secrets Manager secret for CoffeeShop app credentials"
+  value       = aws_secretsmanager_secret.coffeeshop_app_secret.arn
+}
+
+output "eso_role_arn" {
+  description = "The IAM role ARN for External Secrets Operator Pod Identity"
+  value       = aws_iam_role.eso_role.arn
+}
+
+output "cloudwatch_agent_role_arn" {
+  description = "The IAM role ARN for CloudWatch Observability Agent Pod Identity"
+  value       = aws_iam_role.cloudwatch_agent_role.arn
+}
+
+output "ebs_csi_role_arn" {
+  description = "The IAM role ARN for AWS EBS CSI Driver Pod Identity"
+  value       = aws_iam_role.ebs_csi_role.arn
+}

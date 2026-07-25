@@ -11,6 +11,7 @@ on:
           - barista
           - counter
           - kitchen
+          - migrate
           - product
           - proxy
           - web
@@ -24,7 +25,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: commission-prod-${{ inputs.service }}
+  group: prod-desired-state
   cancel-in-progress: false
 
 jobs:
@@ -45,7 +46,7 @@ jobs:
           SERVICE: ${{ inputs.service }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
-          if [[ ! "${SERVICE}" =~ ^(barista|counter|kitchen|product|proxy|web)$ ]]; then
+          if [[ ! "${SERVICE}" =~ ^(barista|counter|kitchen|migrate|product|proxy|web)$ ]]; then
             echo "Unsupported service: ${SERVICE}" >&2
             exit 1
           fi
@@ -165,15 +166,14 @@ jobs:
           echo "image=${REGISTRY}/go-coffeeshop-${SERVICE}" >>"${GITHUB_OUTPUT}"
           echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
 
-      - name: Pin commissioned web digest in PROD overlay
-        if: inputs.service == 'web'
+      - name: Pin commissioned digest in PROD overlay
         env:
           PROD_IMAGE: ${{ steps.promoted.outputs.image }}
           PROD_DIGEST: ${{ steps.promoted.outputs.digest }}
         run: |
           OVERLAY_FILE="infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml"
-          sed -i "s|newName:.*|newName: ${PROD_IMAGE}|g" "${OVERLAY_FILE}"
-          sed -i "s|digest:.*|digest: ${PROD_DIGEST}|g" "${OVERLAY_FILE}"
+          bash scripts/ci/update-kustomize-image.sh \
+            "${OVERLAY_FILE}" "${{ inputs.service }}" "${PROD_IMAGE}" "${PROD_DIGEST}"
 
       - name: Record commissioning evidence
         env:
@@ -184,11 +184,7 @@ jobs:
         run: |
           RELEASE_DIR="infrastructure/releases/prod/${SERVICE}"
           mkdir -p "${RELEASE_DIR}"
-          if [[ "${SERVICE}" == "web" ]]; then
-            RUNTIME_SCOPE="desired-state"
-          else
-            RUNTIME_SCOPE="artifact-only"
-          fi
+          RUNTIME_SCOPE="desired-state"
           jq -n \
             --arg service "${SERVICE}" \
             --arg source_commit "${SOURCE_COMMIT}" \
@@ -220,9 +216,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "infrastructure/releases/prod/${SERVICE}/${SOURCE_COMMIT}.json"
-          if [[ "${SERVICE}" == "web" ]]; then
-            git add infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml
-          fi
+          git add infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml
 
           if git diff --cached --quiet; then
             echo "This commissioning artifact is already recorded."

@@ -1,0 +1,8 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+
+WORKDIR /app
+
+COPY ./db/migrations ./db/migrations
+COPY ./bin/migrate ./migrate
+
+ENTRYPOINT ["./migrate", "-logtostderr"]

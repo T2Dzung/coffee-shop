@@ -165,7 +165,7 @@ for contract in \
   'DESTINATION_DIGEST' \
   'SOURCE_DIGEST' \
   'runtime_scope' \
-  'artifact-only'; do
+  'scripts/ci/update-kustomize-image.sh'; do
   grep -Fq "${contract}" "${PROD_WORKFLOW}" || \
     fail "PROD zero-rebuild promotion is missing contract: ${contract}"
 done

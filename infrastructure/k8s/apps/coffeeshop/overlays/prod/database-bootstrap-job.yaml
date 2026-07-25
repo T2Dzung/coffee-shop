@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: coffeeshop-database-bootstrap
+  namespace: coffeeshop
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      name: coffeeshop-database-bootstrap
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bootstrap
+          image: go-coffeeshop-migrate
+          env:
+            - name: MIGRATION_MODE
+              value: bootstrap
+            - name: MASTER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-rds-master-bootstrap
+                  key: username
+            - name: MASTER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-rds-master-bootstrap
+                  key: password
+            - name: MASTER_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-rds-master-bootstrap
+                  key: host
+            - name: MASTER_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-rds-master-bootstrap
+                  key: port
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: APP_DB_PASSWORD

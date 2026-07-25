@@ -14,5 +14,14 @@ budget_subscriber_email = null
 
 # Optional capacity overrides; the estimator reads the same values.
 node_instance_types = ["t3.medium"]
-node_desired_size   = 2
+node_desired_size   = 3
 node_disk_size      = 20
+
+# Reviewed managed-service pins. G1 verifies these are still available before apply.
+cluster_version                         = "1.35"
+rds_engine_version                      = "16.14"
+rds_instance_class                      = "db.t4g.micro"
+rds_allocated_storage                   = 20
+rds_skip_final_snapshot                 = true
+ebs_csi_addon_version                   = "v1.62.0-eksbuild.1"
+cloudwatch_observability_addon_version  = "v6.4.0-eksbuild.1"

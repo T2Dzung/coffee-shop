@@ -6,21 +6,39 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Bounded Argo CD AppProject for PROD-2 CoffeeShop Application
+  description: Bounded Argo CD AppProject for PROD CoffeeShop Application and Platform Integration
   sourceRepos:
     - '__GITOPS_REPO_URL__'
   destinations:
     - namespace: coffeeshop
       server: https://kubernetes.default.svc
+    - namespace: external-secrets
+      server: https://kubernetes.default.svc
   clusterResourceWhitelist:
     - group: ''
       kind: Namespace
+    - group: external-secrets.io
+      kind: ClusterSecretStore
+    - group: storage.k8s.io
+      kind: StorageClass
   namespaceResourceWhitelist:
     - group: ''
       kind: ConfigMap
     - group: ''
+      kind: Secret
+    - group: ''
       kind: Service
     - group: apps
       kind: Deployment
+    - group: batch
+      kind: Job
     - group: networking.k8s.io
       kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: rabbitmq.com
+      kind: RabbitmqCluster

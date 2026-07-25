@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: coffeeshop-migration-job
+  namespace: coffeeshop
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      name: coffeeshop-migration-job
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: go-coffeeshop-migrate
+          env:
+            - name: MIGRATION_MODE
+              value: migrate
+            - name: PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: coffeeshop-secret
+                  key: PG_URL
+            - name: MIGRATION_PATH
+              value: /app/db/migrations
