@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "release_mode": "commissioning",
+  "source_commit": "80584371dbc3acae436a38cc0811cea400c43175",
+  "runtime_scope": "full-stack-desired-state",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30146935898",
+  "commissioned_at": "2026-07-25T06:11:03Z",
+  "components": {
+    "web": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web",
+      "digest": "sha256:f5323978458215ec915aa21857568c88d7bdc04a6b66a4d83e5f4c8429420a16"
+    },
+    "proxy": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy",
+      "digest": "sha256:1f28e1145d235fdda3fbd949b4950c71effefb601116653c78e030816b031a04"
+    },
+    "product": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product",
+      "digest": "sha256:4df4baf126f29e89b4bda7b93b7509d62c8ab55c76a048f9bbff7383ede6e7d4"
+    },
+    "counter": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter",
+      "digest": "sha256:dfd54412149ae6aad35a481383c3b660477f75c252d05a670dd386836909aef5"
+    },
+    "barista": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista",
+      "digest": "sha256:888e5b0428e1f4975c781d6e62ffdc958019fe9fff7ea4747ebd999178c969aa"
+    },
+    "kitchen": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen",
+      "digest": "sha256:0644fc8ef0a179fb8844d1c5bc697cbc169eb68a1dff08cd8cef9bce993180d4"
+    },
+    "migrate": {
+      "image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate",
+      "digest": "sha256:6a2e8f0e33284a087541822bf97717e61198f55d86567a47813a57dad8789fe7"
+    }
+  }
+}
