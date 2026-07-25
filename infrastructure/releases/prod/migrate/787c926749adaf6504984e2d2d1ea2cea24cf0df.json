@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "release_mode": "commissioning",
+  "service": "migrate",
+  "source_commit": "787c926749adaf6504984e2d2d1ea2cea24cf0df",
+  "prod_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate",
+  "prod_digest": "sha256:bbe20bc8d2776ec0d0cb97a7588d152c3c413372848f104953ed8bda73d9e658",
+  "runtime_scope": "desired-state",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30152705709",
+  "commissioned_at": "2026-07-25T09:24:09Z"
+}

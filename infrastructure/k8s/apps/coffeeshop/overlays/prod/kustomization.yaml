@@ -33,7 +33,7 @@ images:
     digest: sha256:0644fc8ef0a179fb8844d1c5bc697cbc169eb68a1dff08cd8cef9bce993180d4
   - name: go-coffeeshop-migrate
     newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate
-    digest: sha256:6a2e8f0e33284a087541822bf97717e61198f55d86567a47813a57dad8789fe7
+    digest: sha256:bbe20bc8d2776ec0d0cb97a7588d152c3c413372848f104953ed8bda73d9e658
 
 patches:
   - target:
