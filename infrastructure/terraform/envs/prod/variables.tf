@@ -132,11 +132,11 @@ variable "node_instance_types" {
 variable "node_desired_size" {
   description = "Desired managed-node count used by Terraform and hourly cost estimation"
   type        = number
-  default     = 2
+  default     = 3
 
   validation {
     condition     = var.node_desired_size >= 1 && var.node_desired_size <= 3
-    error_message = "node_desired_size must stay within the reviewed PROD-1 range 1-3."
+    error_message = "node_desired_size must stay within the reviewed PROD range 1-3."
   }
 }
 
@@ -185,6 +185,54 @@ variable "aws_load_balancer_controller_version" {
     condition     = var.aws_load_balancer_controller_version == "v3.4.2"
     error_message = "Update the vendored official IAM policy and validation hash before changing controller version."
   }
+}
+
+variable "rds_instance_class" {
+  description = "EC2 instance class for RDS PostgreSQL Single-AZ"
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "rds_allocated_storage" {
+  description = "Allocated storage in GiB for RDS PostgreSQL"
+  type        = number
+  default     = 20
+}
+
+variable "rds_engine_version" {
+  description = "PostgreSQL engine version for RDS"
+  type        = string
+  default     = "16.14"
+}
+
+variable "rds_deletion_protection" {
+  description = "Enable deletion protection on RDS instance"
+  type        = bool
+  default     = false
+}
+
+variable "rds_skip_final_snapshot" {
+  description = "Explicit portfolio teardown choice; false preserves a final RDS snapshot"
+  type        = bool
+  default     = false
+}
+
+variable "cw_log_retention_days" {
+  description = "Retention period in days for CloudWatch log groups"
+  type        = number
+  default     = 7
+}
+
+variable "ebs_csi_addon_version" {
+  description = "Reviewed EBS CSI add-on version compatible with the selected EKS version"
+  type        = string
+  default     = "v1.62.0-eksbuild.1"
+}
+
+variable "cloudwatch_observability_addon_version" {
+  description = "Reviewed CloudWatch Observability add-on version compatible with the selected EKS version"
+  type        = string
+  default     = "v6.4.0-eksbuild.1"
 }
 
 variable "additional_tags" {

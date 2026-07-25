@@ -7,10 +7,13 @@ NODE_COUNT="${3:?node count is required}"
 DISK_GIB_PER_NODE="${4:?disk GiB per node is required}"
 ALB_COUNT="${5:-0}"
 PUBLIC_IPV4_COUNT="${6:-1}"
+RDS_INSTANCE_CLASS="${7:-db.t4g.micro}"
+RDS_STORAGE_GIB="${8:-20}"
+RABBITMQ_EBS_GIB="${9:-15}"
 PRICING_REGION="us-east-1"
 HOURS_PER_MONTH="730"
 
-for numeric_input in NODE_COUNT DISK_GIB_PER_NODE ALB_COUNT PUBLIC_IPV4_COUNT; do
+for numeric_input in NODE_COUNT DISK_GIB_PER_NODE ALB_COUNT PUBLIC_IPV4_COUNT RDS_STORAGE_GIB RABBITMQ_EBS_GIB; do
   [[ "${!numeric_input}" =~ ^[0-9]+$ ]] || {
     echo "${numeric_input} must be a non-negative integer" >&2
     exit 1
@@ -97,6 +100,20 @@ ipv4_rate="$(price_per_unit AmazonVPC \
   'Type=TERM_MATCH,Field=group,Value=VPCPublicIPv4Address' \
   'Type=TERM_MATCH,Field=groupDescription,Value=Hourly charge for In-use Public IPv4 Addresses')"
 
+rds_instance_rate="$(price_per_unit_with_unit AmazonRDS Hrs \
+  "${region_filter}" \
+  'Type=TERM_MATCH,Field=productFamily,Value=Database Instance' \
+  "Type=TERM_MATCH,Field=instanceType,Value=${RDS_INSTANCE_CLASS}" \
+  'Type=TERM_MATCH,Field=databaseEngine,Value=PostgreSQL' \
+  'Type=TERM_MATCH,Field=deploymentOption,Value=Single-AZ')"
+
+rds_storage_gib_month_rate="$(price_per_unit_with_unit AmazonRDS GB-Mo \
+  "${region_filter}" \
+  'Type=TERM_MATCH,Field=productFamily,Value=Database Storage' \
+  'Type=TERM_MATCH,Field=databaseEngine,Value=PostgreSQL' \
+  'Type=TERM_MATCH,Field=deploymentOption,Value=Single-AZ' \
+  'Type=TERM_MATCH,Field=volumeType,Value=General Purpose-GP3')"
+
 alb_rate="0"
 if ((ALB_COUNT > 0)); then
   alb_rate="$(price_per_unit_with_unit AWSELB Hrs \
@@ -106,22 +123,29 @@ if ((ALB_COUNT > 0)); then
 fi
 
 node_total="$(awk -v rate="${instance_rate}" -v count="${NODE_COUNT}" 'BEGIN { printf "%.6f", rate * count }')"
-ebs_total="$(awk -v rate="${gp3_gib_month_rate}" -v gib="${DISK_GIB_PER_NODE}" \
-  -v count="${NODE_COUNT}" -v hours="${HOURS_PER_MONTH}" \
-  'BEGIN { printf "%.6f", rate * gib * count / hours }')"
+ebs_total="$(awk -v rate="${gp3_gib_month_rate}" -v node_gib="${DISK_GIB_PER_NODE}" \
+  -v node_count="${NODE_COUNT}" -v rmq_gib="${RABBITMQ_EBS_GIB}" -v hours="${HOURS_PER_MONTH}" \
+  'BEGIN { printf "%.6f", rate * ((node_gib * node_count) + rmq_gib) / hours }')"
+rds_storage_total="$(awk -v rate="${rds_storage_gib_month_rate}" -v gib="${RDS_STORAGE_GIB}" \
+  -v hours="${HOURS_PER_MONTH}" 'BEGIN { printf "%.6f", rate * gib / hours }')"
 alb_total="$(awk -v rate="${alb_rate}" -v count="${ALB_COUNT}" 'BEGIN { printf "%.6f", rate * count }')"
 ipv4_total="$(awk -v rate="${ipv4_rate}" -v count="${PUBLIC_IPV4_COUNT}" \
   'BEGIN { printf "%.6f", rate * count }')"
+rds_total="$(awk -v rate="${rds_instance_rate}" 'BEGIN { printf "%.6f", rate }')"
+
 fixed_total="$(awk -v eks="${eks_rate}" -v nodes="${node_total}" -v nat="${nat_rate}" \
-  -v ebs="${ebs_total}" -v alb="${alb_total}" -v ipv4="${ipv4_total}" \
-  'BEGIN { printf "%.4f", eks + nodes + nat + ebs + alb + ipv4 }')"
+  -v ebs="${ebs_total}" -v rds_storage="${rds_storage_total}" -v alb="${alb_total}" \
+  -v ipv4="${ipv4_total}" -v rds="${rds_total}" \
+  'BEGIN { printf "%.4f", eks + nodes + nat + ebs + rds_storage + alb + ipv4 + rds }')"
 
 cat <<EOF
 Estimated fixed cost for 1 hour (${REGION}, current AWS On-Demand rates):
   EKS standard control plane : USD $(printf '%.4f' "${eks_rate}")
   ${NODE_COUNT} x ${INSTANCE_TYPE} nodes       : USD $(printf '%.4f' "${node_total}")
   1 x NAT Gateway           : USD $(printf '%.4f' "${nat_rate}")
-  ${NODE_COUNT} x ${DISK_GIB_PER_NODE} GiB gp3 roots      : USD $(printf '%.4f' "${ebs_total}")
+  1 x RDS ${RDS_INSTANCE_CLASS}       : USD $(printf '%.4f' "${rds_total}")
+  Node + RabbitMQ gp3 EBS : USD $(printf '%.4f' "${ebs_total}")
+  ${RDS_STORAGE_GIB} GiB RDS gp3 storage : USD $(printf '%.4f' "${rds_storage_total}")
   ${ALB_COUNT} x Application Load Balancer : USD $(printf '%.4f' "${alb_total}")
   ${PUBLIC_IPV4_COUNT} x public IPv4          : USD $(printf '%.4f' "${ipv4_total}")
   ------------------------------------------------------------

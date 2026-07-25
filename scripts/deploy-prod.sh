@@ -53,17 +53,32 @@ NODE_INSTANCE_TYPES_EXPR="$(read_tfvar_expression node_instance_types)"
 NODE_INSTANCE_TYPES_EXPR="${NODE_INSTANCE_TYPES_EXPR:-[\"t3.medium\"]}"
 NODE_INSTANCE_TYPE="${PROD_NODE_INSTANCE_TYPE:-$(jq -r '.[0]' <<<"${NODE_INSTANCE_TYPES_EXPR}")}"
 NODE_COUNT="${PROD_NODE_COUNT:-$(read_tfvar_expression node_desired_size)}"
-NODE_COUNT="${NODE_COUNT:-2}"
+NODE_COUNT="${NODE_COUNT:-3}"
 NODE_DISK_GIB="${PROD_NODE_DISK_GIB:-$(read_tfvar_expression node_disk_size)}"
 NODE_DISK_GIB="${NODE_DISK_GIB:-20}"
+RDS_INSTANCE_CLASS="${PROD_RDS_INSTANCE_CLASS:-$(read_tfvar_string rds_instance_class)}"
+RDS_INSTANCE_CLASS="${RDS_INSTANCE_CLASS:-db.t4g.micro}"
+RDS_STORAGE_GIB="${PROD_RDS_STORAGE_GIB:-$(read_tfvar_expression rds_allocated_storage)}"
+RDS_STORAGE_GIB="${RDS_STORAGE_GIB:-20}"
+RDS_ENGINE_VERSION="${PROD_RDS_ENGINE_VERSION:-$(read_tfvar_string rds_engine_version)}"
+RDS_ENGINE_VERSION="${RDS_ENGINE_VERSION:-16.14}"
+CLUSTER_VERSION="${PROD_CLUSTER_VERSION:-$(read_tfvar_string cluster_version)}"
+CLUSTER_VERSION="${CLUSTER_VERSION:-1.35}"
+EBS_CSI_ADDON_VERSION="${PROD_EBS_CSI_ADDON_VERSION:-$(read_tfvar_string ebs_csi_addon_version)}"
+EBS_CSI_ADDON_VERSION="${EBS_CSI_ADDON_VERSION:-v1.62.0-eksbuild.1}"
+CLOUDWATCH_ADDON_VERSION="${PROD_CLOUDWATCH_ADDON_VERSION:-$(read_tfvar_string cloudwatch_observability_addon_version)}"
+CLOUDWATCH_ADDON_VERSION="${CLOUDWATCH_ADDON_VERSION:-v6.4.0-eksbuild.1}"
 STATE_BUCKET_NAME="${PROD_STATE_BUCKET_NAME:-${PROJECT_NAME}-terraform-state-${EXPECTED_ACCOUNT_ID}}"
 BOOTSTRAP_STATE_KEY="${PROD_BOOTSTRAP_STATE_KEY:-prod/bootstrap.tfstate}"
 FOUNDATION_STATE_KEY="${PROD_FOUNDATION_STATE_KEY:-prod/foundation.tfstate}"
 KUBECONFIG_PATH="${PROD_KUBECONFIG:-${HOME}/.kube/${PROJECT_NAME}-prod.yaml}"
 WAIT_TIMEOUT="${PROD_WAIT_TIMEOUT:-20m}"
 POLL_ATTEMPTS="${PROD_POLL_ATTEMPTS:-60}"
+RELEASE_POLL_ATTEMPTS="${PROD_RELEASE_POLL_ATTEMPTS:-360}"
 AWS_LB_CONTROLLER_CHART_VERSION="3.4.2"
 ARGO_CD_CHART_VERSION="6.7.18"
+EXTERNAL_SECRETS_CHART_VERSION="2.5.0"
+CERT_MANAGER_CHART_VERSION="v1.20.0"
 RUNTIME_TF_DATA_ROOT="${PROD_TF_DATA_ROOT:-${HOME}/.cache/go-coffeeshop/terraform/prod-runtime-${EXPECTED_ACCOUNT_ID}}"
 BOOTSTRAP_TF_DATA_DIR="${RUNTIME_TF_DATA_ROOT}/bootstrap"
 FOUNDATION_TF_DATA_DIR="${RUNTIME_TF_DATA_ROOT}/foundation"
@@ -92,7 +107,8 @@ Optional:
   PROD_GITHUB_REPOSITORY             Override owner/repository from tfvars
   PROD_GITOPS_REPO_URL               Override the HTTPS repository read by Argo CD
   PROD_GITOPS_REVISION               Desired-state Git revision. Default: HEAD
-  PROD_POLL_ATTEMPTS             Ten-second polling attempts. Default: 60
+  PROD_POLL_ATTEMPTS                 Ten-second runtime polling attempts. Default: 60
+  PROD_RELEASE_POLL_ATTEMPTS         Release-set polling attempts. Default: 360
   PROD_CONFIRM_TEARDOWN              Must equal the 12-digit target account ID
                                      before teardown can create a destroy plan
 
@@ -220,6 +236,8 @@ validate_base_inputs() {
 
   [[ "${POLL_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || \
     fail "PROD_POLL_ATTEMPTS must be a positive integer"
+  [[ "${RELEASE_POLL_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || \
+    fail "PROD_RELEASE_POLL_ATTEMPTS must be a positive integer"
 
   for command_name in aws terraform kubectl helm curl jq awk git mktemp cp rm sleep; do
     require_command "${command_name}"
@@ -238,39 +256,70 @@ validate_base_inputs() {
 }
 
 wait_for_promoted_digest() {
-  local overlay_path remote_digest attempt
+  local overlay_path digest_summary attempt
   overlay_path="infrastructure/k8s/apps/coffeeshop/overlays/prod/kustomization.yaml"
 
   echo "Delivery identity and ECR are ready."
-  echo "Run the protected 'PROD — Commission Service Without DEV' workflow for service=web."
-  echo "Waiting for ${GITOPS_REVISION} to contain a non-placeholder promoted digest..."
-  for ((attempt = 1; attempt <= POLL_ATTEMPTS; attempt++)); do
+  echo "Run 'PROD — Commission Full Stack Without DEV' once and merge its desired-state PR."
+  echo "Waiting for ${GITOPS_REVISION} to contain seven immutable release digests..."
+  for ((attempt = 1; attempt <= RELEASE_POLL_ATTEMPTS; attempt++)); do
     if git fetch --quiet "${GITOPS_REPO_URL}" "${GITOPS_REVISION}" 2>/dev/null; then
-      remote_digest="$(
+      digest_summary="$(
         git show "FETCH_HEAD:${overlay_path}" 2>/dev/null |
-          awk '/^[[:space:]]*digest:[[:space:]]*sha256:/ {print $2; exit}'
+          awk '
+            /^[[:space:]]*digest:[[:space:]]*sha256:/ {
+              count++
+              if ($2 == "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
+                placeholders++
+              }
+            }
+            END {print count ":" placeholders}
+          '
       )"
-      if [[ "${remote_digest}" =~ ^sha256:[0-9a-f]{64}$ &&
-        "${remote_digest}" != "sha256:0000000000000000000000000000000000000000000000000000000000000000" ]]; then
-        echo "Promoted immutable digest found: ${remote_digest}"
+      if [[ "${digest_summary}" == "7:0" ]]; then
+        echo "All seven immutable PROD release digests are present."
         return
       fi
     fi
-    echo "Attempt ${attempt}/${POLL_ATTEMPTS}: promoted digest not visible yet. Waiting 10s..."
+    echo "Attempt ${attempt}/${RELEASE_POLL_ATTEMPTS}: release set is ${digest_summary:-unavailable}; expected 7:0. Waiting 10s..."
     sleep 10
   done
-  fail "no valid promoted digest appeared on ${GITOPS_REPO_URL}@${GITOPS_REVISION}"
+  fail "complete seven-component release set did not appear on ${GITOPS_REPO_URL}@${GITOPS_REVISION}"
 }
 
-apply_argocd_bootstrap() {
-  local manifest
-  for manifest in appproject.yaml coffeeshop-prod-app.yaml; do
+apply_bootstrap_manifest() {
+  local manifest="$1"
     sed \
       -e "s|__GITOPS_REPO_URL__|${GITOPS_REPO_URL}|g" \
       -e "s|__GITOPS_REVISION__|${GITOPS_REVISION}|g" \
       "${PROJECT_ROOT}/infrastructure/k8s/environments/prod/bootstrap/${manifest}" |
       kubectl apply -f -
+}
+
+wait_for_argocd_application() {
+  local application="$1"
+  local sync_status="" health_status=""
+  for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
+    sync_status="$(kubectl get application "${application}" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    health_status="$(kubectl get application "${application}" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+    if [[ "${sync_status}" == "Synced" && "${health_status}" == "Healthy" ]]; then
+      echo "Argo CD Application ${application} is Synced and Healthy."
+      return
+    fi
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: ${application} sync=${sync_status:-unknown}, health=${health_status:-unknown}. Waiting 10s..."
+    sleep 10
   done
+  fail "Argo CD Application ${application} did not become Synced and Healthy in time"
+}
+
+apply_rds_master_external_secret() {
+  local master_secret_arn
+  master_secret_arn="$(terraform_run "${PROD_TF_DIR}" output -raw rds_master_secret_arn)"
+  [[ "${master_secret_arn}" == arn:aws:secretsmanager:* ]] || \
+    fail "Terraform returned an invalid RDS master secret ARN"
+  sed "s|__RDS_MASTER_SECRET_ARN__|${master_secret_arn}|g" \
+    "${PROJECT_ROOT}/infrastructure/k8s/environments/prod/bootstrap/rds-master-external-secret.yaml.tpl" |
+    kubectl apply -f -
 }
 
 remote_promoted_digest() {
@@ -328,7 +377,65 @@ show_hourly_estimate() {
     "${NODE_COUNT}" \
     "${NODE_DISK_GIB}" \
     "${nlb_count}" \
-    "${public_ipv4_count}"
+    "${public_ipv4_count}" \
+    "${RDS_INSTANCE_CLASS}" \
+    "${RDS_STORAGE_GIB}" \
+    15
+}
+
+verify_capacity_envelope() {
+  local instance_json vcpu_per_node memory_mib_per_node
+  local allocatable_cpu_millicores allocatable_memory_mib
+  local required_cpu_millicores=2350
+  local required_memory_mib=5376
+
+  instance_json="$(aws ec2 describe-instance-types \
+    --instance-types "${NODE_INSTANCE_TYPE}" \
+    --query 'InstanceTypes[0].{vcpus:VCpuInfo.DefaultVCpus,memory:MemoryInfo.SizeInMiB}' \
+    --output json)"
+  vcpu_per_node="$(jq -r '.vcpus' <<<"${instance_json}")"
+  memory_mib_per_node="$(jq -r '.memory' <<<"${instance_json}")"
+  [[ "${vcpu_per_node}" =~ ^[1-9][0-9]*$ &&
+     "${memory_mib_per_node}" =~ ^[1-9][0-9]*$ ]] || \
+    fail "could not resolve capacity for ${NODE_INSTANCE_TYPE}"
+
+  # Conservative 25% reserve for kubelet, OS and scheduling variance.
+  allocatable_cpu_millicores=$((vcpu_per_node * NODE_COUNT * 750))
+  allocatable_memory_mib=$((memory_mib_per_node * NODE_COUNT * 75 / 100))
+  echo "Capacity preflight (${NODE_COUNT} x ${NODE_INSTANCE_TYPE}, 25% reserve):"
+  echo "  schedulable CPU    : ${allocatable_cpu_millicores}m; designed requests ${required_cpu_millicores}m"
+  echo "  schedulable memory : ${allocatable_memory_mib}Mi; designed requests ${required_memory_mib}Mi"
+  ((allocatable_cpu_millicores >= required_cpu_millicores)) || \
+    fail "designed CPU requests exceed the reviewed capacity envelope"
+  ((allocatable_memory_mib >= required_memory_mib)) || \
+    fail "designed memory requests exceed the reviewed capacity envelope"
+}
+
+verify_managed_service_availability() {
+  local rds_option_count addon_contract addon_name expected_version addon_version
+  rds_option_count="$(aws rds describe-orderable-db-instance-options \
+    --engine postgres \
+    --engine-version "${RDS_ENGINE_VERSION}" \
+    --db-instance-class "${RDS_INSTANCE_CLASS}" \
+    --query 'length(OrderableDBInstanceOptions)' \
+    --output text)"
+  [[ "${rds_option_count}" -ge 1 ]] || \
+    fail "PostgreSQL ${RDS_ENGINE_VERSION}/${RDS_INSTANCE_CLASS} is not orderable in ${EXPECTED_REGION}"
+
+  for addon_contract in \
+    "aws-ebs-csi-driver:${EBS_CSI_ADDON_VERSION}" \
+    "amazon-cloudwatch-observability:${CLOUDWATCH_ADDON_VERSION}"; do
+    addon_name="${addon_contract%%:*}"
+    expected_version="${addon_contract#*:}"
+    addon_version="$(aws eks describe-addon-versions \
+      --addon-name "${addon_name}" \
+      --kubernetes-version "${CLUSTER_VERSION}" \
+      --query "addons[0].addonVersions[?addonVersion=='${expected_version}'].addonVersion | [0]" \
+      --output text)"
+    [[ "${addon_version}" == "${expected_version}" ]] || \
+      fail "${addon_name} ${expected_version} is not compatible with EKS ${CLUSTER_VERSION}"
+  done
+  echo "Managed service preflight passed: PostgreSQL ${RDS_ENGINE_VERSION}, EBS CSI ${EBS_CSI_ADDON_VERSION}, CloudWatch ${CLOUDWATCH_ADDON_VERSION}."
 }
 
 bootstrap_backend() {
@@ -403,6 +510,8 @@ run_g1() {
   echo "=== G1: caller, hourly estimate and isolated state ==="
   verify_caller
   show_hourly_estimate
+  verify_capacity_envelope
+  verify_managed_service_availability
   bootstrap_backend
   initialize_foundation_backend
   echo "G1 PASSED: caller, hourly estimate and isolated S3 backends are ready."
@@ -533,7 +642,32 @@ run_g3() {
 
   reconcile_coredns_after_nodes "${cluster_name}"
   kubectl rollout status deployment/coredns -n kube-system --timeout="${WAIT_TIMEOUT}"
-  echo "G3 PASSED: ${ready_count}/${desired_size} nodes Ready and required managed add-ons rolled out."
+
+  echo "Applying PROD-3 managed stateful and observability foundation..."
+  terraform_apply "${PROD_TF_DIR}" \
+    -target=aws_db_instance.postgres \
+    -target=aws_secretsmanager_secret.coffeeshop_app_secret \
+    -target=aws_eks_pod_identity_association.eso \
+    -target=aws_eks_addon.ebs_csi \
+    -target=aws_eks_addon.cloudwatch_observability \
+    -target=aws_cloudwatch_log_group.application_logs \
+    -target=aws_cloudwatch_log_group.host_logs \
+    -target=aws_cloudwatch_log_group.dataplane_logs \
+    -target=aws_cloudwatch_metric_alarm.rds_free_storage \
+    -target=aws_cloudwatch_metric_alarm.node_cpu_high
+
+  bash "${PROJECT_ROOT}/scripts/seed-prod-secrets.sh" \
+    "${EXPECTED_REGION}" \
+    "$(terraform_run "${PROD_TF_DIR}" output -raw coffeeshop_app_secret_arn)" \
+    "$(terraform_run "${PROD_TF_DIR}" output -raw rds_endpoint)"
+
+  aws eks wait addon-active --cluster-name "${cluster_name}" --addon-name aws-ebs-csi-driver
+  aws eks wait addon-active --cluster-name "${cluster_name}" --addon-name amazon-cloudwatch-observability
+  [[ "$(aws rds describe-db-instances \
+    --db-instance-identifier "${PROJECT_NAME}-${ENVIRONMENT}-db" \
+    --query 'DBInstances[0].DBInstanceStatus' --output text)" == "available" ]] || \
+    fail "RDS instance did not become available"
+  echo "G3 PASSED: nodes, RDS, seeded secret, EBS CSI and scoped CloudWatch foundation are ready."
 }
 
 run_g4() {
@@ -609,6 +743,36 @@ run_g4() {
   kubectl rollout status deployment/aws-load-balancer-controller \
     -n kube-system --timeout="${WAIT_TIMEOUT}"
 
+  echo "Deploying pinned cert-manager and External Secrets Operator..."
+  helm repo add jetstack https://charts.jetstack.io --force-update
+  helm upgrade --install cert-manager jetstack/cert-manager \
+    --namespace cert-manager \
+    --create-namespace \
+    --version "${CERT_MANAGER_CHART_VERSION}" \
+    --set installCRDs=true \
+    --atomic \
+    --wait \
+    --timeout "${WAIT_TIMEOUT}"
+
+  helm repo add external-secrets https://charts.external-secrets.io --force-update
+  helm upgrade --install external-secrets external-secrets/external-secrets \
+    --namespace external-secrets \
+    --create-namespace \
+    --version "${EXTERNAL_SECRETS_CHART_VERSION}" \
+    --set installCRDs=true \
+    --set serviceAccount.name=external-secrets-sa \
+    --atomic \
+    --wait \
+    --timeout "${WAIT_TIMEOUT}"
+  kubectl rollout status deployment/external-secrets \
+    -n external-secrets --timeout="${WAIT_TIMEOUT}"
+
+  echo "Deploying the pinned RabbitMQ Cluster Operator manifest..."
+  kubectl apply --server-side --force-conflicts \
+    -f "${PROJECT_ROOT}/infrastructure/k8s/environments/dev/gitops/addons/rabbitmq-operator/cluster-operator.yaml"
+  kubectl rollout status deployment/rabbitmq-cluster-operator \
+    -n rabbitmq-system --timeout="${WAIT_TIMEOUT}"
+
   echo "Deploying pinned Argo CD chart ${ARGO_CD_CHART_VERSION}..."
   helm repo add argo https://argoproj.github.io/argo-helm --force-update
   helm upgrade --install argocd argo/argo-cd \
@@ -625,22 +789,37 @@ run_g4() {
   kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout="${WAIT_TIMEOUT}"
 
   wait_for_promoted_digest
-  echo "Applying PROD-2 AppProject and Argo CD Bootstrap Application..."
-  apply_argocd_bootstrap
+  echo "Applying bounded AppProject and platform desired state first..."
+  apply_bootstrap_manifest appproject.yaml
+  apply_bootstrap_manifest coffeeshop-prod-platform-app.yaml
 
-  echo "Waiting for Argo CD Application coffeeshop-prod to become Synced and Healthy..."
   for ((i = 1; i <= POLL_ATTEMPTS; i++)); do
-    sync_status="$(kubectl get application coffeeshop-prod -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
-    health_status="$(kubectl get application coffeeshop-prod -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
-    if [[ "${sync_status}" == "Synced" && "${health_status}" == "Healthy" ]]; then
-      echo "Argo CD Application coffeeshop-prod is Synced and Healthy."
+    if kubectl get clustersecretstore aws-secretsmanager >/dev/null 2>&1; then
       break
     fi
-    echo "Attempt ${i}/${POLL_ATTEMPTS}: Argo CD Application status: sync=${sync_status:-unknown}, health=${health_status:-unknown}. Waiting 10s..."
+    echo "Attempt ${i}/${POLL_ATTEMPTS}: waiting for ClusterSecretStore. Waiting 10s..."
     sleep 10
   done
-  [[ "${sync_status}" == "Synced" && "${health_status}" == "Healthy" ]] || \
-    fail "Argo CD Application coffeeshop-prod did not become Synced and Healthy in time"
+  kubectl get clustersecretstore aws-secretsmanager >/dev/null 2>&1 || \
+    fail "platform Application did not create ClusterSecretStore"
+
+  apply_rds_master_external_secret
+  kubectl wait --for=condition=Ready clustersecretstore/aws-secretsmanager \
+    --timeout="${WAIT_TIMEOUT}"
+  kubectl wait --for=condition=Ready externalsecret/coffeeshop-secret \
+    -n coffeeshop --timeout="${WAIT_TIMEOUT}"
+  kubectl wait --for=condition=Ready externalsecret/coffeeshop-rabbitmq-default-user \
+    -n coffeeshop --timeout="${WAIT_TIMEOUT}"
+  kubectl wait --for=condition=Ready externalsecret/coffeeshop-rds-master-bootstrap \
+    -n coffeeshop --timeout="${WAIT_TIMEOUT}"
+
+  wait_for_argocd_application coffeeshop-prod-platform
+  kubectl wait --for=condition=AllReplicasReady rabbitmqcluster/coffeeshop-rabbitmq \
+    -n coffeeshop --timeout="${WAIT_TIMEOUT}"
+
+  echo "Platform and stateful dependencies are ready; applying CoffeeShop application."
+  apply_bootstrap_manifest coffeeshop-prod-app.yaml
+  wait_for_argocd_application coffeeshop-prod
 
   echo "Waiting for AWS Load Balancer Controller to provision ALB and assign external hostname..."
   alb_hostname=""
@@ -727,7 +906,23 @@ run_g4() {
   grep -Fq 'CoffeeShop POS' <<<"${http_response}" || \
     fail "ALB endpoint did not return the expected CoffeeShop POS marker"
 
-  echo "G4 PASSED: Managed ALB IP-target Ingress and GitOps web slice are healthy and reachable (${alb_hostname})."
+  for deployment in web proxy product counter barista kitchen; do
+    kubectl rollout status "deployment/${deployment}" \
+      -n coffeeshop --timeout="${WAIT_TIMEOUT}"
+  done
+
+  item_types_response="$(curl --fail --silent --show-error --max-time 10 \
+    "http://${alb_hostname}/api/v1/api/item-types")"
+  jq -e '.itemTypes | type == "array" and length > 0' >/dev/null <<<"${item_types_response}" || \
+    fail "full transaction probe could not load product item types through /api"
+  order_response="$(curl --fail --silent --show-error --max-time 15 \
+    -H 'Content-Type: application/json' \
+    -d '{"loyaltyMemberId":"01234567-89ab-cdef-0123-456789abcdef","timestamp":"2026-07-25T00:00:00Z","baristaItems":[{"itemType":0}]}' \
+    "http://${alb_hostname}/api/v1/api/orders")"
+  jq -e 'type == "object"' >/dev/null <<<"${order_response}" || \
+    fail "full transaction order probe returned a non-JSON response"
+
+  echo "G4 PASSED: managed platform, stateful services and full CoffeeShop release are healthy through ALB (${alb_hostname})."
 }
 
 verify_reconciled_runtime() {
@@ -858,6 +1053,7 @@ verify_reconciled_runtime() {
     fail "reconciled ALB endpoint did not return the CoffeeShop POS marker"
   verify_argocd_self_heal
   "${PROJECT_ROOT}/scripts/verify-gitops-health.sh" coffeeshop-prod
+  "${PROJECT_ROOT}/scripts/verify-gitops-health.sh" coffeeshop-prod-platform
   echo "Runtime verification passed: EKS/nodes/controllers/GitOps healthy; ${healthy_count} ALB targets healthy across ${healthy_az_count} AZs."
 }
 
@@ -937,6 +1133,7 @@ verify_teardown_inventory() {
   local cluster_name="$1"
   local vpc_id="$2"
   local instance_count volume_count nat_count eip_count load_balancer_count target_group_count security_group_count log_group_count
+  local rds_count secret_count
   local repository
   local retained_repositories=(
     go-coffeeshop-web
@@ -945,6 +1142,7 @@ verify_teardown_inventory() {
     go-coffeeshop-counter
     go-coffeeshop-barista
     go-coffeeshop-kitchen
+    go-coffeeshop-migrate
     platform-ownership-guard
   )
 
@@ -983,9 +1181,17 @@ verify_teardown_inventory() {
   load_balancer_count="$(tagged_resource_count elasticloadbalancing:loadbalancer)"
   target_group_count="$(tagged_resource_count elasticloadbalancing:targetgroup)"
   security_group_count="$(tagged_resource_count ec2:security-group)"
-  log_group_count="$(aws logs describe-log-groups \
-    --log-group-name-prefix "/aws/eks/${cluster_name}/cluster" \
-    --query 'length(logGroups)' \
+  log_group_count="$(
+    aws logs describe-log-groups \
+      --query "length(logGroups[?starts_with(logGroupName, '/aws/eks/${cluster_name}/') || starts_with(logGroupName, '/aws/containerinsights/${cluster_name}/')])" \
+      --output text
+  )"
+  rds_count="$(aws rds describe-db-instances \
+    --query "length(DBInstances[?DBInstanceIdentifier=='${PROJECT_NAME}-${ENVIRONMENT}-db'])" \
+    --output text)"
+  secret_count="$(aws secretsmanager list-secrets \
+    --include-planned-deletion \
+    --query "length(SecretList[?Name=='/${PROJECT_NAME}/${ENVIRONMENT}/application'])" \
     --output text)"
 
   [[ "${instance_count}" -eq 0 ]] || fail "billable orphan inventory: ${instance_count} EC2 instance(s) remain"
@@ -1000,6 +1206,8 @@ verify_teardown_inventory() {
     fail "orphan inventory: ${security_group_count} tagged security group(s) remain"
   [[ "${log_group_count}" -eq 0 ]] || \
     fail "billable orphan inventory: ${log_group_count} EKS control-plane log group(s) remain"
+  [[ "${rds_count}" -eq 0 ]] || fail "billable orphan inventory: ${rds_count} RDS instance(s) remain"
+  [[ "${secret_count}" -eq 0 ]] || fail "orphan inventory: application secret still exists or is pending deletion"
 
   aws s3api head-bucket --bucket "${STATE_BUCKET_NAME}" >/dev/null || \
     fail "retained backend bucket ${STATE_BUCKET_NAME} is missing"
@@ -1017,7 +1225,7 @@ verify_teardown_inventory() {
     fail "retained AWS Budget is missing"
 
   echo "Immediate teardown inventory passed."
-  echo "Retained allowlist confirmed: backend S3/KMS, 7 ECR repositories/lifecycle policies, AWS Budget."
+  echo "Retained allowlist confirmed: backend S3/KMS, 8 ECR repositories/lifecycle policies, AWS Budget."
   echo "Cost Explorer is delayed; estimate-versus-actual remains pending until billing data arrives."
 }
 
@@ -1025,6 +1233,27 @@ run_teardown() {
   local cluster_name cluster_arn vpc_id
   local plan_dir plan_file plan_json delete_count retained_delete_count unexpected_delete_count
   local destroy_targets=(
+    -target=aws_db_instance.postgres
+    -target=aws_db_subnet_group.rds
+    -target=aws_security_group.rds
+    -target=aws_secretsmanager_secret.coffeeshop_app_secret
+    -target=aws_cloudwatch_log_group.application_logs
+    -target=aws_cloudwatch_log_group.host_logs
+    -target=aws_cloudwatch_log_group.dataplane_logs
+    -target=aws_cloudwatch_metric_alarm.rds_free_storage
+    -target=aws_cloudwatch_metric_alarm.node_cpu_high
+    -target=aws_eks_addon.ebs_csi
+    -target=aws_eks_addon.cloudwatch_observability
+    -target=aws_eks_pod_identity_association.eso
+    -target=aws_iam_role_policy_attachment.eso_attach
+    -target=aws_iam_policy.eso_policy
+    -target=aws_iam_role.eso_role
+    -target=aws_eks_pod_identity_association.cloudwatch_agent
+    -target=aws_iam_role_policy_attachment.cloudwatch_agent_attach
+    -target=aws_iam_role.cloudwatch_agent_role
+    -target=aws_eks_pod_identity_association.ebs_csi
+    -target=aws_iam_role_policy_attachment.ebs_csi_attach
+    -target=aws_iam_role.ebs_csi_role
     -target=aws_eks_pod_identity_association.aws_lb_controller
     -target=aws_iam_role_policy_attachment.aws_lb_controller_attach
     -target=aws_iam_policy.aws_lb_controller_policy
@@ -1049,9 +1278,6 @@ run_teardown() {
   cluster_arn="$(terraform_run "${PROD_TF_DIR}" output -raw cluster_arn)"
   vpc_id="$(terraform_run "${PROD_TF_DIR}" output -raw vpc_id)"
 
-  # Review and approve the exact Terraform destroy set before the first live
-  # mutation. Kubernetes resources are outside this state, so deleting them
-  # after approval does not invalidate the saved Terraform plan.
   plan_dir="$(mktemp -d)"
   plan_file="${plan_dir}/prod-teardown.tfplan"
   plan_json="${plan_dir}/prod-teardown.json"
@@ -1081,13 +1307,17 @@ run_teardown() {
       | .address
       | select(
           (
-            . == "aws_eks_pod_identity_association.aws_lb_controller"
-            or . == "aws_iam_role_policy_attachment.aws_lb_controller_attach"
-            or . == "aws_iam_policy.aws_lb_controller_policy"
-            or . == "aws_iam_role.aws_lb_controller"
-            or . == "aws_iam_role_policy_attachment.github_delivery_attach"
-            or . == "aws_iam_policy.github_delivery_policy"
-            or . == "aws_iam_role.github_delivery_role"
+            startswith("aws_db_instance.")
+            or startswith("aws_db_subnet_group.")
+            or startswith("aws_security_group.rds")
+            or startswith("aws_secretsmanager_secret.")
+            or startswith("aws_cloudwatch_log_group.")
+            or startswith("aws_cloudwatch_metric_alarm.")
+            or startswith("aws_eks_addon.")
+            or startswith("aws_eks_pod_identity_association.")
+            or startswith("aws_iam_role_policy_attachment.")
+            or startswith("aws_iam_policy.")
+            or startswith("aws_iam_role.")
             or startswith("aws_iam_openid_connect_provider.github")
             or startswith("module.eks_nodes.")
             or startswith("module.eks_cluster.")
@@ -1129,6 +1359,16 @@ run_teardown() {
       --output text 2>/dev/null || true)"
     [[ "${alb_arn}" != "None" ]] || alb_arn=""
   fi
+  if [[ -z "${alb_arn}" ]]; then
+    alb_arn="$(aws resourcegroupstaggingapi get-resources \
+      --resource-type-filters elasticloadbalancing:loadbalancer \
+      --tag-filters \
+        "Key=Project,Values=${PROJECT_NAME}" \
+        "Key=Environment,Values=${ENVIRONMENT}" \
+      --query 'ResourceTagMappingList[0].ResourceARN' \
+      --output text 2>/dev/null || true)"
+    [[ "${alb_arn}" != "None" ]] || alb_arn=""
+  fi
 
   if kubectl get application coffeeshop-prod -n argocd >/dev/null 2>&1; then
     echo "Deleting Argo CD Application coffeeshop-prod while controller is healthy..."
@@ -1138,7 +1378,24 @@ run_teardown() {
     kubectl delete ingress coffeeshop-prod-alb-ingress \
       -n coffeeshop --wait=true --timeout="${WAIT_TIMEOUT}"
   elif [[ -n "${alb_arn}" ]]; then
-    fail "tagged ALB exists but neither its Argo CD Application nor Ingress owner can be found"
+    echo "Application and Ingress are already absent; resuming the wait for their tagged ALB deletion."
+  fi
+  if kubectl get application coffeeshop-prod-platform -n argocd >/dev/null 2>&1; then
+    echo "Deleting Argo CD platform Application while controllers are healthy..."
+    kubectl delete application coffeeshop-prod-platform \
+      -n argocd --wait=true --timeout="${WAIT_TIMEOUT}"
+  fi
+  # A PROD-2-only cluster has never installed the PROD-3 ExternalSecret CRD.
+  # --ignore-not-found covers a missing object, but not a missing resource type.
+  if kubectl api-resources \
+    --api-group=external-secrets.io \
+    --output=name |
+    grep -Fxq 'externalsecrets.external-secrets.io'; then
+    kubectl delete externalsecrets.external-secrets.io \
+      coffeeshop-rds-master-bootstrap \
+      -n coffeeshop --ignore-not-found --wait=true --timeout="${WAIT_TIMEOUT}"
+  else
+    echo "ExternalSecret API is absent; skipping PROD-3 bootstrap secret cleanup."
   fi
   if [[ -n "${alb_arn}" ]]; then
     wait_for_alb_deletion "${alb_arn}"
@@ -1158,6 +1415,20 @@ run_teardown() {
       --namespace kube-system \
       --wait \
       --timeout "${WAIT_TIMEOUT}"
+  fi
+
+  # Do not replay the complete operator manifest during deletion. A PROD-2-only
+  # cluster does not have cert-manager CRDs, so kubectl cannot map the optional
+  # Certificate/Issuer documents even with --ignore-not-found. The operator is
+  # namespace-scoped for this teardown boundary; cluster-scoped artifacts vanish
+  # with the EKS cluster immediately afterwards.
+  kubectl delete namespace rabbitmq-system \
+    --ignore-not-found --wait=true --timeout="${WAIT_TIMEOUT}"
+  if helm status external-secrets -n external-secrets >/dev/null 2>&1; then
+    helm uninstall external-secrets -n external-secrets --wait --timeout "${WAIT_TIMEOUT}"
+  fi
+  if helm status cert-manager -n cert-manager >/dev/null 2>&1; then
+    helm uninstall cert-manager -n cert-manager --wait --timeout "${WAIT_TIMEOUT}"
   fi
 
   terraform_run "${PROD_TF_DIR}" apply -input=false "${plan_file}"

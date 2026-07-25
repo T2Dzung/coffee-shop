@@ -669,6 +669,19 @@ if [[ "${RUN_PROD}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
       exit 1
     fi
   fi
+
+  if [[ -d "${K8S_DIR}/environments/prod/platform" ]]; then
+    PROD_PLATFORM_RENDERED="$(kubectl kustomize \
+      "${K8S_DIR}/environments/prod/platform" \
+      --load-restrictor LoadRestrictionsNone)"
+    kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" <<<"${PROD_PLATFORM_RENDERED}"
+    for required_kind in StorageClass ClusterSecretStore ExternalSecret RabbitmqCluster PodDisruptionBudget NetworkPolicy; do
+      grep -Fq "kind: ${required_kind}" <<<"${PROD_PLATFORM_RENDERED}" || {
+        echo "Error: PROD platform render is missing ${required_kind}." >&2
+        exit 1
+      }
+    done
+  fi
 fi
 
 echo "Infrastructure validation completed successfully (env=${VALIDATE_ENV}, scope=${VALIDATE_SCOPE})."

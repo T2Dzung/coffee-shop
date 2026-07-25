@@ -259,6 +259,24 @@ grep -Fq 'CoffeeShop POS' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "ALB runtime verification must require the expected application marker"
 grep -Fq 'verify-gitops-health.sh" coffeeshop-prod' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "reconcile must run the standard GitOps health verifier"
+grep -Fq 'verify-gitops-health.sh" coffeeshop-prod-platform' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "reconcile must verify the platform Argo CD application too"
+grep -Fq -- '--api-group=external-secrets.io' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "teardown must detect whether the optional PROD-3 ExternalSecret API exists"
+grep -Fq 'externalsecrets.external-secrets.io' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "teardown must address ExternalSecret through its fully qualified resource name"
+grep -Fq -- '--resource-type-filters elasticloadbalancing:loadbalancer' \
+  "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "teardown resume must recover a controller-owned ALB by its PROD tags"
+grep -Fq 'resuming the wait for their tagged ALB deletion' \
+  "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "teardown must resume safely after Application and Ingress deletion"
+grep -Fq 'kubectl delete namespace rabbitmq-system' \
+  "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "teardown must remove the optional RabbitMQ operator without replaying unavailable CRD kinds"
+if grep -Fq 'kubectl delete --ignore-not-found' "${PROJECT_ROOT}/scripts/deploy-prod.sh"; then
+  fail "teardown must not replay the RabbitMQ operator manifest during deletion"
+fi
 if grep -Fq 'Key=Phase,Values=PROD-1' "${PROJECT_ROOT}/scripts/deploy-prod.sh"; then
   fail "teardown inventory must cover all PROD phases"
 fi
@@ -270,5 +288,92 @@ grep -Fq '__GITOPS_REPO_URL__' "${PROD_2_BOOTSTRAP}/appproject.yaml" || \
   fail "AppProject repository must remain clone-configurable"
 grep -Fq '__GITOPS_REVISION__' "${PROD_2_BOOTSTRAP}/coffeeshop-prod-app.yaml" || \
   fail "Argo CD target revision must remain clone-configurable"
+
+# PROD-3 managed integration and full release-set contracts.
+PROD_PLATFORM="${PROJECT_ROOT}/infrastructure/k8s/environments/prod/platform"
+PROD_BUILD_SCRIPT="${PROJECT_ROOT}/scripts/ci/build-go-service.sh"
+PROD_SECRETS_TF="${PROD_TF_DIR}/secrets.tf"
+
+[[ -f "${PROJECT_ROOT}/cmd/migrate/main.go" &&
+   -f "${PROJECT_ROOT}/docker/Dockerfile-migrate" ]] || \
+  fail "PROD-3 requires a dedicated migration command and image"
+if grep -Fq -- '-tags migrate' "${PROD_BUILD_SCRIPT}"; then
+  fail "normal CoffeeShop service builds must not run migrations from init()"
+fi
+grep -Fq 'MIGRATION_MODE must be bootstrap or migrate' \
+  "${PROJECT_ROOT}/cmd/migrate/main.go" || \
+  fail "migration image must expose bounded bootstrap and migrate modes"
+
+if grep -Eq 'random_password|aws_secretsmanager_secret_version|secret_string' "${PROD_SECRETS_TF}"; then
+  fail "application credential material must not enter Terraform state"
+fi
+[[ -f "${PROJECT_ROOT}/scripts/seed-prod-secrets.sh" ]] || \
+  fail "runtime application secret seed helper is missing"
+grep -Fq 'put-secret-value' "${PROJECT_ROOT}/scripts/seed-prod-secrets.sh" || \
+  fail "secret seed helper must write through Secrets Manager API"
+
+for service in web proxy product counter barista kitchen migrate; do
+  grep -Fq "name: go-coffeeshop-${service}" "${PROD_2_OVERLAY}/kustomization.yaml" || \
+    fail "PROD release set is missing ${service}"
+  grep -Fq -- "- ${service}" "${PROJECT_ROOT}/.github/workflows/commission-prod.yml" || \
+    fail "commission workflow cannot build ${service}"
+done
+for workflow in commission-prod.yml promote-prod.yml; do
+  grep -Fq 'scripts/ci/update-kustomize-image.sh' \
+    "${PROJECT_ROOT}/.github/workflows/${workflow}" || \
+    fail "${workflow} must update exactly one structured image entry"
+  if grep -Eq 'sed -i .*newName:|sed -i .*digest:' \
+    "${PROJECT_ROOT}/.github/workflows/${workflow}"; then
+    fail "${workflow} contains a release-set-wide sed replacement"
+  fi
+done
+FULL_STACK_WORKFLOW="${PROJECT_ROOT}/.github/workflows/commission-prod-stack.yml"
+[[ -f "${FULL_STACK_WORKFLOW}" ]] || \
+  fail "one-run PROD full-stack commissioning workflow is missing"
+[[ "$(grep -c 'uses: aquasecurity/trivy-action@' "${FULL_STACK_WORKFLOW}")" -eq 7 ]] || \
+  fail "full-stack commissioning must scan all seven exact local images"
+grep -Fq 'infrastructure/releases/prod/release-sets/' "${FULL_STACK_WORKFLOW}" || \
+  fail "full-stack commissioning must record one immutable release manifest"
+for workflow in commission-prod.yml commission-prod-stack.yml promote-prod.yml; do
+  grep -Fq 'group: prod-desired-state' "${PROJECT_ROOT}/.github/workflows/${workflow}" || \
+    fail "${workflow} must serialize PROD desired-state mutation"
+done
+
+[[ -f "${PROD_2_BOOTSTRAP}/coffeeshop-prod-platform-app.yaml" ]] || \
+  fail "PROD platform Argo CD Application is missing"
+grep -Fq 'path: infrastructure/k8s/environments/prod/platform' \
+  "${PROD_2_BOOTSTRAP}/coffeeshop-prod-platform-app.yaml" || \
+  fail "PROD platform Application points to the wrong source"
+for resource in \
+  storage/storageclass-gp3.yaml \
+  external-secrets/cluster-secret-store.yaml \
+  external-secrets/external-secret.yaml \
+  external-secrets/rabbitmq-external-secret.yaml \
+  rabbitmq/rabbitmq-cluster.yaml \
+  rabbitmq/pdb.yaml \
+  rabbitmq/networkpolicy.yaml; do
+  grep -Fq -- "- ${resource}" "${PROD_PLATFORM}/kustomization.yaml" || \
+    fail "PROD platform graph is missing ${resource}"
+done
+if grep -Fq 'auth:' "${PROD_PLATFORM}/external-secrets/cluster-secret-store.yaml"; then
+  fail "ESO EKS Pod Identity store must use the controller credential chain, not auth.jwt"
+fi
+grep -Fq 'external-secrets.io/v1' \
+  "${PROD_PLATFORM}/external-secrets/cluster-secret-store.yaml" || \
+  fail "ESO resources must use the pinned controller's served v1 API"
+grep -Fq 'monitorAllServices = false' "${PROD_TF_DIR}/eks.tf" || \
+  fail "CloudWatch Application Signals auto-monitoring must stay disabled"
+grep -Fq '/aws/containerinsights/' "${PROD_TF_DIR}/observability.tf" || \
+  fail "CloudWatch retention must own the actual Container Insights log groups"
+grep -Fq 'AmazonRDS' "${PROJECT_ROOT}/scripts/estimate-prod-hourly-cost.sh" || \
+  fail "hourly estimator must query current RDS pricing"
+grep -Fq 'aws_db_instance.postgres' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "PROD teardown must include the RDS data boundary"
+grep -Fq 'expected 7:0' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "setup must fail closed until all seven release digests are present"
+grep -Fq 'http.StripPrefix("/api"' "${PROJECT_ROOT}/cmd/proxy/main.go" || \
+  fail "proxy must strip the public /api prefix before gRPC-Gateway routing"
+grep -Fq '/api/v1/api/orders' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "runtime verification must exercise the external full transaction path"
 
 echo "PROD static contracts passed."

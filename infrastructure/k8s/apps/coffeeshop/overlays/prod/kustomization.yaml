@@ -6,12 +6,54 @@ namespace: coffeeshop
 resources:
   - ../../components/namespace
   - ../../components/web
+  - ../../base/proxy.yaml
+  - ../../base/product.yaml
+  - ../../base/counter.yaml
+  - ../../base/barista.yaml
+  - ../../base/kitchen.yaml
+  - database-bootstrap-job.yaml
+  - migration-job.yaml
   - configmap.yaml
   - ingress.yaml
 
-# Pinned immutable ECR digest for PROD web slice
-# Updated automatically by GitHub Actions promote-prod workflow
+# Pinned immutable ECR digests for PROD CoffeeShop release set
+# Updated automatically by GitHub Actions workflows
 images:
   - name: go-coffeeshop-web
     newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: go-coffeeshop-proxy
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: go-coffeeshop-product
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: go-coffeeshop-counter
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: go-coffeeshop-barista
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: go-coffeeshop-kitchen
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: go-coffeeshop-migrate
+    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: (web|proxy|product|counter|barista|kitchen)
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi

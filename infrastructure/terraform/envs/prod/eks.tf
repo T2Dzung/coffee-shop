@@ -27,3 +27,32 @@ module "eks_nodes" {
   volume_throughput = var.node_disk_throughput
   tags              = local.common_tags
 }
+
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name  = module.eks_cluster.cluster_name
+  addon_name    = "aws-ebs-csi-driver"
+  addon_version = var.ebs_csi_addon_version
+
+  tags = local.common_tags
+
+  depends_on = [aws_eks_pod_identity_association.ebs_csi]
+}
+
+resource "aws_eks_addon" "cloudwatch_observability" {
+  cluster_name  = module.eks_cluster.cluster_name
+  addon_name    = "amazon-cloudwatch-observability"
+  addon_version = var.cloudwatch_observability_addon_version
+  configuration_values = jsonencode({
+    manager = {
+      applicationSignals = {
+        autoMonitor = {
+          monitorAllServices = false
+        }
+      }
+    }
+  })
+
+  tags = local.common_tags
+
+  depends_on = [aws_eks_pod_identity_association.cloudwatch_agent]
+}

@@ -121,6 +121,7 @@ func main() {
 		return
 	}
 
+	mux.Handle("/api/", http.StripPrefix("/api", gw))
 	mux.Handle("/", gw)
 
 	s := &http.Server{

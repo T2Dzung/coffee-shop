@@ -8,6 +8,7 @@ locals {
     counter                  = "go-coffeeshop-counter"
     barista                  = "go-coffeeshop-barista"
     kitchen                  = "go-coffeeshop-kitchen"
+    migrate                  = "go-coffeeshop-migrate"
     platform_ownership_guard = "platform-ownership-guard"
   }
 }
