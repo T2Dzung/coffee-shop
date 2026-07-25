@@ -115,7 +115,7 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >>"${GITHUB_OUTPUT}"
 
       - name: Configure DEV artifact credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.DEV_AWS_REGION || 'ap-southeast-1' }}
@@ -228,7 +228,7 @@ jobs:
           echo "sha=${SHA}" >>"${GITHUB_OUTPUT}"
 
       - name: Configure DEV artifact credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.DEV_AWS_REGION || 'ap-southeast-1' }}
