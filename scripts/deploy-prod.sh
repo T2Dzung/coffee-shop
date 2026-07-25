@@ -647,7 +647,16 @@ run_g3() {
   terraform_apply "${PROD_TF_DIR}" \
     -target=aws_db_instance.postgres \
     -target=aws_secretsmanager_secret.coffeeshop_app_secret \
+    -target=aws_iam_role.eso_role \
+    -target=aws_iam_policy.eso_policy \
+    -target=aws_iam_role_policy_attachment.eso_attach \
     -target=aws_eks_pod_identity_association.eso \
+    -target=aws_iam_role.cloudwatch_agent_role \
+    -target=aws_iam_role_policy_attachment.cloudwatch_agent_attach \
+    -target=aws_eks_pod_identity_association.cloudwatch_agent \
+    -target=aws_iam_role.ebs_csi_role \
+    -target=aws_iam_role_policy_attachment.ebs_csi_attach \
+    -target=aws_eks_pod_identity_association.ebs_csi \
     -target=aws_eks_addon.ebs_csi \
     -target=aws_eks_addon.cloudwatch_observability \
     -target=aws_cloudwatch_log_group.application_logs \

@@ -29,9 +29,11 @@ module "eks_nodes" {
 }
 
 resource "aws_eks_addon" "ebs_csi" {
-  cluster_name  = module.eks_cluster.cluster_name
-  addon_name    = "aws-ebs-csi-driver"
-  addon_version = var.ebs_csi_addon_version
+  cluster_name                = module.eks_cluster.cluster_name
+  addon_name                  = "aws-ebs-csi-driver"
+  addon_version               = var.ebs_csi_addon_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
 
   tags = local.common_tags
 
@@ -39,9 +41,11 @@ resource "aws_eks_addon" "ebs_csi" {
 }
 
 resource "aws_eks_addon" "cloudwatch_observability" {
-  cluster_name  = module.eks_cluster.cluster_name
-  addon_name    = "amazon-cloudwatch-observability"
-  addon_version = var.cloudwatch_observability_addon_version
+  cluster_name                = module.eks_cluster.cluster_name
+  addon_name                  = "amazon-cloudwatch-observability"
+  addon_version               = var.cloudwatch_observability_addon_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
   configuration_values = jsonencode({
     manager = {
       applicationSignals = {
