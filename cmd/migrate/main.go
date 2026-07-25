@@ -93,8 +93,16 @@ func bootstrapApplicationRole(masterURL, applicationPassword string) error {
 		return fmt.Errorf("connect with master credential: %w", err)
 	}
 
+	bootstrapSQL := buildBootstrapSQL(applicationPassword)
+	if _, err := db.ExecContext(ctx, bootstrapSQL); err != nil {
+		return fmt.Errorf("create or update application role: %w", err)
+	}
+	return nil
+}
+
+func buildBootstrapSQL(applicationPassword string) string {
 	passwordLiteral := pq.QuoteLiteral(applicationPassword)
-	bootstrapSQL := fmt.Sprintf(`
+	return fmt.Sprintf(`
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '%s') THEN
@@ -105,14 +113,10 @@ BEGIN
 END
 $$;
 GRANT CONNECT ON DATABASE postgres TO %s;
+GRANT CREATE ON DATABASE postgres TO %s;
 GRANT USAGE, CREATE ON SCHEMA public TO %s;
 `, applicationRole, applicationRole, passwordLiteral, applicationRole, passwordLiteral,
-		applicationRole, applicationRole)
-
-	if _, err := db.ExecContext(ctx, bootstrapSQL); err != nil {
-		return fmt.Errorf("create or update application role: %w", err)
-	}
-	return nil
+		applicationRole, applicationRole, applicationRole)
 }
 
 func migrateSchema(databaseURL, migrationPath string) error {

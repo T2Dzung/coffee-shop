@@ -33,3 +33,17 @@ func TestRequireTLSDSNRejectsIncompleteInput(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildBootstrapSQLGrantsDatabaseSchemaCreation(t *testing.T) {
+	statement := buildBootstrapSQL("p'ass")
+	for _, required := range []string{
+		"GRANT CONNECT ON DATABASE postgres TO coffeeshop_app;",
+		"GRANT CREATE ON DATABASE postgres TO coffeeshop_app;",
+		"GRANT USAGE, CREATE ON SCHEMA public TO coffeeshop_app;",
+		"PASSWORD 'p''ass'",
+	} {
+		if !strings.Contains(statement, required) {
+			t.Errorf("bootstrap SQL is missing %q", required)
+		}
+	}
+}

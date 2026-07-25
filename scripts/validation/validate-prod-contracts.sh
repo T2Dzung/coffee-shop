@@ -320,6 +320,9 @@ fi
 grep -Fq 'MIGRATION_MODE must be bootstrap or migrate' \
   "${PROJECT_ROOT}/cmd/migrate/main.go" || \
   fail "migration image must expose bounded bootstrap and migrate modes"
+grep -Fq 'GRANT CREATE ON DATABASE postgres' \
+  "${PROJECT_ROOT}/cmd/migrate/main.go" || \
+  fail "application migration role must be allowed to create its owned schemas"
 
 if grep -Eq 'random_password|aws_secretsmanager_secret_version|secret_string' "${PROD_SECRETS_TF}"; then
   fail "application credential material must not enter Terraform state"
