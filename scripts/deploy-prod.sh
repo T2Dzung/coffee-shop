@@ -692,7 +692,7 @@ run_g3() {
 run_g4() {
   local cluster_name cluster_arn vpc_id controller_role_arn association_list association_count association_id association_json
   local load_balancers_json load_balancer_arn load_balancer_az_count
-  local target_groups_json target_group_arn target_health_json listener_json
+  local target_groups_json target_group_arn target_health_json listener_json web_service_port
   local healthy_count healthy_az_count ready_pod_ips healthy_target_ips http_response
   echo "=== G4: protected delivery, Argo CD and ALB IP-target ingress ==="
   verify_caller
@@ -870,10 +870,16 @@ run_g4() {
     --load-balancer-arn "${load_balancer_arn}" \
     --region "${EXPECTED_REGION}" \
     --output json)"
-  target_group_arn="$(jq -r '[.TargetGroups[] | select(.TargetType == "ip")] | if length == 1 then .[0].TargetGroupArn else empty end' \
+  web_service_port="$(kubectl get service web -n coffeeshop \
+    -o jsonpath='{.spec.ports[0].port}')"
+  [[ "${web_service_port}" =~ ^[0-9]+$ ]] || \
+    fail "could not discover the web Service port"
+  target_group_arn="$(jq -r --argjson port "${web_service_port}" \
+    '[.TargetGroups[] | select(.TargetType == "ip" and .Port == $port)]
+     | if length == 1 then .[0].TargetGroupArn else empty end' \
     <<<"${target_groups_json}")"
   [[ -n "${target_group_arn}" ]] || \
-    fail "expected exactly one IP target group owned by ${load_balancer_arn}"
+    fail "expected exactly one IP target group for web Service port ${web_service_port}"
   listener_json="$(aws elbv2 describe-listeners \
     --load-balancer-arn "${load_balancer_arn}" \
     --region "${EXPECTED_REGION}" \
@@ -947,7 +953,7 @@ run_g4() {
 verify_reconciled_runtime() {
   local cluster_name cluster_arn node_group_name desired_size ready_count
   local alb_hostname load_balancers_json load_balancer_arn alb_az_count
-  local target_groups_json target_group_arn target_health_json listener_json
+  local target_groups_json target_group_arn target_health_json listener_json web_service_port
   local healthy_count healthy_az_count ready_pod_ips healthy_target_ips
   local desired_digest git_digest running_image_id http_response
 
@@ -1010,12 +1016,16 @@ verify_reconciled_runtime() {
   target_groups_json="$(aws elbv2 describe-target-groups \
     --load-balancer-arn "${load_balancer_arn}" \
     --output json)"
-  target_group_arn="$(jq -r \
-    '[.TargetGroups[] | select(.TargetType == "ip")]
+  web_service_port="$(kubectl get service web -n coffeeshop \
+    -o jsonpath='{.spec.ports[0].port}')"
+  [[ "${web_service_port}" =~ ^[0-9]+$ ]] || \
+    fail "reconcile could not discover the web Service port"
+  target_group_arn="$(jq -r --argjson port "${web_service_port}" \
+    '[.TargetGroups[] | select(.TargetType == "ip" and .Port == $port)]
      | if length == 1 then .[0].TargetGroupArn else empty end' \
     <<<"${target_groups_json}")"
   [[ -n "${target_group_arn}" ]] || \
-    fail "reconcile expected exactly one IP target group for ${load_balancer_arn}"
+    fail "reconcile expected exactly one IP target group for web Service port ${web_service_port}"
   listener_json="$(aws elbv2 describe-listeners \
     --load-balancer-arn "${load_balancer_arn}" \
     --output json)"

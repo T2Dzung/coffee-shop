@@ -144,8 +144,9 @@ grep -Fq -- '--atomic' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "G4 Helm deployment must roll back automatically when readiness fails"
 grep -Fq 'describe-pod-identity-association' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "G4 must verify the exact Pod Identity role association"
-grep -Fq 'expected exactly one IP target group' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
-  fail "G4 target group discovery must fail closed"
+grep -Fq 'expected exactly one IP target group for web Service port' \
+  "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+  fail "G4 must select the unique web IP target group without assuming the ALB has only one backend"
 grep -Fq 'healthy ALB targets' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "G4 must verify healthy IP targets across Availability Zones"
