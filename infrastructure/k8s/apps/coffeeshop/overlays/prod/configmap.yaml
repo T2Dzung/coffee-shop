@@ -21,6 +21,8 @@ data:
   IN_DOCKER: "true"
 
   OTEL_EXPORTER_OTLP_ENDPOINT: "none"
-  OTEL_TRACES_SAMPLER: "always_off"
+  # The application supports one bounded sampler contract. Ratio 0 disables
+  # export while preserving the same parser/runtime path used by DEV.
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
   OTEL_TRACES_SAMPLER_ARG: "0.0"
   OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=prod"

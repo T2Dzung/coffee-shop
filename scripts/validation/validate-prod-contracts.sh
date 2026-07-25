@@ -323,6 +323,17 @@ grep -Fq 'MIGRATION_MODE must be bootstrap or migrate' \
 grep -Fq 'GRANT CREATE ON DATABASE postgres' \
   "${PROJECT_ROOT}/cmd/migrate/main.go" || \
   fail "application migration role must be allowed to create its owned schemas"
+for hook_job in database-bootstrap-job.yaml migration-job.yaml; do
+  grep -Fq 'argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded' \
+    "${PROD_2_OVERLAY}/${hook_job}" || \
+    fail "${hook_job} must replace an immutable hook Job before a new release sync"
+done
+grep -Fq 'OTEL_TRACES_SAMPLER: "parentbased_traceidratio"' \
+  "${PROD_2_OVERLAY}/configmap.yaml" || \
+  fail "PROD telemetry sampler must match the application parser contract"
+grep -Fq 'OTEL_TRACES_SAMPLER_ARG: "0.0"' \
+  "${PROD_2_OVERLAY}/configmap.yaml" || \
+  fail "PROD must disable trace sampling through the supported zero ratio"
 
 if grep -Eq 'random_password|aws_secretsmanager_secret_version|secret_string' "${PROD_SECRETS_TF}"; then
   fail "application credential material must not enter Terraform state"
