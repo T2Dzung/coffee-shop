@@ -5,8 +5,7 @@ Thư mục này phân loại theo ownership, env
 ```text
 apps/
 └── coffeeshop/
-    ├── base/          Full application resources dùng cho DEV
-    ├── components/    Reusable bounded slices, không chứa environment identity
+    ├── base/          Portable workload bundle dùng chung cho DEV và PROD
     └── overlays/
         ├── dev/       DEV ECR tags và DEV-specific patches
         └── prod/      PROD ECR digest, config và ALB Ingress
@@ -28,7 +27,7 @@ environments/
   Git-backed Argo sources dùng `HEAD`; chart source vẫn pin version cụ thể.
 - PR validation không publish release artifact. Sau merge, workflow build source SHA tối
   đa một lần, pin DEV bằng digest và chỉ PROD-promote candidate có QA evidence khớp.
-- `apps/coffeeshop/base` và `components` không được chứa AWS account ID, registry của một
+- `apps/coffeeshop/base` không được chứa AWS account ID, registry của một
   môi trường hoặc bootstrap của cluster.
 - Environment-owned image identity chỉ nằm trong `overlays/dev` hoặc `overlays/prod`.
 - DEV root Application chỉ recurse `environments/dev/gitops/applications`.

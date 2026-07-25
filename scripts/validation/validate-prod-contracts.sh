@@ -294,6 +294,23 @@ PROD_PLATFORM="${PROJECT_ROOT}/infrastructure/k8s/environments/prod/platform"
 PROD_BUILD_SCRIPT="${PROJECT_ROOT}/scripts/ci/build-go-service.sh"
 PROD_SECRETS_TF="${PROD_TF_DIR}/secrets.tf"
 
+if grep -Fq -- '--load-restrictor LoadRestrictionsNone' \
+  "${PROJECT_ROOT}/scripts/validate-infra.sh"; then
+  fail "local validation must use the same Kustomize load restriction as Argo CD"
+fi
+grep -Fq '../../base' "${PROD_2_OVERLAY}/kustomization.yaml" || \
+  fail "PROD overlay must consume the complete portable CoffeeShop base"
+for service in web proxy product counter barista kitchen; do
+  [[ -f "${PROJECT_ROOT}/infrastructure/k8s/apps/coffeeshop/base/${service}.yaml" ]] || \
+    fail "portable CoffeeShop base is missing ${service}"
+done
+for dev_owned_resource in configmap.yaml postgres.yaml; do
+  [[ ! -e "${PROJECT_ROOT}/infrastructure/k8s/apps/coffeeshop/base/${dev_owned_resource}" ]] || \
+    fail "portable CoffeeShop base contains DEV-owned ${dev_owned_resource}"
+  [[ -f "${PROJECT_ROOT}/infrastructure/k8s/apps/coffeeshop/overlays/dev/${dev_owned_resource}" ]] || \
+    fail "DEV overlay is missing ${dev_owned_resource}"
+done
+
 [[ -f "${PROJECT_ROOT}/cmd/migrate/main.go" &&
    -f "${PROJECT_ROOT}/docker/Dockerfile-migrate" ]] || \
   fail "PROD-3 requires a dedicated migration command and image"
@@ -311,6 +328,24 @@ fi
   fail "runtime application secret seed helper is missing"
 grep -Fq 'put-secret-value' "${PROJECT_ROOT}/scripts/seed-prod-secrets.sh" || \
   fail "secret seed helper must write through Secrets Manager API"
+RDS_MASTER_EXTERNAL_SECRET="${PROD_2_BOOTSTRAP}/rds-master-external-secret.yaml.tpl"
+for placeholder in __RDS_MASTER_SECRET_ARN__ __RDS_ADDRESS__ __RDS_PORT__; do
+  grep -Fq "${placeholder}" "${RDS_MASTER_EXTERNAL_SECRET}" || \
+    fail "RDS bootstrap ExternalSecret is missing render input ${placeholder}"
+done
+for property in username password; do
+  grep -Fq "property: ${property}" "${RDS_MASTER_EXTERNAL_SECRET}" || \
+    fail "RDS bootstrap ExternalSecret must read ${property} from the managed secret"
+done
+for invalid_property in host port; do
+  if grep -Fq "property: ${invalid_property}" "${RDS_MASTER_EXTERNAL_SECRET}"; then
+    fail "RDS-managed master secret does not provide ${invalid_property}"
+  fi
+done
+for output_name in rds_master_secret_arn rds_address rds_port; do
+  grep -Fq "output -raw ${output_name}" "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
+    fail "RDS bootstrap renderer is missing Terraform output ${output_name}"
+done
 
 for service in web proxy product counter barista kitchen migrate; do
   grep -Fq "name: go-coffeeshop-${service}" "${PROD_2_OVERLAY}/kustomization.yaml" || \

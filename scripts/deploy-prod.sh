@@ -267,6 +267,7 @@ wait_for_promoted_digest() {
       digest_summary="$(
         git show "FETCH_HEAD:${overlay_path}" 2>/dev/null |
           awk '
+            BEGIN { count=0; placeholders=0 }
             /^[[:space:]]*digest:[[:space:]]*sha256:/ {
               count++
               if ($2 == "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
@@ -313,11 +314,20 @@ wait_for_argocd_application() {
 }
 
 apply_rds_master_external_secret() {
-  local master_secret_arn
+  local master_secret_arn rds_address rds_port
   master_secret_arn="$(terraform_run "${PROD_TF_DIR}" output -raw rds_master_secret_arn)"
+  rds_address="$(terraform_run "${PROD_TF_DIR}" output -raw rds_address)"
+  rds_port="$(terraform_run "${PROD_TF_DIR}" output -raw rds_port)"
   [[ "${master_secret_arn}" == arn:aws:secretsmanager:* ]] || \
     fail "Terraform returned an invalid RDS master secret ARN"
-  sed "s|__RDS_MASTER_SECRET_ARN__|${master_secret_arn}|g" \
+  [[ "${rds_address}" =~ ^[A-Za-z0-9.-]+$ ]] || \
+    fail "Terraform returned an invalid RDS address"
+  [[ "${rds_port}" =~ ^[0-9]+$ ]] || \
+    fail "Terraform returned an invalid RDS port"
+  sed \
+    -e "s|__RDS_MASTER_SECRET_ARN__|${master_secret_arn}|g" \
+    -e "s|__RDS_ADDRESS__|${rds_address}|g" \
+    -e "s|__RDS_PORT__|${rds_port}|g" \
     "${PROJECT_ROOT}/infrastructure/k8s/environments/prod/bootstrap/rds-master-external-secret.yaml.tpl" |
     kubectl apply -f -
 }

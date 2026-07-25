@@ -576,7 +576,7 @@ fi
 # three synchronous services. Keep their shared OTLP endpoint and sampling
 # configuration Git-managed so an image rollout cannot silently fall back to
 # localhost or a different sampler.
-COFFEESHOP_CONFIG="${K8S_DIR}/apps/coffeeshop/base/configmap.yaml"
+COFFEESHOP_CONFIG="${K8S_DIR}/apps/coffeeshop/overlays/dev/configmap.yaml"
 if ! grep -Fq 'OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"' "${COFFEESHOP_CONFIG}" ||
   ! grep -Fq 'OTEL_TRACES_SAMPLER: "parentbased_traceidratio"' "${COFFEESHOP_CONFIG}" ||
   ! grep -Fq 'OTEL_TRACES_SAMPLER_ARG: "1.0"' "${COFFEESHOP_CONFIG}" ||
@@ -661,7 +661,7 @@ if [[ "${RUN_PROD}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
   fi
 
   if [[ -d "${K8S_DIR}/apps/coffeeshop/overlays/prod" ]]; then
-    PROD_RENDERED="$(kubectl kustomize "${K8S_DIR}/apps/coffeeshop/overlays/prod" --load-restrictor LoadRestrictionsNone)"
+    PROD_RENDERED="$(kubectl kustomize "${K8S_DIR}/apps/coffeeshop/overlays/prod")"
     kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" <<<"${PROD_RENDERED}"
 
     if ! grep -Fq "ingressClassName: alb" <<<"${PROD_RENDERED}"; then
@@ -672,8 +672,7 @@ if [[ "${RUN_PROD}" == "true" && "${RUN_PLATFORM}" == "true" ]]; then
 
   if [[ -d "${K8S_DIR}/environments/prod/platform" ]]; then
     PROD_PLATFORM_RENDERED="$(kubectl kustomize \
-      "${K8S_DIR}/environments/prod/platform" \
-      --load-restrictor LoadRestrictionsNone)"
+      "${K8S_DIR}/environments/prod/platform")"
     kubeconform "${KUBECONFORM_COMMON_ARGS[@]}" <<<"${PROD_PLATFORM_RENDERED}"
     for required_kind in StorageClass ClusterSecretStore ExternalSecret RabbitmqCluster PodDisruptionBudget NetworkPolicy; do
       grep -Fq "kind: ${required_kind}" <<<"${PROD_PLATFORM_RENDERED}" || {
