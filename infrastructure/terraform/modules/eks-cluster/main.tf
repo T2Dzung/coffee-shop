@@ -104,8 +104,13 @@ resource "aws_eks_addon" "pod_identity" {
 }
 
 resource "aws_eks_addon" "vpc_cni" {
-  cluster_name = aws_eks_cluster.this.name
-  addon_name   = "vpc-cni"
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "vpc-cni"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  configuration_values = jsonencode({
+    enableNetworkPolicy = tostring(var.enable_vpc_cni_network_policy)
+  })
 
   tags = local.common_tags
 }

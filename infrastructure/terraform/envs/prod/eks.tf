@@ -1,13 +1,14 @@
 module "eks_cluster" {
   source = "../../modules/eks-cluster"
 
-  cluster_name                 = var.cluster_name
-  cluster_version              = var.cluster_version
-  subnet_ids                   = module.vpc.private_subnet_ids
-  enabled_cluster_log_types    = ["api", "audit", "authenticator"]
-  log_retention_in_days        = 7
-  endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
-  tags                         = local.common_tags
+  cluster_name                  = var.cluster_name
+  cluster_version               = var.cluster_version
+  subnet_ids                    = module.vpc.private_subnet_ids
+  enabled_cluster_log_types     = ["api", "audit", "authenticator"]
+  log_retention_in_days         = 7
+  endpoint_public_access_cidrs  = var.cluster_endpoint_public_access_cidrs
+  enable_vpc_cni_network_policy = true
+  tags                          = local.common_tags
 }
 
 module "eks_nodes" {

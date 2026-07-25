@@ -159,6 +159,29 @@ grep -Fq 'run_g4' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
 
 grep -Fq 'run_reconcile' "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "WP4 must implement a non-targeted full reconcile action"
+
+PROD_RESILIENCE="${PROJECT_ROOT}/scripts/verify-prod-resilience.sh"
+[[ -x "${PROD_RESILIENCE}" ]] || \
+  fail "PROD-3 resilience runner is missing or not executable"
+grep -Fq 'PROD_CONFIRM_RESILIENCE' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must require explicit account-scoped confirmation"
+grep -Fq 'resilience-denied-secret' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must verify ESO exact-ARN denial"
+grep -Fq 'resilience-invalid-migration' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must verify migration failure"
+grep -Fq 'resilience-db-network-denied' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must use a declared database network failure fixture"
+grep -Fq 'coffeeshop-rabbitmq-server-0' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must verify single-broker recovery"
+grep -Fq 'wait_for_alarm_state ALARM' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must observe a real CloudWatch ALARM transition"
+grep -Fq 'trap cleanup EXIT' "${PROD_RESILIENCE}" || \
+  fail "PROD-3 resilience runner must clean fixtures on failure"
+grep -Fq 'enable_vpc_cni_network_policy = true' "${PROD_TF_DIR}/eks.tf" || \
+  fail "PROD must explicitly enable VPC CNI NetworkPolicy enforcement"
+grep -Fq 'enableNetworkPolicy = tostring(var.enable_vpc_cni_network_policy)' \
+  "${PROJECT_ROOT}/infrastructure/terraform/modules/eks-cluster/main.tf" || \
+  fail "EKS module must map the NetworkPolicy input into VPC CNI add-on configuration"
 grep -Fq 'full reconcile plan contains delete/replacement actions' \
   "${PROJECT_ROOT}/scripts/deploy-prod.sh" || \
   fail "WP4 reconcile must reject delete and replacement actions"

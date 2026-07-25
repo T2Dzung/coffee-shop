@@ -40,6 +40,12 @@ variable "endpoint_public_access_cidrs" {
   }
 }
 
+variable "enable_vpc_cni_network_policy" {
+  description = "Whether the EKS VPC CNI add-on must enforce Kubernetes NetworkPolicy"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Map of tags to apply to all resources"
   type        = map(string)
