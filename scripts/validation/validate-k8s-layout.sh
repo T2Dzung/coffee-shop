@@ -11,7 +11,6 @@ fail() {
 
 for required_path in \
   apps/coffeeshop/base \
-  apps/coffeeshop/components \
   apps/coffeeshop/overlays/dev \
   apps/coffeeshop/overlays/prod \
   environments/dev/bootstrap/root-app.yaml \
@@ -30,8 +29,7 @@ for obsolete_tree in bootstrap gateway gitops legacy policies prod; do
 done
 
 if grep -ERn '(^|[^0-9])[0-9]{12}\.dkr\.ecr\.' \
-  "${K8S_DIR}/apps/coffeeshop/base" \
-  "${K8S_DIR}/apps/coffeeshop/components"; then
+  "${K8S_DIR}/apps/coffeeshop/base"; then
   fail "shared CoffeeShop manifests contain an environment-owned ECR account ID"
 fi
 

@@ -4,13 +4,7 @@ kind: Kustomization
 namespace: coffeeshop
 
 resources:
-  - ../../components/namespace
-  - ../../components/web
-  - ../../base/proxy.yaml
-  - ../../base/product.yaml
-  - ../../base/counter.yaml
-  - ../../base/barista.yaml
-  - ../../base/kitchen.yaml
+  - ../../base
   - database-bootstrap-job.yaml
   - migration-job.yaml
   - configmap.yaml

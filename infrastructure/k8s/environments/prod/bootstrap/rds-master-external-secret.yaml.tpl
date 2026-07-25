@@ -11,6 +11,13 @@ spec:
   target:
     name: coffeeshop-rds-master-bootstrap
     creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        username: "{{ .username }}"
+        password: "{{ .password }}"
+        host: "__RDS_ADDRESS__"
+        port: "__RDS_PORT__"
   data:
     - secretKey: username
       remoteRef:
@@ -20,11 +27,3 @@ spec:
       remoteRef:
         key: __RDS_MASTER_SECRET_ARN__
         property: password
-    - secretKey: host
-      remoteRef:
-        key: __RDS_MASTER_SECRET_ARN__
-        property: host
-    - secretKey: port
-      remoteRef:
-        key: __RDS_MASTER_SECRET_ARN__
-        property: port
