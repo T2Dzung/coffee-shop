@@ -234,7 +234,10 @@ jobs:
           base: ${{ github.event.repository.default_branch }}
           branch: automation/candidates-${{ github.run_id }}-${{ github.run_attempt }}
           title: "chore(release): record immutable candidates"
-          body: "Candidate metadata records exact digests and runner evidence from protected commit ${{ needs.detect-components.outputs.source_commit }}. Merge before recording QA approval."
+          body: >-
+            Candidate metadata records exact digests and runner evidence from protected
+            commit ${{ needs.detect-components.outputs.source_commit }}. Merge before
+            recording QA approval.
 
   release-status:
     name: Release Candidate Status

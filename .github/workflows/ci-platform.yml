@@ -240,13 +240,13 @@ jobs:
         run: |
           DETECT_RESULT="${{ needs.detect-changes.result }}"
           CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
-          
+
           # Fail early if detect-changes job failed or was cancelled
           if [ "$DETECT_RESULT" != "success" ]; then
             echo "Error: The pre-requisite job 'detect-changes' failed or was cancelled."
             exit 1
           fi
-          
+
           # If no infra changes were detected, this workflow is skipped and counts as pass
           if [ "$CHANGED" != "true" ]; then
             echo "No infra changes detected. Skipping checks."
