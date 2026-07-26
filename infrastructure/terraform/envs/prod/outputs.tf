@@ -48,6 +48,11 @@ output "github_emergency_delivery_role_arn" {
   value       = aws_iam_role.github_emergency_delivery_role.arn
 }
 
+output "github_dev_candidate_reader_role_arn" {
+  description = "Read-only candidate ECR role for the GitHub DEV Environment"
+  value       = aws_iam_role.github_dev_candidate_reader_role.arn
+}
+
 output "budget_name" {
   description = "The name of the AWS Budget"
   value       = aws_budgets_budget.prod_budget.name

@@ -36,3 +36,24 @@ func TestApplyRejectsChangedSavedPlan(t *testing.T) {
 	require.ErrorContains(t, err, "fingerprint changed")
 	require.Empty(t, fake.Requests)
 }
+
+func TestCreatePlanPassesBooleanVariableWithoutStringQuoting(t *testing.T) {
+	t.Parallel()
+	// CreatePlan owns a randomized saved-plan path, so use a recording runner that
+	// stops after the plan command and inspect the stable variable argument.
+	recorder := &recordingErrorRunner{}
+	client := Client{
+		Runner: recorder, Dir: "/tf", DataDir: "/data",
+		BooleanVariables: map[string]bool{"dev_runtime_enabled": true},
+	}
+	_, _ = client.CreatePlan(context.Background(), t.TempDir(), "bool", false, nil)
+	require.NotEmpty(t, recorder.requests)
+	require.Contains(t, recorder.requests[0].Args, "-var=dev_runtime_enabled=true")
+}
+
+type recordingErrorRunner struct{ requests []command.Request }
+
+func (r *recordingErrorRunner) Run(_ context.Context, request command.Request) (command.Result, error) {
+	r.requests = append(r.requests, request)
+	return command.Result{}, os.ErrInvalid
+}

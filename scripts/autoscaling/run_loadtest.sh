@@ -9,11 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 K6_SCRIPT="${SCRIPT_DIR}/k6_read_journey.js"
 
-# Auto-activate platform environment & KUBECONFIG if not already set
-if [ -f "${SCRIPT_DIR}/../activate-env.sh" ]; then
-    # shellcheck disable=SC1091
-    source "${SCRIPT_DIR}/../activate-env.sh" >/dev/null 2>&1 || true
-fi
+# Runtime helpers use the stable DEV kubeconfig contract. Lifecycle credentials and
+# local paths are owned by platformctl's operator config, not sourced shell state.
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/coffeeshop-dev.yaml}"
 
 # Artifact evidence output directory

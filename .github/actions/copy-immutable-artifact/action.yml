@@ -1,0 +1,52 @@
+name: Copy immutable artifact
+description: Copy an authenticated OCI artifact between registries without rebuilding it
+
+inputs:
+  source-image:
+    required: true
+  source-digest:
+    required: true
+  destination-image:
+    required: true
+  destination-tag:
+    required: true
+
+outputs:
+  image:
+    value: ${{ steps.copy.outputs.image }}
+  digest:
+    value: ${{ steps.copy.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install pinned registry copy utility
+      shell: bash
+      run: >-
+        GOBIN="${RUNNER_TEMP}" go install
+        github.com/google/go-containerregistry/cmd/crane@c68d899782693b63b7549166812aa996f17a660c
+
+    - name: Copy and verify exact digest
+      id: copy
+      shell: bash
+      env:
+        SOURCE_IMAGE: ${{ inputs.source-image }}
+        SOURCE_DIGEST: ${{ inputs.source-digest }}
+        DESTINATION_IMAGE: ${{ inputs.destination-image }}
+        DESTINATION_TAG: ${{ inputs.destination-tag }}
+      run: |
+        set -Eeuo pipefail
+        [[ "${SOURCE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+        existing="$(${RUNNER_TEMP}/crane digest \
+          "${DESTINATION_IMAGE}:${DESTINATION_TAG}" 2>/dev/null || true)"
+        if [[ -n "${existing}" ]]; then
+          [[ "${existing}" == "${SOURCE_DIGEST}" ]]
+        else
+          "${RUNNER_TEMP}/crane" copy \
+            "${SOURCE_IMAGE}@${SOURCE_DIGEST}" \
+            "${DESTINATION_IMAGE}:${DESTINATION_TAG}"
+        fi
+        actual="$(${RUNNER_TEMP}/crane digest "${DESTINATION_IMAGE}:${DESTINATION_TAG}")"
+        [[ "${actual}" == "${SOURCE_DIGEST}" ]]
+        echo "image=${DESTINATION_IMAGE}" >>"${GITHUB_OUTPUT}"
+        echo "digest=${actual}" >>"${GITHUB_OUTPUT}"

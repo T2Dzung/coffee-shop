@@ -1,5 +1,13 @@
 provider "aws" {
-  region = var.aws_region
+  region              = var.aws_region
+  allowed_account_ids = [var.expected_aws_account_id]
+}
+
+check "expected_aws_account" {
+  assert {
+    condition     = data.aws_caller_identity.current.account_id == var.expected_aws_account_id
+    error_message = "Refusing DEV operation: caller does not match expected_aws_account_id."
+  }
 }
 
 # Single AMI lookup shared by all instances. When pinned_ami_id is set,

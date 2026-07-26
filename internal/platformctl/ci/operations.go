@@ -35,7 +35,11 @@ func NewRealOperations(cfg config.CI, runner command.Runner, output io.Writer) *
 	}
 	home, _ := os.UserHomeDir()
 	timeout := 30 * time.Minute
-	awsClient := platformaws.Client{Runner: runner, Region: cfg.Region, Timeout: timeout}
+	awsClient := platformaws.Client{Runner: runner, Region: cfg.Region, Profile: cfg.AWSProfile, Timeout: timeout}
+	awsEnvironment := map[string]string{}
+	if cfg.AWSProfile != "" {
+		awsEnvironment["AWS_PROFILE"] = cfg.AWSProfile
+	}
 	return &RealOperations{
 		Config: cfg, Runner: runner, Output: output, AWS: awsClient,
 		Pricing: platformaws.Pricing{Client: awsClient},
@@ -49,15 +53,17 @@ func NewRealOperations(cfg config.CI, runner command.Runner, output io.Writer) *
 				"aws_region": cfg.Region, "expected_aws_account_id": cfg.AccountID,
 				"project_name": cfg.ProjectName,
 			},
-			Timeout: timeout,
+			Environment: awsEnvironment,
+			Timeout:     timeout,
 		},
 		Terraform: platformterraform.Client{
 			Runner: runner,
 			Dir:    filepath.Join(cfg.ProjectRoot, "infrastructure", "terraform", "envs", "ci"),
 			DataDir: filepath.Join(home, ".cache", "go-coffeeshop", "terraform",
 				"ci-foundation-"+cfg.AccountID),
-			VarFile: cfg.VarFile,
-			Timeout: timeout,
+			VarFile:     cfg.VarFile,
+			Environment: awsEnvironment,
+			Timeout:     timeout,
 		},
 	}
 }
@@ -237,7 +243,7 @@ func (o *RealOperations) backendRoleExists(ctx context.Context) (bool, error) {
 	result, err := o.Runner.Run(ctx, command.Request{
 		Name:    "aws",
 		Args:    []string{"iam", "get-role", "--role-name", o.Config.ProjectName + "-ci-terraform-backend-role"},
-		Env:     map[string]string{"AWS_REGION": o.Config.Region, "AWS_DEFAULT_REGION": o.Config.Region},
+		Env:     o.awsEnv(),
 		Timeout: time.Minute,
 	})
 	if err == nil {
@@ -286,6 +292,22 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 	}
 	ansibleDir := filepath.Join(o.Config.ProjectRoot, "infrastructure", "ansible")
 	redactions := []string{o.Config.GitHubAppPrivateKey, o.Config.GitHubToken}
+	environment := map[string]string{
+		"ANSIBLE_CONFIG":                 filepath.Join(ansibleDir, "ansible.cfg"),
+		"ANSIBLE_ROLES_PATH":             filepath.Join(ansibleDir, "roles"),
+		"AWS_REGION":                     o.Config.Region,
+		"AWS_DEFAULT_REGION":             o.Config.Region,
+		"ARC_GITHUB_CONFIG_URL":          "https://github.com/" + o.Config.GitHubRepository,
+		"ARC_GITHUB_AUTH_MODE":           o.Config.GitHubAuthMode,
+		"ARC_GITHUB_APP_ID":              o.Config.GitHubAppID,
+		"ARC_GITHUB_APP_INSTALLATION_ID": o.Config.GitHubAppInstallationID,
+		"ARC_GITHUB_APP_PRIVATE_KEY":     o.Config.GitHubAppPrivateKey,
+		"ARC_GITHUB_TOKEN":               o.Config.GitHubToken,
+		"ARC_MAX_RUNNERS":                strconv.Itoa(o.Config.MaxRunners),
+	}
+	if o.Config.AWSProfile != "" {
+		environment["AWS_PROFILE"] = o.Config.AWSProfile
+	}
 	_, err = o.Runner.Run(ctx, command.Request{
 		Name: o.ansiblePlaybook(),
 		Args: []string{
@@ -293,20 +315,8 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 			"--private-key", o.Config.SSHPrivateKey,
 			filepath.Join(ansibleDir, "playbooks", "ci_runner.yml"),
 		},
-		Dir: ansibleDir,
-		Env: map[string]string{
-			"ANSIBLE_CONFIG":                 filepath.Join(ansibleDir, "ansible.cfg"),
-			"ANSIBLE_ROLES_PATH":             filepath.Join(ansibleDir, "roles"),
-			"AWS_REGION":                     o.Config.Region,
-			"AWS_DEFAULT_REGION":             o.Config.Region,
-			"ARC_GITHUB_CONFIG_URL":          "https://github.com/" + o.Config.GitHubRepository,
-			"ARC_GITHUB_AUTH_MODE":           o.Config.GitHubAuthMode,
-			"ARC_GITHUB_APP_ID":              o.Config.GitHubAppID,
-			"ARC_GITHUB_APP_INSTALLATION_ID": o.Config.GitHubAppInstallationID,
-			"ARC_GITHUB_APP_PRIVATE_KEY":     o.Config.GitHubAppPrivateKey,
-			"ARC_GITHUB_TOKEN":               o.Config.GitHubToken,
-			"ARC_MAX_RUNNERS":                strconv.Itoa(o.Config.MaxRunners),
-		},
+		Dir:     ansibleDir,
+		Env:     environment,
 		Timeout: 45 * time.Minute, Stream: true, Redactions: redactions,
 	})
 	return err
@@ -334,6 +344,12 @@ func (o *RealOperations) Verify(ctx context.Context, action Action) error {
 	if err := o.initRemote(ctx, true); err != nil {
 		return err
 	}
+	buildRole, err := o.Terraform.Output(ctx, "candidate_build_role_arn")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(o.Output, "GitHub ci-build secret CI_AWS_ROLE_ARN=%s\n", strings.TrimSpace(buildRole))
+	fmt.Fprintf(o.Output, "GitHub ci-build variable CI_AWS_REGION=%s\n", o.Config.Region)
 	host, err := o.Terraform.Output(ctx, "public_ip")
 	if err != nil {
 		return err
@@ -370,7 +386,7 @@ func (o *RealOperations) verifyTeardown(ctx context.Context) error {
 	for _, role := range []string{o.Config.ProjectName + "-ci-runner-host", o.Config.ProjectName + "-ci-candidate-build"} {
 		result, err := o.Runner.Run(ctx, command.Request{
 			Name: "aws", Args: []string{"iam", "get-role", "--role-name", role},
-			Env:     map[string]string{"AWS_REGION": o.Config.Region, "AWS_DEFAULT_REGION": o.Config.Region},
+			Env:     o.awsEnv(),
 			Timeout: time.Minute,
 		})
 		if err == nil {
@@ -382,6 +398,14 @@ func (o *RealOperations) verifyTeardown(ctx context.Context) error {
 	}
 	fmt.Fprintln(o.Output, "CI teardown passed: no CI-tagged instance/VPC or CI IAM role remains; backend state is retained.")
 	return nil
+}
+
+func (o *RealOperations) awsEnv() map[string]string {
+	environment := map[string]string{"AWS_REGION": o.Config.Region, "AWS_DEFAULT_REGION": o.Config.Region}
+	if o.Config.AWSProfile != "" {
+		environment["AWS_PROFILE"] = o.Config.AWSProfile
+	}
+	return environment
 }
 
 func (o *RealOperations) ansiblePlaybook() string {

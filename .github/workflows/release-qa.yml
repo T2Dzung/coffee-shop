@@ -20,6 +20,9 @@ on:
       evidence_url:
         description: URL to the manual QA result, ticket, or test evidence
         required: true
+      dev_evidence_url:
+        description: URL to platformctl DEV runtime/GitOps evidence for this exact digest
+        required: true
       summary:
         description: Short QA scope/result summary
         required: true
@@ -60,13 +63,20 @@ jobs:
             exit 1
           fi
           CANDIDATE_FILE="infrastructure/release-candidates/${SERVICE}/${SOURCE_COMMIT}.json"
+          DEV_RELEASE_FILE="infrastructure/releases/dev/${SERVICE}/${SOURCE_COMMIT}.json"
           "${RUNNER_TEMP}/platformctl" release candidate \
             --service "${SERVICE}" --source-commit "${SOURCE_COMMIT}" \
             --candidate "${CANDIDATE_FILE}" >"${RUNNER_TEMP}/candidate.json"
+          "${RUNNER_TEMP}/platformctl" release dev \
+            --service "${SERVICE}" --source-commit "${SOURCE_COMMIT}" \
+            --candidate "${CANDIDATE_FILE}" --dev-release "${DEV_RELEASE_FILE}" \
+            >"${RUNNER_TEMP}/dev-release.json"
           {
             echo "file=${CANDIDATE_FILE}"
             echo "digest=$(jq -r '.digest' "${RUNNER_TEMP}/candidate.json")"
             echo "image=$(jq -r '.image' "${RUNNER_TEMP}/candidate.json")"
+            echo "dev_image=$(jq -r '.dev_image' "${RUNNER_TEMP}/dev-release.json")"
+            echo "dev_digest=$(jq -r '.dev_digest' "${RUNNER_TEMP}/dev-release.json")"
           } >>"${GITHUB_OUTPUT}"
 
       - name: Record QA evidence
@@ -75,8 +85,11 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           SOURCE_IMAGE: ${{ steps.candidate.outputs.image }}
           SOURCE_DIGEST: ${{ steps.candidate.outputs.digest }}
+          DEV_IMAGE: ${{ steps.candidate.outputs.dev_image }}
+          DEV_DIGEST: ${{ steps.candidate.outputs.dev_digest }}
           DECISION: ${{ inputs.decision }}
           EVIDENCE_URL: ${{ inputs.evidence_url }}
+          DEV_EVIDENCE_URL: ${{ inputs.dev_evidence_url }}
           QA_SUMMARY: ${{ inputs.summary }}
         run: |
           EVIDENCE_DIR="infrastructure/release-candidates/${SERVICE}/qa"
@@ -86,19 +99,25 @@ jobs:
             --arg service "${SERVICE}" \
             --arg source_image "${SOURCE_IMAGE}" \
             --arg source_digest "${SOURCE_DIGEST}" \
+            --arg dev_image "${DEV_IMAGE}" \
+            --arg dev_digest "${DEV_DIGEST}" \
             --arg decision "${DECISION}" \
             --arg evidence_url "${EVIDENCE_URL}" \
+            --arg dev_evidence_url "${DEV_EVIDENCE_URL}" \
             --arg summary "${QA_SUMMARY}" \
             --arg approved_by "${GITHUB_ACTOR}" \
             --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg decided_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
-              schema_version: 2,
+              schema_version: 3,
               qa_status: $decision,
               service: $service,
               source_commit: $source_commit,
               source_image: $source_image,
               source_digest: $source_digest,
+              dev_image: $dev_image,
+              dev_digest: $dev_digest,
+              dev_evidence_url: $dev_evidence_url,
               evidence_url: $evidence_url,
               summary: $summary,
               decided_by: $approved_by,

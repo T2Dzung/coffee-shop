@@ -23,9 +23,11 @@ func TestValidateStandard(t *testing.T) {
 		"source_commit":"`+testCommit+`","source_image":"dev/web","source_digest":"`+testDigest+`"
 	}`), 0o600))
 	require.NoError(t, os.WriteFile(qa, []byte(`{
-		"schema_version":1,"qa_status":"approved","service":"web",
+		"schema_version":3,"qa_status":"approved","service":"web",
 		"source_commit":"`+testCommit+`","source_image":"dev/web",
-		"source_digest":"`+testDigest+`","evidence_url":"https://example.test/qa"
+		"source_digest":"`+testDigest+`","dev_image":"dev-runtime/web",
+		"dev_digest":"`+testDigest+`","evidence_url":"https://example.test/qa",
+		"dev_evidence_url":"https://example.test/dev"
 	}`), 0o600))
 
 	artifact, err := ValidateStandard("web", testCommit, candidate, qa)
@@ -43,14 +45,45 @@ func TestValidateStandardRejectsDigestMismatch(t *testing.T) {
 		"source_commit":"`+testCommit+`","source_image":"dev/web","source_digest":"`+testDigest+`"
 	}`), 0o600))
 	require.NoError(t, os.WriteFile(qa, []byte(`{
-		"schema_version":1,"qa_status":"approved","service":"web",
+		"schema_version":3,"qa_status":"approved","service":"web",
 		"source_commit":"`+testCommit+`","source_image":"dev/web",
 		"source_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"evidence_url":"https://example.test/qa"
+		"dev_image":"dev-runtime/web","dev_digest":"`+testDigest+`",
+		"evidence_url":"https://example.test/qa","dev_evidence_url":"https://example.test/dev"
 	}`), 0o600))
 
 	_, err := ValidateStandard("web", testCommit, candidate, qa)
 	require.ErrorContains(t, err, "exact candidate")
+}
+
+func TestValidateDevReleaseRequiresExactCandidateDigest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	candidate := filepath.Join(dir, "candidate.json")
+	devRelease := filepath.Join(dir, "dev.json")
+	require.NoError(t, os.WriteFile(candidate, []byte(`{
+		"schema_version":2,"status":"built","service":"web",
+		"source_commit":"`+testCommit+`","source_image":"candidate/web","source_digest":"`+testDigest+`"
+	}`), 0o600))
+	require.NoError(t, os.WriteFile(devRelease, []byte(`{
+		"schema_version":1,"status":"copied","service":"web",
+		"source_commit":"`+testCommit+`","source_image":"candidate/web",
+		"source_digest":"`+testDigest+`","dev_image":"dev/web","dev_digest":"`+testDigest+`",
+		"workflow_run":"https://example.test/run/1"
+	}`), 0o600))
+	release, err := ValidateDevRelease("web", testCommit, candidate, devRelease)
+	require.NoError(t, err)
+	require.Equal(t, testDigest, release.DevDigest)
+
+	require.NoError(t, os.WriteFile(devRelease, []byte(`{
+		"schema_version":1,"status":"copied","service":"web",
+		"source_commit":"`+testCommit+`","source_image":"candidate/web",
+		"source_digest":"`+testDigest+`","dev_image":"dev/web",
+		"dev_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"workflow_run":"https://example.test/run/1"
+	}`), 0o600))
+	_, err = ValidateDevRelease("web", testCommit, candidate, devRelease)
+	require.ErrorContains(t, err, "exact copy")
 }
 
 func TestValidateCandidateAcceptsCurrentSchema(t *testing.T) {

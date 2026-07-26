@@ -15,12 +15,14 @@ import (
 )
 
 type Client struct {
-	Runner    command.Runner
-	Dir       string
-	DataDir   string
-	VarFile   string
-	Variables map[string]string
-	Timeout   time.Duration
+	Runner           command.Runner
+	Dir              string
+	DataDir          string
+	VarFile          string
+	Variables        map[string]string
+	BooleanVariables map[string]bool
+	Environment      map[string]string
+	Timeout          time.Duration
 }
 
 type Plan struct {
@@ -85,6 +87,14 @@ func (c Client) CreatePlan(ctx context.Context, parent, name string, destroy boo
 			return Plan{}, fmt.Errorf("encode Terraform variable %s: %w", key, err)
 		}
 		args = append(args, "-var="+key+"="+string(encoded))
+	}
+	booleanNames := make([]string, 0, len(c.BooleanVariables))
+	for key := range c.BooleanVariables {
+		booleanNames = append(booleanNames, key)
+	}
+	sort.Strings(booleanNames)
+	for _, key := range booleanNames {
+		args = append(args, "-var="+key+"="+fmt.Sprintf("%t", c.BooleanVariables[key]))
 	}
 	if destroy {
 		args = append(args, "-destroy")
@@ -151,11 +161,20 @@ func (c Client) Output(ctx context.Context, name string) (string, error) {
 	return result.Stdout, err
 }
 
+func (c Client) OutputJSON(ctx context.Context, name string) (string, error) {
+	result, err := c.run(ctx, false, "-chdir="+c.Dir, "output", "-json", name)
+	return result.Stdout, err
+}
+
 func (c Client) run(ctx context.Context, stream bool, args ...string) (command.Result, error) {
+	environment := map[string]string{"TF_DATA_DIR": c.DataDir}
+	for key, value := range c.Environment {
+		environment[key] = value
+	}
 	return c.Runner.Run(ctx, command.Request{
 		Name:    "terraform",
 		Args:    args,
-		Env:     map[string]string{"TF_DATA_DIR": c.DataDir},
+		Env:     environment,
 		Timeout: c.Timeout,
 		Stream:  stream,
 	})

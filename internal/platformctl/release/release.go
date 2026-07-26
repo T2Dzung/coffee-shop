@@ -26,13 +26,28 @@ type Candidate struct {
 }
 
 type QAEvidence struct {
+	SchemaVersion  int    `json:"schema_version"`
+	QAStatus       string `json:"qa_status"`
+	Service        string `json:"service"`
+	SourceCommit   string `json:"source_commit"`
+	SourceImage    string `json:"source_image"`
+	SourceDigest   string `json:"source_digest"`
+	EvidenceURL    string `json:"evidence_url"`
+	DevImage       string `json:"dev_image"`
+	DevDigest      string `json:"dev_digest"`
+	DevEvidenceURL string `json:"dev_evidence_url"`
+}
+
+type DevRelease struct {
 	SchemaVersion int    `json:"schema_version"`
-	QAStatus      string `json:"qa_status"`
+	Status        string `json:"status"`
 	Service       string `json:"service"`
 	SourceCommit  string `json:"source_commit"`
 	SourceImage   string `json:"source_image"`
 	SourceDigest  string `json:"source_digest"`
-	EvidenceURL   string `json:"evidence_url"`
+	DevImage      string `json:"dev_image"`
+	DevDigest     string `json:"dev_digest"`
+	WorkflowRun   string `json:"workflow_run"`
 }
 
 type HistoricalRelease struct {
@@ -87,13 +102,32 @@ func ValidateStandard(service, sourceCommit, candidatePath, qaPath string) (Arti
 	if err := readJSON(qaPath, &qa); err != nil {
 		return Artifact{}, err
 	}
-	if (qa.SchemaVersion != 1 && qa.SchemaVersion != 2) || qa.QAStatus != "approved" ||
+	if qa.SchemaVersion != 3 || qa.QAStatus != "approved" ||
 		qa.Service != service || qa.SourceCommit != sourceCommit ||
 		qa.SourceImage != candidateArtifact.Image || qa.SourceDigest != candidateArtifact.Digest ||
-		qa.EvidenceURL == "" {
-		return Artifact{}, errors.New("QA evidence does not approve the exact candidate image and digest")
+		qa.DevImage == "" || qa.DevDigest != candidateArtifact.Digest ||
+		qa.EvidenceURL == "" || qa.DevEvidenceURL == "" {
+		return Artifact{}, errors.New("QA evidence does not approve the exact candidate digest verified in DEV")
 	}
 	return candidateArtifact, nil
+}
+
+func ValidateDevRelease(service, sourceCommit, candidatePath, devReleasePath string) (DevRelease, error) {
+	candidate, err := ValidateCandidate(service, sourceCommit, candidatePath)
+	if err != nil {
+		return DevRelease{}, err
+	}
+	var release DevRelease
+	if err := readJSON(devReleasePath, &release); err != nil {
+		return DevRelease{}, err
+	}
+	if release.SchemaVersion != 1 || release.Status != "copied" || release.Service != service ||
+		release.SourceCommit != sourceCommit || release.SourceImage != candidate.Image ||
+		release.SourceDigest != candidate.Digest || release.DevImage == "" ||
+		release.DevDigest != candidate.Digest || release.WorkflowRun == "" {
+		return DevRelease{}, errors.New("DEV release does not contain an exact copy of the requested candidate digest")
+	}
+	return release, nil
 }
 
 func ValidateCandidate(service, sourceCommit, candidatePath string) (Artifact, error) {

@@ -175,9 +175,15 @@ jobs:
           severity: CRITICAL
           cache: "true"
 
-      - name: Build pinned registry copy utility
+      - name: Copy exact standard candidate without rebuild
+        id: standard-copy
         if: inputs.lane == 'standard'
-        run: GOBIN="${RUNNER_TEMP}" go install github.com/google/go-containerregistry/cmd/crane@c68d899782693b63b7549166812aa996f17a660c
+        uses: ./.github/actions/copy-immutable-artifact
+        with:
+          source-image: ${{ steps.source-artifact.outputs.image }}
+          source-digest: ${{ steps.source-artifact.outputs.digest }}
+          destination-image: ${{ steps.prod-ecr.outputs.registry }}/${{ steps.component.outputs.image_repository }}
+          destination-tag: release-${{ inputs.source_commit }}
 
       - name: Build exact emergency artifact
         if: inputs.lane == 'emergency'
@@ -187,6 +193,7 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           REGISTRY: ${{ steps.prod-ecr.outputs.registry }}
           REPOSITORY: ${{ steps.component.outputs.image_repository }}
+          COPIED_DIGEST: ${{ steps.standard-copy.outputs.digest }}
         run: |
           set -Eeuo pipefail
           bash scripts/ci/build-go-service.sh "${COMPONENT}"
@@ -209,16 +216,8 @@ jobs:
           set -Eeuo pipefail
           destination_image="${PROD_REGISTRY}/${REPOSITORY}"
           if [[ "${LANE}" == "standard" ]]; then
-            existing="$(aws ecr describe-images --repository-name "${REPOSITORY}" \
-              --image-ids "imageTag=release-${SOURCE_COMMIT}" \
-              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
-            if [[ "${existing}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              [[ "${existing}" == "${SOURCE_DIGEST}" ]]
-            else
-              "${RUNNER_TEMP}/crane" copy "${SOURCE_IMAGE}@${SOURCE_DIGEST}" \
-                "${destination_image}:release-${SOURCE_COMMIT}"
-            fi
-            digest="${SOURCE_DIGEST}"
+            [[ "${COPIED_DIGEST}" == "${SOURCE_DIGEST}" ]]
+            digest="${COPIED_DIGEST}"
           elif [[ "${LANE}" == "emergency" ]]; then
             digest="$(aws ecr describe-images --repository-name "${REPOSITORY}" \
               --image-ids "imageTag=emergency-${SOURCE_COMMIT}" \

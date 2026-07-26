@@ -13,6 +13,7 @@ import (
 type Client struct {
 	Runner  command.Runner
 	Region  string
+	Profile string
 	Timeout time.Duration
 }
 
@@ -42,6 +43,9 @@ func (c Client) run(ctx context.Context, args ...string) (command.Result, error)
 	if c.Region != "" {
 		env["AWS_REGION"] = c.Region
 		env["AWS_DEFAULT_REGION"] = c.Region
+	}
+	if c.Profile != "" {
+		env["AWS_PROFILE"] = c.Profile
 	}
 	return c.Runner.Run(ctx, command.Request{
 		Name: "aws", Args: args, Env: env, Timeout: c.Timeout,

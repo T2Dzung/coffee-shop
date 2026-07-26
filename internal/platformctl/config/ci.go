@@ -13,6 +13,7 @@ type CI struct {
 	ProjectName             string
 	Environment             string
 	Region                  string
+	AWSProfile              string
 	AccountID               string
 	GitHubRepository        string
 	InstanceType            string
@@ -41,9 +42,16 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 	if l.HomeDir == nil {
 		l.HomeDir = os.UserHomeDir
 	}
+	operator, err := l.LoadOperator()
+	if err != nil {
+		return CI{}, err
+	}
+	local := operator.File.Environments.CI
 	if varFile == "" {
-		varFile = envString(l.LookupEnv, "CI_VAR_FILE",
-			filepath.Join(projectRoot, "infrastructure", "terraform", "envs", "ci", "terraform.tfvars"))
+		varFile = envString(l.LookupEnv, "CI_VAR_FILE", local.VarFile)
+		if varFile == "" {
+			varFile = filepath.Join(projectRoot, "infrastructure", "terraform", "envs", "ci", "terraform.tfvars")
+		}
 	}
 	attrs, err := parseAttributes(varFile)
 	if err != nil {
@@ -77,6 +85,41 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 		GitHubAppPrivateKey:     envString(l.LookupEnv, "ARC_GITHUB_APP_PRIVATE_KEY", ""),
 		GitHubToken:             envString(l.LookupEnv, "ARC_GITHUB_TOKEN", ""),
 	}
+	if local.AWSProfile != "" {
+		cfg.AWSProfile = local.AWSProfile
+	}
+	if local.SSHPrivateKeyFile != "" {
+		cfg.SSHPrivateKey = local.SSHPrivateKeyFile
+	}
+	if local.Kubeconfig != "" {
+		cfg.Kubeconfig = local.Kubeconfig
+	}
+	if local.GitHubAuth.Mode != "" {
+		cfg.GitHubAuthMode = local.GitHubAuth.Mode
+	}
+	if local.GitHubAuth.AppID != "" {
+		cfg.GitHubAppID = local.GitHubAuth.AppID
+	}
+	if local.GitHubAuth.InstallationID != "" {
+		cfg.GitHubAppInstallationID = local.GitHubAuth.InstallationID
+	}
+	if local.MaxRunners > 0 {
+		cfg.MaxRunners = local.MaxRunners
+	}
+	if cfg.GitHubAppPrivateKey == "" && local.GitHubAuth.AppPrivateKeyFile != "" {
+		cfg.GitHubAppPrivateKey, err = readSecretFile(local.GitHubAuth.AppPrivateKeyFile, "GitHub App private key")
+		if err != nil {
+			return CI{}, err
+		}
+	}
+	if cfg.GitHubToken == "" && local.GitHubAuth.PersonalTokenFile != "" {
+		cfg.GitHubToken, err = readSecretFile(local.GitHubAuth.PersonalTokenFile, "GitHub token")
+		if err != nil {
+			return CI{}, err
+		}
+	}
+	cfg.AWSProfile = envString(l.LookupEnv, "CI_AWS_PROFILE", cfg.AWSProfile)
+	cfg.SSHPrivateKey = envString(l.LookupEnv, "CI_SSH_PRIVATE_KEY", cfg.SSHPrivateKey)
 	cfg.StateBucket = envString(l.LookupEnv, "CI_STATE_BUCKET_NAME",
 		cfg.ProjectName+"-terraform-state-"+cfg.AccountID)
 	cfg.BackendRoleARN = envString(l.LookupEnv, "CI_BACKEND_ROLE_ARN",
@@ -86,6 +129,10 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 		"alias/"+cfg.ProjectName+"-state-key")
 	cfg.Kubeconfig = envString(l.LookupEnv, "CI_KUBECONFIG", cfg.Kubeconfig)
 	cfg.GitHubAuthMode = envString(l.LookupEnv, "ARC_GITHUB_AUTH_MODE", cfg.GitHubAuthMode)
+	cfg.GitHubAppID = envString(l.LookupEnv, "ARC_GITHUB_APP_ID", cfg.GitHubAppID)
+	cfg.GitHubAppInstallationID = envString(l.LookupEnv, "ARC_GITHUB_APP_INSTALLATION_ID", cfg.GitHubAppInstallationID)
+	cfg.GitHubAppPrivateKey = envString(l.LookupEnv, "ARC_GITHUB_APP_PRIVATE_KEY", cfg.GitHubAppPrivateKey)
+	cfg.GitHubToken = envString(l.LookupEnv, "ARC_GITHUB_TOKEN", cfg.GitHubToken)
 	cfg.MaxRunners = envInt(l.LookupEnv, "ARC_MAX_RUNNERS", cfg.MaxRunners)
 	cfg.AutoApprove = envString(l.LookupEnv, "CI_AUTO_APPROVE", "false") == "true"
 	if err := cfg.Validate(); err != nil {

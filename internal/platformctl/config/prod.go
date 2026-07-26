@@ -27,6 +27,7 @@ type Prod struct {
 	ProjectName        string
 	Environment        string
 	Region             string
+	AWSProfile         string
 	AccountID          string
 	GitHubRepository   string
 	GitOpsRepository   string
@@ -53,8 +54,9 @@ type Prod struct {
 }
 
 type Loader struct {
-	LookupEnv func(string) (string, bool)
-	HomeDir   func() (string, error)
+	LookupEnv          func(string) (string, bool)
+	HomeDir            func() (string, error)
+	OperatorConfigPath string
 }
 
 func NewLoader() Loader {
@@ -68,9 +70,16 @@ func (l Loader) LoadProd(projectRoot, varFile string) (Prod, error) {
 	if l.HomeDir == nil {
 		l.HomeDir = os.UserHomeDir
 	}
+	operator, err := l.LoadOperator()
+	if err != nil {
+		return Prod{}, err
+	}
+	local := operator.File.Environments.Prod
 	if varFile == "" {
 		if value, ok := l.LookupEnv("PROD_VAR_FILE"); ok {
 			varFile = value
+		} else if local.VarFile != "" {
+			varFile = local.VarFile
 		} else {
 			varFile = filepath.Join(projectRoot, "infrastructure", "terraform", "envs", "prod", "terraform.tfvars")
 		}
@@ -109,7 +118,14 @@ func (l Loader) LoadProd(projectRoot, varFile string) (Prod, error) {
 		ReleaseAttempts:    360,
 		WaitTimeout:        "20m",
 	}
+	if local.AWSProfile != "" {
+		cfg.AWSProfile = local.AWSProfile
+	}
+	if local.Kubeconfig != "" {
+		cfg.Kubeconfig = local.Kubeconfig
+	}
 
+	cfg.AWSProfile = envString(l.LookupEnv, "PROD_AWS_PROFILE", cfg.AWSProfile)
 	cfg.Region = envString(l.LookupEnv, "PROD_EXPECTED_AWS_REGION", cfg.Region)
 	cfg.AccountID = envString(l.LookupEnv, "PROD_EXPECTED_AWS_ACCOUNT_ID", cfg.AccountID)
 	cfg.ProjectName = envString(l.LookupEnv, "PROD_PROJECT_NAME", cfg.ProjectName)
@@ -122,7 +138,10 @@ func (l Loader) LoadProd(projectRoot, varFile string) (Prod, error) {
 		"arn:aws:iam::"+cfg.AccountID+":role/"+cfg.ProjectName+"-terraform-backend-role")
 	cfg.BootstrapStateKey = envString(l.LookupEnv, "PROD_BOOTSTRAP_STATE_KEY", cfg.BootstrapStateKey)
 	cfg.FoundationStateKey = envString(l.LookupEnv, "PROD_FOUNDATION_STATE_KEY", cfg.FoundationStateKey)
-	cfg.Kubeconfig = envString(l.LookupEnv, "PROD_KUBECONFIG", filepath.Join(home, ".kube", cfg.ProjectName+"-prod.yaml"))
+	if cfg.Kubeconfig == "" {
+		cfg.Kubeconfig = filepath.Join(home, ".kube", cfg.ProjectName+"-prod.yaml")
+	}
+	cfg.Kubeconfig = envString(l.LookupEnv, "PROD_KUBECONFIG", cfg.Kubeconfig)
 	cfg.WaitTimeout = envString(l.LookupEnv, "PROD_WAIT_TIMEOUT", cfg.WaitTimeout)
 	cfg.PollAttempts = envInt(l.LookupEnv, "PROD_POLL_ATTEMPTS", cfg.PollAttempts)
 	cfg.ReleaseAttempts = envInt(l.LookupEnv, "PROD_RELEASE_POLL_ATTEMPTS", cfg.ReleaseAttempts)
