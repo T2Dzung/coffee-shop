@@ -33,7 +33,6 @@ type OperatorEnvironment struct {
 	AnsibleVaultPasswordFile string             `yaml:"ansibleVaultPasswordFile,omitempty" json:"ansibleVaultPasswordFile,omitempty"`
 	Kubeconfig               string             `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	GitHubAuth               OperatorGitHubAuth `yaml:"githubAuth,omitempty" json:"githubAuth,omitempty"`
-	MaxRunners               int                `yaml:"maxRunners,omitempty" json:"maxRunners,omitempty"`
 }
 
 type OperatorGitHubAuth struct {

@@ -70,15 +70,10 @@ func (o *RealOperations) initRemote(
 			return err
 		}
 	}
-	return client.Init(ctx,
-		"-backend-config=bucket="+o.Config.StateBucket,
-		"-backend-config=key="+key,
-		"-backend-config=region="+o.Config.Region,
-		"-backend-config=encrypt=true",
-		"-backend-config=kms_key_id="+kmsARN,
-		"-backend-config=use_lockfile=true",
-		"-backend-config=role_arn="+o.Config.BackendRoleARN,
-	)
+	return client.InitS3(ctx, platformterraform.S3BackendConfig{
+		Bucket: o.Config.StateBucket, Key: key, Region: o.Config.Region,
+		KMSKeyARN: kmsARN, RoleARN: o.Config.BackendRoleARN, Encrypt: true, UseLockfile: true,
+	})
 }
 
 func (o *RealOperations) verifyBootstrapClean(ctx context.Context) error {

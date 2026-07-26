@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -25,13 +24,11 @@ type CI struct {
 	StateKMSKeyID           string
 	BackendRoleARN          string
 	SSHPrivateKey           string
-	Kubeconfig              string
 	GitHubAuthMode          string
 	GitHubAppID             string
 	GitHubAppInstallationID string
 	GitHubAppPrivateKey     string
 	GitHubToken             string
-	MaxRunners              int
 	AutoApprove             bool
 }
 
@@ -57,10 +54,6 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 	if err != nil {
 		return CI{}, err
 	}
-	home, err := l.HomeDir()
-	if err != nil {
-		return CI{}, fmt.Errorf("resolve home directory: %w", err)
-	}
 	cfg := CI{
 		ProjectRoot:             projectRoot,
 		VarFile:                 varFile,
@@ -75,11 +68,9 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 		OperatorSSHCIDRs:        stringsValue(attrs, "operator_ssh_cidrs", nil),
 		StateKey:                "ci/foundation.tfstate",
 		GitHubAuthMode:          "github_app",
-		MaxRunners:              2,
 		SSHPrivateKey:           envString(l.LookupEnv, "CI_SSH_PRIVATE_KEY", ""),
 		StateKMSKeyID:           envString(l.LookupEnv, "CI_STATE_KMS_KEY_ID", "alias/coffeeshop-state-key"),
 		BackendRoleARN:          envString(l.LookupEnv, "CI_BACKEND_ROLE_ARN", ""),
-		Kubeconfig:              filepath.Join(home, ".kube", "coffeeshop-ci.yaml"),
 		GitHubAppID:             envString(l.LookupEnv, "ARC_GITHUB_APP_ID", ""),
 		GitHubAppInstallationID: envString(l.LookupEnv, "ARC_GITHUB_APP_INSTALLATION_ID", ""),
 		GitHubAppPrivateKey:     envString(l.LookupEnv, "ARC_GITHUB_APP_PRIVATE_KEY", ""),
@@ -91,9 +82,6 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 	if local.SSHPrivateKeyFile != "" {
 		cfg.SSHPrivateKey = local.SSHPrivateKeyFile
 	}
-	if local.Kubeconfig != "" {
-		cfg.Kubeconfig = local.Kubeconfig
-	}
 	if local.GitHubAuth.Mode != "" {
 		cfg.GitHubAuthMode = local.GitHubAuth.Mode
 	}
@@ -102,9 +90,6 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 	}
 	if local.GitHubAuth.InstallationID != "" {
 		cfg.GitHubAppInstallationID = local.GitHubAuth.InstallationID
-	}
-	if local.MaxRunners > 0 {
-		cfg.MaxRunners = local.MaxRunners
 	}
 	if cfg.GitHubAppPrivateKey == "" && local.GitHubAuth.AppPrivateKeyFile != "" {
 		cfg.GitHubAppPrivateKey, err = readSecretFile(local.GitHubAuth.AppPrivateKeyFile, "GitHub App private key")
@@ -127,13 +112,11 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 	cfg.StateKey = envString(l.LookupEnv, "CI_STATE_KEY", cfg.StateKey)
 	cfg.StateKMSKeyID = envString(l.LookupEnv, "CI_STATE_KMS_KEY_ID",
 		"alias/"+cfg.ProjectName+"-state-key")
-	cfg.Kubeconfig = envString(l.LookupEnv, "CI_KUBECONFIG", cfg.Kubeconfig)
 	cfg.GitHubAuthMode = envString(l.LookupEnv, "ARC_GITHUB_AUTH_MODE", cfg.GitHubAuthMode)
 	cfg.GitHubAppID = envString(l.LookupEnv, "ARC_GITHUB_APP_ID", cfg.GitHubAppID)
 	cfg.GitHubAppInstallationID = envString(l.LookupEnv, "ARC_GITHUB_APP_INSTALLATION_ID", cfg.GitHubAppInstallationID)
 	cfg.GitHubAppPrivateKey = envString(l.LookupEnv, "ARC_GITHUB_APP_PRIVATE_KEY", cfg.GitHubAppPrivateKey)
 	cfg.GitHubToken = envString(l.LookupEnv, "ARC_GITHUB_TOKEN", cfg.GitHubToken)
-	cfg.MaxRunners = envInt(l.LookupEnv, "ARC_MAX_RUNNERS", cfg.MaxRunners)
 	cfg.AutoApprove = envString(l.LookupEnv, "CI_AUTO_APPROVE", "false") == "true"
 	if err := cfg.Validate(); err != nil {
 		return CI{}, err
@@ -158,8 +141,8 @@ func (c CI) Validate() error {
 	if c.StateKey != "ci/foundation.tfstate" {
 		problems = append(problems, "CI state key must be exactly ci/foundation.tfstate")
 	}
-	if c.InstanceType == "" || c.RootVolumeGiB < 20 || c.MaxRunners < 1 {
-		problems = append(problems, "instance type, root volume and max runners must be within the reviewed range")
+	if c.InstanceType == "" || c.RootVolumeGiB < 20 {
+		problems = append(problems, "instance type and root volume must be within the reviewed range")
 	}
 	if c.GitHubAuthMode != "github_app" && c.GitHubAuthMode != "pat" {
 		problems = append(problems, "ARC_GITHUB_AUTH_MODE must be github_app or pat")

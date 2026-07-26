@@ -5,8 +5,7 @@
       - arc_runner_github_config_url is defined
       - arc_runner_github_config_url | length > 0
       - arc_runner_github_auth_mode in ['github_app', 'pat']
-      - arc_runner_max_runners | int >= 1
-    fail_msg: "Provide repository URL, supported auth mode and a positive max runner count."
+    fail_msg: "Provide a repository URL and supported authentication mode."
 
 - name: Validate GitHub App credential inputs
   ansible.builtin.assert:
@@ -126,10 +125,6 @@
         value_type: string
       - value: "runnerScaleSetName={{ arc_runner_scale_set_name }}"
         value_type: string
-      - value: "minRunners=0"
-        value_type: raw
-      - value: "maxRunners={{ arc_runner_max_runners }}"
-        value_type: raw
     wait: true
     atomic: true
 

@@ -279,7 +279,7 @@ func (v Validator) ansible(ctx context.Context, ciOnly bool) error {
 	}
 	playbooks := []string{"site.yml", "post_start.yml", "backup_baseline.yml", "gitops_cicd.yml"}
 	if ciOnly {
-		playbooks = []string{"ci_runner.yml"}
+		playbooks = []string{filepath.Join("ci", "ci_runner.yml")}
 	}
 	for _, playbook := range playbooks {
 		if err := v.run(ctx, "", env, "ansible-playbook", "--inventory", "localhost,", "--syntax-check",
@@ -288,6 +288,8 @@ func (v Validator) ansible(ctx context.Context, ciOnly bool) error {
 		}
 	}
 	candidates, _ := filepath.Glob(filepath.Join(dir, "playbooks", "*.yml"))
+	ciPlaybooks, _ := filepath.Glob(filepath.Join(dir, "playbooks", "ci", "*.yml"))
+	candidates = append(candidates, ciPlaybooks...)
 	roleTasks, _ := filepath.Glob(filepath.Join(dir, "roles", "*", "tasks", "*.yml"))
 	candidates = append(candidates, roleTasks...)
 	if err := v.run(ctx, dir, env, "ansible-lint", candidates...); err != nil {

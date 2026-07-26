@@ -51,6 +51,19 @@ func TestCreatePlanPassesBooleanVariableWithoutStringQuoting(t *testing.T) {
 	require.Contains(t, recorder.requests[0].Args, "-var=dev_runtime_enabled=true")
 }
 
+func TestCreatePlanPassesStringVariableWithoutEmbeddedQuotes(t *testing.T) {
+	t.Parallel()
+	recorder := &recordingErrorRunner{}
+	client := Client{
+		Runner: recorder, Dir: "/tf", DataDir: "/data",
+		Variables: map[string]string{"aws_region": "ap-southeast-1"},
+	}
+	_, _ = client.CreatePlan(context.Background(), t.TempDir(), "string", false, nil)
+	require.NotEmpty(t, recorder.requests)
+	require.Contains(t, recorder.requests[0].Args, "-var=aws_region=ap-southeast-1")
+	require.NotContains(t, recorder.requests[0].Args, `-var=aws_region="ap-southeast-1"`)
+}
+
 type recordingErrorRunner struct{ requests []command.Request }
 
 func (r *recordingErrorRunner) Run(_ context.Context, request command.Request) (command.Result, error) {

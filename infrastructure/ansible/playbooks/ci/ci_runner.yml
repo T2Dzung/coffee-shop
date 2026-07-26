@@ -3,6 +3,11 @@
   hosts: ci_runner
   become: true
   gather_facts: true
+  # CI deliberately imports the non-secret version contract only. Keeping this
+  # playbook below playbooks/ci prevents Ansible from auto-loading DEV's
+  # playbooks/group_vars/all/vault.yml.
+  vars_files:
+    - ../group_vars/all/versions.yml
   vars:
     active_api_endpoint: "{{ ansible_host }}"
     k3s_tls_sans:
@@ -25,6 +30,8 @@
   hosts: ci_runner
   become: false
   gather_facts: false
+  vars_files:
+    - ../group_vars/all/versions.yml
   vars:
     arc_runner_kubeconfig: /home/ubuntu/.kube/config
     arc_runner_github_config_url: "{{ lookup('env', 'ARC_GITHUB_CONFIG_URL') }}"
@@ -33,6 +40,5 @@
     arc_runner_github_app_installation_id: "{{ lookup('env', 'ARC_GITHUB_APP_INSTALLATION_ID') }}"
     arc_runner_github_app_private_key: "{{ lookup('env', 'ARC_GITHUB_APP_PRIVATE_KEY') }}"
     arc_runner_github_token: "{{ lookup('env', 'ARC_GITHUB_TOKEN') }}"
-    arc_runner_max_runners: "{{ lookup('env', 'ARC_MAX_RUNNERS') | default('2', true) | int }}"
   roles:
     - role: arc_runner

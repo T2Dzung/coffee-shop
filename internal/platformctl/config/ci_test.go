@@ -32,7 +32,7 @@ func TestCIRejectsCrossEnvironmentStateKey(t *testing.T) {
 	cfg := CI{
 		Environment: "ci", AccountID: "123456789012", Region: "ap-southeast-1",
 		GitHubRepository: "owner/repository", StateKey: "prod/foundation.tfstate",
-		InstanceType: "t3.large", RootVolumeGiB: 40, MaxRunners: 2, GitHubAuthMode: "github_app",
+		InstanceType: "t3.large", RootVolumeGiB: 40, GitHubAuthMode: "github_app",
 	}
 	require.ErrorContains(t, cfg.Validate(), "ci/foundation.tfstate")
 }
@@ -41,7 +41,7 @@ func TestCIRejectsWrongAccountShape(t *testing.T) {
 	cfg := CI{
 		Environment: "ci", AccountID: "123", Region: "ap-southeast-1",
 		GitHubRepository: "owner/repository", StateKey: "ci/foundation.tfstate",
-		InstanceType: "t3.large", RootVolumeGiB: 40, MaxRunners: 2, GitHubAuthMode: "github_app",
+		InstanceType: "t3.large", RootVolumeGiB: 40, GitHubAuthMode: "github_app",
 	}
 	require.ErrorContains(t, cfg.Validate(), "12 digits")
 }

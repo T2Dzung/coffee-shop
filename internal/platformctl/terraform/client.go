@@ -80,13 +80,10 @@ func (c Client) CreatePlan(ctx context.Context, parent, name string, destroy boo
 	}
 	sort.Strings(variableNames)
 	for _, key := range variableNames {
-		value := c.Variables[key]
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			cleanup()
-			return Plan{}, fmt.Errorf("encode Terraform variable %s: %w", key, err)
-		}
-		args = append(args, "-var="+key+"="+string(encoded))
+		// command.Runner passes an argument array directly to Terraform, so shell
+		// quoting is neither required nor correct. For a declared string variable,
+		// embedded JSON quotes become part of the value on Terraform 1.15.
+		args = append(args, "-var="+key+"="+c.Variables[key])
 	}
 	booleanNames := make([]string, 0, len(c.BooleanVariables))
 	for key := range c.BooleanVariables {
