@@ -14,8 +14,6 @@ environments:
     # terraformVarFile is optional; the default is the repo's envs/ci/terraform.tfvars.
     awsProfile: coffeeshop-prod
     sshPrivateKeyFile: ~/.ssh/coffeeshop-ci-runner.pem
-    kubeconfig: ~/.kube/coffeeshop-ci.yaml
-    maxRunners: 2
     githubAuth:
       mode: pat
       personalTokenFile: ~/.config/go-coffeeshop/arc-token

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -207,18 +206,14 @@ func (o *RealOperations) initRemote(ctx context.Context, assumeScopedRole bool) 
 	if err != nil {
 		return err
 	}
-	args := []string{
-		"-backend-config=bucket=" + o.Config.StateBucket,
-		"-backend-config=key=" + o.Config.StateKey,
-		"-backend-config=region=" + o.Config.Region,
-		"-backend-config=encrypt=true",
-		"-backend-config=kms_key_id=" + kmsARN,
-		"-backend-config=use_lockfile=true",
-	}
+	roleARN := ""
 	if assumeScopedRole && o.Config.BackendRoleARN != "" {
-		args = append(args, "-backend-config=role_arn="+o.Config.BackendRoleARN)
+		roleARN = o.Config.BackendRoleARN
 	}
-	return o.Terraform.Init(ctx, args...)
+	return o.Terraform.InitS3(ctx, platformterraform.S3BackendConfig{
+		Bucket: o.Config.StateBucket, Key: o.Config.StateKey, Region: o.Config.Region,
+		KMSKeyARN: kmsARN, RoleARN: roleARN, Encrypt: true, UseLockfile: true,
+	})
 }
 
 func (o *RealOperations) initBootstrap(ctx context.Context) error {
@@ -228,15 +223,10 @@ func (o *RealOperations) initBootstrap(ctx context.Context) error {
 		return err
 	}
 	prodRole := "arn:aws:iam::" + o.Config.AccountID + ":role/" + o.Config.ProjectName + "-terraform-backend-role"
-	return o.Bootstrap.Init(ctx,
-		"-backend-config=bucket="+o.Config.StateBucket,
-		"-backend-config=key=prod/bootstrap.tfstate",
-		"-backend-config=region="+o.Config.Region,
-		"-backend-config=encrypt=true",
-		"-backend-config=kms_key_id="+kmsARN,
-		"-backend-config=use_lockfile=true",
-		"-backend-config=role_arn="+prodRole,
-	)
+	return o.Bootstrap.InitS3(ctx, platformterraform.S3BackendConfig{
+		Bucket: o.Config.StateBucket, Key: "prod/bootstrap.tfstate", Region: o.Config.Region,
+		KMSKeyARN: kmsARN, RoleARN: prodRole, Encrypt: true, UseLockfile: true,
+	})
 }
 
 func (o *RealOperations) backendRoleExists(ctx context.Context) (bool, error) {
@@ -303,7 +293,6 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 		"ARC_GITHUB_APP_INSTALLATION_ID": o.Config.GitHubAppInstallationID,
 		"ARC_GITHUB_APP_PRIVATE_KEY":     o.Config.GitHubAppPrivateKey,
 		"ARC_GITHUB_TOKEN":               o.Config.GitHubToken,
-		"ARC_MAX_RUNNERS":                strconv.Itoa(o.Config.MaxRunners),
 	}
 	if o.Config.AWSProfile != "" {
 		environment["AWS_PROFILE"] = o.Config.AWSProfile
@@ -313,7 +302,7 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 		Args: []string{
 			"--inventory", filepath.Join(ansibleDir, "inventory", "ci_aws_ec2.yml"),
 			"--private-key", o.Config.SSHPrivateKey,
-			filepath.Join(ansibleDir, "playbooks", "ci_runner.yml"),
+			filepath.Join(ansibleDir, "playbooks", "ci", "ci_runner.yml"),
 		},
 		Dir:     ansibleDir,
 		Env:     environment,

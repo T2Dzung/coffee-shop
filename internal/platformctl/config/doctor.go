@@ -68,7 +68,7 @@ func (d Doctor) Run(environment string) (DoctorReport, error) {
 		}
 		report.Environments = append(report.Environments, DoctorEnvironment{
 			Name: "ci", VarFile: cfg.VarFile, AWSProfile: cfg.AWSProfile, AccountID: cfg.AccountID,
-			Region: cfg.Region, Kubeconfig: cfg.Kubeconfig, CredentialMode: cfg.GitHubAuthMode + " referenced secret file",
+			Region: cfg.Region, CredentialMode: cfg.GitHubAuthMode + " referenced secret file",
 		})
 	}
 	if selected["prod"] {

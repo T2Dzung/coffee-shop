@@ -124,15 +124,10 @@ func (o *RealOperations) initRemote(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve DEV state KMS key: %w", err)
 	}
-	return o.Terraform.Init(ctx,
-		"-backend-config=bucket="+o.Config.StateBucket,
-		"-backend-config=key="+o.Config.FoundationStateKey,
-		"-backend-config=region="+o.Config.Region,
-		"-backend-config=encrypt=true",
-		"-backend-config=kms_key_id="+kmsARN,
-		"-backend-config=use_lockfile=true",
-		"-backend-config=role_arn="+o.Config.BackendRoleARN,
-	)
+	return o.Terraform.InitS3(ctx, platformterraform.S3BackendConfig{
+		Bucket: o.Config.StateBucket, Key: o.Config.FoundationStateKey, Region: o.Config.Region,
+		KMSKeyARN: kmsARN, RoleARN: o.Config.BackendRoleARN, Encrypt: true, UseLockfile: true,
+	})
 }
 
 func (o *RealOperations) Configure(ctx context.Context) error {
