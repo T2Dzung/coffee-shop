@@ -1,0 +1,261 @@
+name: Release — Build Immutable Candidates
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      components:
+        description: Optional comma-separated catalog names; empty selects all automatic components
+        required: false
+        default: ""
+        type: string
+      include_migration:
+        description: Explicitly include migrate; requires the stateful release path before promotion
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-candidate-${{ github.event.repository.default_branch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect-components:
+    name: Detect Release Components
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.ref_name == github.event.repository.default_branch &&
+       vars.TRUSTED_BUILD_RUNNER != '')
+    runs-on: ubuntu-latest
+    outputs:
+      components: ${{ steps.detect.outputs.matrix }}
+      source_commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Checkout protected source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve source commit
+        id: source
+        shell: bash
+        run: echo "commit=$(git rev-parse HEAD)" >>"${GITHUB_OUTPUT}"
+
+      - name: Set up typed component resolver
+        id: platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Select explicit components
+        id: explicit
+        if: github.event_name == 'workflow_dispatch' && inputs.components != ''
+        uses: ./.github/actions/detect-components
+        with:
+          platformctl: ${{ steps.platformctl.outputs.path }}
+          mode: explicit
+          components: ${{ inputs.components }}
+          allow-migration: ${{ inputs.include_migration }}
+
+      - name: Select automatic components for manual full build
+        id: all
+        if: github.event_name == 'workflow_dispatch' && inputs.components == ''
+        shell: bash
+        env:
+          PLATFORMCTL: ${{ steps.platformctl.outputs.path }}
+          INCLUDE_MIGRATION: ${{ inputs.include_migration }}
+        run: |
+          set -Eeuo pipefail
+          matrix="$(${PLATFORMCTL} component list)"
+          if [[ "${INCLUDE_MIGRATION}" != "true" ]]; then
+            matrix="$(jq -c 'map(select(. != "migrate"))' <<<"${matrix}")"
+          fi
+          echo "matrix=${matrix}" >>"${GITHUB_OUTPUT}"
+
+      - name: Select changed components after merge
+        id: changed
+        if: github.event_name == 'push'
+        uses: ./.github/actions/detect-components
+        with:
+          platformctl: ${{ steps.platformctl.outputs.path }}
+          mode: changed
+          base: ${{ github.event.before }}
+          head: ${{ steps.source.outputs.commit }}
+
+      - name: Publish component matrix
+        id: detect
+        env:
+          EXPLICIT: ${{ steps.explicit.outputs.matrix }}
+          ALL: ${{ steps.all.outputs.matrix }}
+          CHANGED: ${{ steps.changed.outputs.matrix }}
+        run: |
+          set -Eeuo pipefail
+          matrix="${EXPLICIT:-${ALL:-${CHANGED:-[]}}}"
+          jq -e 'type == "array"' <<<"${matrix}" >/dev/null
+          echo "matrix=$(jq -c . <<<"${matrix}")" >>"${GITHUB_OUTPUT}"
+
+  build-candidate:
+    name: Build Immutable ${{ matrix.component }}
+    needs: [detect-components]
+    if: needs.detect-components.outputs.components != '[]'
+    runs-on: ${{ vars.TRUSTED_BUILD_RUNNER || 'ubuntu-latest' }}
+    environment: ci-build
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJson(needs.detect-components.outputs.components) }}
+    steps:
+      - name: Checkout exact protected source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.detect-components.outputs.source_commit }}
+
+      - name: Set up platformctl
+        id: platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Configure candidate-only AWS identity
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.CI_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.CI_AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Log in to candidate ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build and push one immutable candidate
+        id: artifact
+        uses: ./.github/actions/build-component
+        with:
+          component: ${{ matrix.component }}
+          source-commit: ${{ needs.detect-components.outputs.source_commit }}
+          registry: ${{ steps.ecr.outputs.registry }}
+          platformctl: ${{ steps.platformctl.outputs.path }}
+
+      - name: Verify supply-chain evidence
+        uses: ./.github/actions/scan-artifact
+        with:
+          component: ${{ matrix.component }}
+          image: ${{ steps.artifact.outputs.image }}
+          digest: ${{ steps.artifact.outputs.digest }}
+
+      - name: Record candidate metadata
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SOURCE_COMMIT: ${{ needs.detect-components.outputs.source_commit }}
+          SOURCE_IMAGE: ${{ steps.artifact.outputs.image }}
+          SOURCE_DIGEST: ${{ steps.artifact.outputs.digest }}
+          RUNNER_CLASS: ${{ vars.TRUSTED_BUILD_RUNNER || 'ubuntu-latest' }}
+          RUNNER_NAME: ${{ runner.name }}
+          RUNNER_OS: ${{ runner.os }}
+          RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${RUNNER_TEMP}/candidate"
+          jq -n \
+            --arg service "${COMPONENT}" \
+            --arg source_commit "${SOURCE_COMMIT}" \
+            --arg source_image "${SOURCE_IMAGE}" \
+            --arg source_digest "${SOURCE_DIGEST}" \
+            --arg runner_class "${RUNNER_CLASS}" \
+            --arg runner_name "${RUNNER_NAME}" \
+            --arg runner_os "${RUNNER_OS}" \
+            --arg runner_arch "${RUNNER_ARCH}" \
+            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{schema_version: 2, status: "built", service: $service,
+              source_commit: $source_commit, source_image: $source_image,
+              source_digest: $source_digest, runner_class: $runner_class,
+              runner_name: $runner_name, runner_os: $runner_os, runner_arch: $runner_arch,
+              workflow_run: $workflow_run, created_at: $created_at}' \
+            >"${RUNNER_TEMP}/candidate/${COMPONENT}.json"
+
+      - name: Upload candidate metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-${{ matrix.component }}
+          path: ${{ runner.temp }}/candidate/${{ matrix.component }}.json
+          retention-days: 3
+
+  submit-candidates:
+    name: Submit Candidate Evidence PR
+    needs: [detect-components, build-candidate]
+    if: needs.build-candidate.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ci-build
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+
+      - name: Download candidate metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: candidate-*
+          path: ${{ runner.temp }}/candidates
+          merge-multiple: true
+
+      - name: Stage typed candidate records
+        env:
+          SOURCE_COMMIT: ${{ needs.detect-components.outputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          for metadata in "${RUNNER_TEMP}"/candidates/*.json; do
+            component="$(jq -er .service "${metadata}")"
+            destination="infrastructure/release-candidates/${component}/${SOURCE_COMMIT}.json"
+            mkdir -p "$(dirname "${destination}")"
+            cp "${metadata}" "${destination}"
+          done
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add infrastructure/release-candidates
+          git commit -m "chore(release): record candidates ${SOURCE_COMMIT::12}"
+
+      - name: Open candidate evidence pull request
+        uses: ./.github/actions/submit-gitops-pr
+        with:
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/candidates-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "chore(release): record immutable candidates"
+          body: "Candidate metadata records exact digests and runner evidence from protected commit ${{ needs.detect-components.outputs.source_commit }}. Merge before recording QA approval."
+
+  release-status:
+    name: Release Candidate Status
+    needs: [detect-components, build-candidate, submit-candidates]
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.ref_name == github.event.repository.default_branch &&
+        vars.TRUSTED_BUILD_RUNNER != ''))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce candidate result
+        env:
+          DETECT: ${{ needs.detect-components.result }}
+          COMPONENTS: ${{ needs.detect-components.outputs.components }}
+          BUILD: ${{ needs.build-candidate.result }}
+          SUBMIT: ${{ needs.submit-candidates.result }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${DETECT}" == "success" ]]
+          if [[ "${COMPONENTS}" == "[]" ]]; then
+            exit 0
+          fi
+          [[ "${BUILD}" == "success" && "${SUBMIT}" == "success" ]]

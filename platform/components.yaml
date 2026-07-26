@@ -1,0 +1,113 @@
+schemaVersion: 1
+
+# Paths shared by the CoffeeShop services. A match selects every automatic application
+# service, while the migration and operator retain their own explicit boundaries.
+sharedPaths:
+  - go.mod
+  - go.sum
+  - pkg/**
+  - internal/pkg/**
+  - proto/**
+  - tools/**
+  - third_party/**
+  - sqlc.yaml
+  - buf.gen.yaml
+  - buf.work.yaml
+
+components:
+  - name: web
+    kind: service
+    build: go
+    context: .
+    dockerfile: docker/Dockerfile-web
+    imageRepository: go-coffeeshop-web
+    kustomizeImage: go-coffeeshop-web
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: true
+    paths: [cmd/web/**, internal/web/**, docker/Dockerfile-web]
+
+  - name: proxy
+    kind: service
+    build: go
+    context: .
+    dockerfile: docker/Dockerfile-proxy
+    imageRepository: go-coffeeshop-proxy
+    kustomizeImage: go-coffeeshop-proxy
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: true
+    paths: [cmd/proxy/**, internal/proxy/**, docker/Dockerfile-proxy]
+
+  - name: product
+    kind: service
+    build: go
+    context: .
+    dockerfile: docker/Dockerfile-product
+    imageRepository: go-coffeeshop-product
+    kustomizeImage: go-coffeeshop-product
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: true
+    paths: [cmd/product/**, internal/product/**, docker/Dockerfile-product]
+
+  - name: counter
+    kind: service
+    build: go
+    context: .
+    dockerfile: docker/Dockerfile-counter
+    imageRepository: go-coffeeshop-counter
+    kustomizeImage: go-coffeeshop-counter
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: true
+    paths: [cmd/counter/**, internal/counter/**, docker/Dockerfile-counter]
+
+  - name: barista
+    kind: service
+    build: go
+    context: .
+    dockerfile: docker/Dockerfile-barista
+    imageRepository: go-coffeeshop-barista
+    kustomizeImage: go-coffeeshop-barista
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: true
+    paths: [cmd/barista/**, internal/barista/**, docker/Dockerfile-barista]
+
+  - name: kitchen
+    kind: service
+    build: go
+    context: .
+    dockerfile: docker/Dockerfile-kitchen
+    imageRepository: go-coffeeshop-kitchen
+    kustomizeImage: go-coffeeshop-kitchen
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: true
+    paths: [cmd/kitchen/**, internal/kitchen/**, docker/Dockerfile-kitchen]
+
+  - name: migrate
+    kind: migration
+    build: go-migrate
+    context: .
+    dockerfile: docker/Dockerfile-migrate
+    imageRepository: go-coffeeshop-migrate
+    kustomizeImage: go-coffeeshop-migrate
+    devOverlay: infrastructure/k8s/apps/coffeeshop/overlays/dev
+    prodOverlay: infrastructure/k8s/apps/coffeeshop/overlays/prod
+    automatic: false
+    paths: [cmd/migrate/**, db/**, docker/Dockerfile-migrate]
+
+  - name: platform-ownership-guard
+    kind: operator
+    build: operator
+    context: platform-ownership-guard
+    dockerfile: platform-ownership-guard/Dockerfile.release
+    imageRepository: platform-ownership-guard
+    kustomizeImage: controller
+    devOverlay: platform-ownership-guard/config/dev
+    prodOverlay: platform-ownership-guard/config/prod
+    automatic: true
+    paths:
+      - platform-ownership-guard/**

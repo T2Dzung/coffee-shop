@@ -43,6 +43,11 @@ output "github_delivery_role_arn" {
   value       = aws_iam_role.github_delivery_role.arn
 }
 
+output "github_emergency_delivery_role_arn" {
+  description = "The GitHub Actions OIDC role restricted to the PROD emergency Environment"
+  value       = aws_iam_role.github_emergency_delivery_role.arn
+}
+
 output "budget_name" {
   description = "The name of the AWS Budget"
   value       = aws_budgets_budget.prod_budget.name
@@ -51,6 +56,11 @@ output "budget_name" {
 output "ecr_repository_urls" {
   description = "Map of CoffeeShop ECR repository URLs"
   value       = { for k, v in aws_ecr_repository.app : k => v.repository_url }
+}
+
+output "candidate_ecr_repository_urls" {
+  description = "Retained CI candidate repositories keyed by component"
+  value       = { for k, v in aws_ecr_repository.candidate : k => v.repository_url }
 }
 
 output "aws_load_balancer_controller_role_arn" {

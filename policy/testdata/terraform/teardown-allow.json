@@ -1,0 +1,1 @@
+{"resource_changes":[{"address":"module.eks_nodes.aws_eks_node_group.this","change":{"actions":["delete"]}}]}

@@ -96,7 +96,7 @@ if [[ "${VERIFY_GITOPS}" == "true" ]]; then
   fi
 fi
 
-for namespace in kube-system argocd coffeeshop cnpg-system longhorn-system monitoring actions-runner-system platform-ownership-guard-system; do
+for namespace in kube-system argocd coffeeshop cnpg-system longhorn-system monitoring platform-ownership-guard-system; do
   check_namespace_pods "${namespace}"
 done
 

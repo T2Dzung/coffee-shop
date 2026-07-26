@@ -115,15 +115,6 @@ resource "aws_eks_addon" "vpc_cni" {
   tags = local.common_tags
 }
 
-resource "aws_eks_addon" "coredns" {
-  cluster_name = aws_eks_cluster.this.name
-  addon_name   = "coredns"
-
-  tags = local.common_tags
-
-  depends_on = [aws_eks_addon.vpc_cni]
-}
-
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "kube-proxy"

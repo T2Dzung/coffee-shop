@@ -1,0 +1,12 @@
+expected_aws_account_id   = "123456789012"
+aws_region               = "ap-southeast-1"
+availability_zone        = "ap-southeast-1a"
+github_repository        = "OWNER/REPOSITORY"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+
+# Current Ansible adapter uses SSH. Replace both values; never use 0.0.0.0/0.
+key_name           = "REPLACE_WITH_EXISTING_EC2_KEY_PAIR"
+operator_ssh_cidrs = ["203.0.113.10/32"]
+
+instance_type    = "t3.large"
+root_volume_size = 40

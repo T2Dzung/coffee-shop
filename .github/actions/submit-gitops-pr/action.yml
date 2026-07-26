@@ -1,0 +1,41 @@
+name: Submit protected desired-state PR
+description: Push the prepared commit and open one pull request
+
+inputs:
+  token:
+    required: true
+  base:
+    required: true
+  branch:
+    required: true
+  title:
+    required: true
+  body:
+    required: true
+
+outputs:
+  url:
+    value: ${{ steps.pr.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Push commit and create pull request
+      id: pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BASE_BRANCH: ${{ inputs.base }}
+        UPDATE_BRANCH: ${{ inputs.branch }}
+        PR_TITLE: ${{ inputs.title }}
+        PR_BODY: ${{ inputs.body }}
+      run: |
+        set -Eeuo pipefail
+        [[ "${BASE_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]
+        [[ "${UPDATE_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]
+        git push origin "HEAD:refs/heads/${UPDATE_BRANCH}"
+        url="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/pulls" \
+          -f title="${PR_TITLE}" -f head="${UPDATE_BRANCH}" \
+          -f base="${BASE_BRANCH}" -f body="${PR_BODY}" --jq .html_url)"
+        echo "url=${url}" >>"${GITHUB_OUTPUT}"
+        echo "Created desired-state pull request: ${url}"

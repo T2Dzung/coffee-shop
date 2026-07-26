@@ -1,4 +1,4 @@
-# Environment coordinates stay in deploy-prod.sh inputs; this file contains only
+# Environment coordinates stay in typed platformctl inputs; this file contains only
 # reviewed chart behavior that should remain source-controlled.
 serviceAccount:
   create: true

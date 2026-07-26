@@ -1,0 +1,1 @@
+{"resource_changes":[{"address":"aws_vpc.ci","mode":"managed","type":"aws_vpc","change":{"actions":["create"],"after":{"tags":{"Environment":"prod"}}}}]}

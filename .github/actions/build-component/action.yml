@@ -1,0 +1,104 @@
+name: Build immutable component
+description: Build and push one catalog-owned candidate artifact
+
+inputs:
+  component:
+    required: true
+    description: Component catalog name
+  source-commit:
+    required: true
+    description: Full protected source commit
+  registry:
+    required: true
+    description: Authenticated candidate ECR registry
+  platformctl:
+    required: true
+    description: Absolute platformctl path
+
+outputs:
+  image:
+    value: ${{ steps.artifact.outputs.image }}
+    description: Candidate image repository
+  digest:
+    value: ${{ steps.artifact.outputs.digest }}
+    description: Registry sha256 digest
+  kind:
+    value: ${{ steps.metadata.outputs.kind }}
+    description: Catalog component kind
+  dev-overlay:
+    value: ${{ steps.metadata.outputs.dev_overlay }}
+    description: DEV desired-state overlay
+  prod-overlay:
+    value: ${{ steps.metadata.outputs.prod_overlay }}
+    description: PROD desired-state overlay
+  kustomize-image:
+    value: ${{ steps.metadata.outputs.kustomize_image }}
+    description: Kustomize image key
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve catalog metadata
+      id: metadata
+      shell: bash
+      env:
+        PLATFORMCTL: ${{ inputs.platformctl }}
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -Eeuo pipefail
+        "${PLATFORMCTL}" component describe --name "${COMPONENT}" >"${RUNNER_TEMP}/component.json"
+        for field in kind context dockerfile image_repository dev_overlay prod_overlay kustomize_image; do
+          value="$(jq -er --arg field "${field}" '.[$field]' "${RUNNER_TEMP}/component.json")"
+          echo "${field}=${value}" >>"${GITHUB_OUTPUT}"
+        done
+
+    - name: Build release binary
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        KIND: ${{ steps.metadata.outputs.kind }}
+      run: |
+        set -Eeuo pipefail
+        if [[ "${KIND}" == "operator" ]]; then
+          (
+            cd platform-ownership-guard
+            make test
+            git diff --exit-code
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+              go build -mod=readonly -trimpath -ldflags="-s -w" -o bin/manager ./cmd/main.go
+          )
+        else
+          bash scripts/ci/build-go-service.sh "${COMPONENT}"
+        fi
+
+    - name: Build and push immutable candidate
+      id: artifact
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        SOURCE_COMMIT: ${{ inputs.source-commit }}
+        REGISTRY: ${{ inputs.registry }}
+        CONTEXT: ${{ steps.metadata.outputs.context }}
+        DOCKERFILE: ${{ steps.metadata.outputs.dockerfile }}
+        IMAGE_REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
+      run: |
+        set -Eeuo pipefail
+        [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+        repository="coffeeshop-candidate-${IMAGE_REPOSITORY}"
+        image="${REGISTRY}/${repository}"
+        tag="candidate-${SOURCE_COMMIT}"
+        existing="$(aws ecr describe-images \
+          --repository-name "${repository}" --image-ids "imageTag=${tag}" \
+          --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+        if [[ "${existing}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          digest="${existing}"
+        else
+          docker buildx build --platform linux/amd64 --push \
+            --file "${DOCKERFILE}" --tag "${image}:${tag}" "${CONTEXT}"
+          digest="$(aws ecr describe-images \
+            --repository-name "${repository}" --image-ids "imageTag=${tag}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+        fi
+        [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+        echo "image=${image}" >>"${GITHUB_OUTPUT}"
+        echo "digest=${digest}" >>"${GITHUB_OUTPUT}"

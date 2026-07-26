@@ -1,0 +1,29 @@
+name: PROD — Roll Back Released Digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Component to roll back from reviewed release history
+        required: true
+        type: string
+      source_commit:
+        description: Full 40-character commit identifying a prior PROD release
+        required: true
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prod-desired-state
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    uses: ./.github/workflows/_reusable-prod-delivery.yml
+    with:
+      lane: rollback
+      service: ${{ inputs.service }}
+      source_commit: ${{ inputs.source_commit }}

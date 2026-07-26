@@ -29,6 +29,19 @@ module "eks_nodes" {
   tags              = local.common_tags
 }
 
+# CoreDNS needs schedulable nodes before AWS can report the add-on ACTIVE. Keeping
+# it in the cluster-only module created an impossible lifecycle boundary and forced
+# routine setup to use targeted applies. The moved block preserves the live state
+# address while this root-level dependency makes one full saved plan reliable.
+resource "aws_eks_addon" "coredns" {
+  cluster_name = module.eks_cluster.cluster_name
+  addon_name   = "coredns"
+
+  tags = local.common_tags
+
+  depends_on = [module.eks_nodes]
+}
+
 resource "aws_eks_addon" "ebs_csi" {
   cluster_name                = module.eks_cluster.cluster_name
   addon_name                  = "aws-ebs-csi-driver"

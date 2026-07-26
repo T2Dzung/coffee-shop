@@ -19,9 +19,6 @@
     - role: gateway_resources
       tags: ['gateway_resources']
 
-    - role: arc_runner
-      tags: ['arc_runner']
-
     - role: argocd
       tags: ['argocd']
 

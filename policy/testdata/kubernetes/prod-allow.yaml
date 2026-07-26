@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: coffeeshop
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: example/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi

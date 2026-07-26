@@ -1,0 +1,332 @@
+name: Reusable PROD Delivery Engine
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        description: standard, emergency, or rollback
+        required: true
+        type: string
+      service:
+        description: Component name from platform/components.yaml
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      baseline_commit:
+        required: false
+        default: ""
+        type: string
+    secrets:
+      PROD_AWS_ROLE_ARN:
+        required: false
+      PROD_EMERGENCY_AWS_ROLE_ARN:
+        required: false
+      GITOPS_PR_TOKEN:
+        required: false
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  deliver:
+    name: ${{ inputs.lane }} ${{ inputs.service }} to PROD
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.lane == 'emergency' && 'prod-emergency' || 'prod' }}
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+
+      - name: Set up typed release policy
+        id: platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Resolve catalog component
+        id: component
+        env:
+          COMPONENT: ${{ inputs.service }}
+          LANE: ${{ inputs.lane }}
+        run: |
+          set -Eeuo pipefail
+          "${RUNNER_TEMP}/platformctl" component describe --name "${COMPONENT}" \
+            >"${RUNNER_TEMP}/component.json"
+          kind="$(jq -er .kind "${RUNNER_TEMP}/component.json")"
+          if [[ "${LANE}" == "emergency" && "${kind}" != "service" ]]; then
+            echo "Emergency build lane accepts application services only; ${COMPONENT} is ${kind}." >&2
+            exit 1
+          fi
+          if [[ "${kind}" == "migration" ]]; then
+            echo "Migration promotion requires its dedicated backup/maintenance/rollback workflow." >&2
+            exit 1
+          fi
+          for field in image_repository prod_overlay kustomize_image; do
+            echo "${field}=$(jq -er --arg field "${field}" '.[$field]' "${RUNNER_TEMP}/component.json")" \
+              >>"${GITHUB_OUTPUT}"
+          done
+
+      - name: Resolve standard or rollback artifact
+        if: inputs.lane != 'emergency'
+        id: source-artifact
+        env:
+          LANE: ${{ inputs.lane }}
+          COMPONENT: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "${LANE}" == "standard" ]]; then
+            git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD || {
+              echo "Standard candidate is not contained in the protected default branch." >&2
+              exit 1
+            }
+            "${RUNNER_TEMP}/platformctl" release standard \
+              --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+              --candidate "infrastructure/release-candidates/${COMPONENT}/${SOURCE_COMMIT}.json" \
+              --qa "infrastructure/release-candidates/${COMPONENT}/qa/${SOURCE_COMMIT}.json" \
+              >"${RUNNER_TEMP}/artifact.json"
+          else
+            history=""
+            for candidate in \
+              "infrastructure/releases/prod/lanes/standard/${COMPONENT}/${SOURCE_COMMIT}.json" \
+              "infrastructure/releases/prod/lanes/emergency/${COMPONENT}/${SOURCE_COMMIT}.json"; do
+              if [[ -f "${candidate}" ]]; then
+                history="${candidate}"
+                break
+              fi
+            done
+            [[ -n "${history}" ]] || {
+              echo "No reviewed PROD release history exists for ${COMPONENT}@${SOURCE_COMMIT}." >&2
+              exit 1
+            }
+            "${RUNNER_TEMP}/platformctl" release rollback \
+              --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+              --history "${history}" >"${RUNNER_TEMP}/artifact.json"
+          fi
+          echo "image=$(jq -er .image "${RUNNER_TEMP}/artifact.json")" >>"${GITHUB_OUTPUT}"
+          echo "digest=$(jq -er .digest "${RUNNER_TEMP}/artifact.json")" >>"${GITHUB_OUTPUT}"
+
+      - name: Validate emergency lineage
+        if: inputs.lane == 'emergency'
+        env:
+          COMPONENT: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+        run: |
+          set -Eeuo pipefail
+          "${RUNNER_TEMP}/platformctl" release identity \
+            --lane emergency --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}"
+          [[ "${BASELINE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${SOURCE_COMMIT}^{commit}"
+          git cat-file -e "${BASELINE_COMMIT}^{commit}"
+          git merge-base --is-ancestor "${BASELINE_COMMIT}" "${SOURCE_COMMIT}"
+          git diff --binary "${BASELINE_COMMIT}" "${SOURCE_COMMIT}" -- \
+            "cmd/${COMPONENT}" "internal/${COMPONENT}" internal/pkg pkg \
+            >"${RUNNER_TEMP}/emergency-reconcile.patch"
+          [[ -s "${RUNNER_TEMP}/emergency-reconcile.patch" ]]
+          git apply --check "${RUNNER_TEMP}/emergency-reconcile.patch"
+
+      - name: Checkout exact emergency source
+        if: inputs.lane == 'emergency'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: emergency-source
+
+      - name: Configure lane-scoped PROD identity
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ inputs.lane == 'emergency' && secrets.PROD_EMERGENCY_AWS_ROLE_ARN || secrets.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.PROD_AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Log in to PROD account ECR
+        id: prod-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      - name: Verify candidate workflow identity
+        if: inputs.lane == 'standard'
+        env:
+          ARTIFACT: ${{ steps.source-artifact.outputs.image }}@${{ steps.source-artifact.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/heads/${{ github.event.repository.default_branch }}"
+          cosign verify --certificate-identity "${identity}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${ARTIFACT}"
+
+      - name: Re-scan exact QA-approved candidate
+        if: inputs.lane == 'standard'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          image-ref: ${{ steps.source-artifact.outputs.image }}@${{ steps.source-artifact.outputs.digest }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL
+          cache: "true"
+
+      - name: Build pinned registry copy utility
+        if: inputs.lane == 'standard'
+        run: GOBIN="${RUNNER_TEMP}" go install github.com/google/go-containerregistry/cmd/crane@c68d899782693b63b7549166812aa996f17a660c
+
+      - name: Build exact emergency artifact
+        if: inputs.lane == 'emergency'
+        working-directory: emergency-source
+        env:
+          COMPONENT: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          REGISTRY: ${{ steps.prod-ecr.outputs.registry }}
+          REPOSITORY: ${{ steps.component.outputs.image_repository }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/ci/build-go-service.sh "${COMPONENT}"
+          local_image="${REPOSITORY}:emergency-${SOURCE_COMMIT}"
+          remote_image="${REGISTRY}/${REPOSITORY}:emergency-${SOURCE_COMMIT}"
+          docker build --file "docker/Dockerfile-${COMPONENT}" --tag "${local_image}" .
+          docker tag "${local_image}" "${remote_image}"
+          docker push "${remote_image}"
+
+      - name: Publish or resolve immutable PROD artifact
+        id: prod-artifact
+        env:
+          LANE: ${{ inputs.lane }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_IMAGE: ${{ steps.source-artifact.outputs.image }}
+          SOURCE_DIGEST: ${{ steps.source-artifact.outputs.digest }}
+          PROD_REGISTRY: ${{ steps.prod-ecr.outputs.registry }}
+          REPOSITORY: ${{ steps.component.outputs.image_repository }}
+        run: |
+          set -Eeuo pipefail
+          destination_image="${PROD_REGISTRY}/${REPOSITORY}"
+          if [[ "${LANE}" == "standard" ]]; then
+            existing="$(aws ecr describe-images --repository-name "${REPOSITORY}" \
+              --image-ids "imageTag=release-${SOURCE_COMMIT}" \
+              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+            if [[ "${existing}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              [[ "${existing}" == "${SOURCE_DIGEST}" ]]
+            else
+              "${RUNNER_TEMP}/crane" copy "${SOURCE_IMAGE}@${SOURCE_DIGEST}" \
+                "${destination_image}:release-${SOURCE_COMMIT}"
+            fi
+            digest="${SOURCE_DIGEST}"
+          elif [[ "${LANE}" == "emergency" ]]; then
+            digest="$(aws ecr describe-images --repository-name "${REPOSITORY}" \
+              --image-ids "imageTag=emergency-${SOURCE_COMMIT}" \
+              --query 'imageDetails[0].imageDigest' --output text)"
+          else
+            digest="${SOURCE_DIGEST}"
+          fi
+          present="$(aws ecr describe-images --repository-name "${REPOSITORY}" \
+            --image-ids "imageDigest=${digest}" --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "${present}" == "${digest}" && "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=${destination_image}" >>"${GITHUB_OUTPUT}"
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+
+      - name: Re-scan exact PROD digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          image-ref: ${{ steps.prod-artifact.outputs.image }}@${{ steps.prod-artifact.outputs.digest }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL
+          cache: "true"
+
+      - name: Sign and verify PROD repository identity
+        env:
+          ARTIFACT: ${{ steps.prod-artifact.outputs.image }}@${{ steps.prod-artifact.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/prod-(promote|hotfix|rollback)\\.yml@refs/heads/${{ github.event.repository.default_branch }}"
+          if ! cosign verify --certificate-identity-regexp "${identity}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${ARTIFACT}" >/dev/null 2>&1; then
+            cosign sign --yes "${ARTIFACT}"
+          fi
+          cosign verify --certificate-identity-regexp "${identity}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${ARTIFACT}"
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
+
+      - name: Update reviewed PROD desired state
+        env:
+          LANE: ${{ inputs.lane }}
+          COMPONENT: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+          PROD_IMAGE: ${{ steps.prod-artifact.outputs.image }}
+          PROD_DIGEST: ${{ steps.prod-artifact.outputs.digest }}
+          PROD_OVERLAY: ${{ steps.component.outputs.prod_overlay }}
+          KUSTOMIZE_IMAGE: ${{ steps.component.outputs.kustomize_image }}
+        run: |
+          set -Eeuo pipefail
+          (
+            cd "${PROD_OVERLAY}"
+            kustomize edit set image "${KUSTOMIZE_IMAGE}=${PROD_IMAGE}@${PROD_DIGEST}"
+          )
+          kustomize build "${PROD_OVERLAY}" >/dev/null
+          release_file="infrastructure/releases/prod/lanes/${LANE}/${COMPONENT}/${SOURCE_COMMIT}.json"
+          mkdir -p "$(dirname "${release_file}")"
+          "${RUNNER_TEMP}/platformctl" release manifest \
+            --lane "${LANE}" --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+            --image "${PROD_IMAGE}" --digest "${PROD_DIGEST}" --baseline "${BASELINE_COMMIT}" \
+            --workflow-run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            >"${release_file}"
+
+      - name: Commit PROD desired state
+        env:
+          LANE: ${{ inputs.lane }}
+          COMPONENT: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PROD_DIGEST: ${{ steps.prod-artifact.outputs.digest }}
+          PROD_OVERLAY: ${{ steps.component.outputs.prod_overlay }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add infrastructure/releases/prod/lanes "${PROD_OVERLAY}/kustomization.yaml"
+          git commit -m "chore(prod): ${LANE} ${COMPONENT} ${PROD_DIGEST}"
+
+      - name: Open protected PROD desired-state PR
+        uses: ./.github/actions/submit-gitops-pr
+        with:
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/prod-${{ inputs.lane }}-${{ inputs.service }}-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "chore(prod): ${{ inputs.lane }} ${{ inputs.service }}"
+          body: "${{ inputs.lane }} lane requests a reviewed desired-state change for ${{ inputs.service }}@${{ steps.prod-artifact.outputs.digest }}."
+
+      - name: Prepare emergency source reconciliation
+        if: inputs.lane == 'emergency'
+        env:
+          COMPONENT: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          git switch --detach "origin/${{ github.event.repository.default_branch }}"
+          git apply "${RUNNER_TEMP}/emergency-reconcile.patch"
+          git add "cmd/${COMPONENT}" "internal/${COMPONENT}" internal/pkg pkg
+          git commit -m "fix(${COMPONENT}): reconcile emergency ${SOURCE_COMMIT::12}"
+
+      - name: Open emergency source reconciliation PR
+        if: inputs.lane == 'emergency'
+        uses: ./.github/actions/submit-gitops-pr
+        with:
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/reconcile-emergency-${{ inputs.service }}-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "fix(${{ inputs.service }}): reconcile emergency source"
+          body: "Reconcile emergency commit ${{ inputs.source_commit }} back into protected main through normal branch protection."

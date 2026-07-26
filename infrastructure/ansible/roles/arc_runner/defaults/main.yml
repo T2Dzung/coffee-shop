@@ -1,0 +1,12 @@
+---
+arc_runner_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-ci.yaml"
+arc_runner_controller_namespace: arc-systems
+arc_runner_namespace: ci-runners
+arc_runner_controller_release: arc-controller
+arc_runner_release: trusted-build
+arc_runner_scale_set_name: trusted-build
+arc_runner_chart_version: "0.14.2"
+arc_runner_max_runners: 2
+arc_runner_github_auth_mode: github_app
+arc_runner_source_root: "{{ playbook_dir }}/../../k8s/ci/arc"
+arc_runner_manifest_root: /tmp/coffeeshop-arc

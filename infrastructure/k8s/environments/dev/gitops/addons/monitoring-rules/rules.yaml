@@ -50,19 +50,6 @@ spec:
             summary: "ArgoCD application is degraded"
             description: "ArgoCD application {{ $labels.name }} is in Degraded state."
 
-    - name: ci-runner-alerts
-      rules:
-        - alert: RunnerPodsUnavailable
-          expr: >-
-            sum(kube_pod_status_phase{namespace="dev-ci", phase="Failed"}) > 0
-            or sum(kube_pod_container_status_waiting_reason{namespace="dev-ci", reason="CrashLoopBackOff"}) > 0
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "CI Runner pods are failing or in CrashLoopBackOff"
-            description: "Pods in namespace dev-ci have failed or are experiencing CrashLoopBackOff."
-
     - name: application-alerts
       rules:
         - alert: CoffeeShopAppUnavailable

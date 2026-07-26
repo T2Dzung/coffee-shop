@@ -1,0 +1,74 @@
+githubConfigUrl: "https://github.com/OWNER/REPOSITORY"
+githubConfigSecret: github-actions-credentials
+runnerScaleSetName: trusted-build
+
+controllerServiceAccount:
+  name: arc-controller
+  namespace: arc-systems
+
+minRunners: 0
+maxRunners: 2
+
+template:
+  spec:
+    automountServiceAccountToken: false
+    hostNetwork: false
+    hostPID: false
+    hostIPC: false
+    securityContext:
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    initContainers:
+      - name: dind
+        image: docker:24.0.7-dind
+        imagePullPolicy: IfNotPresent
+        restartPolicy: Always
+        env:
+          - name: DOCKER_TLS_CERTDIR
+            value: ""
+        securityContext:
+          privileged: true
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 3Gi
+        volumeMounts:
+          - name: docker-storage
+            mountPath: /var/lib/docker
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:2.334.0
+        imagePullPolicy: IfNotPresent
+        command: ["/home/runner/run.sh"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+          - name: DOCKER_HOST
+            value: tcp://localhost:2375
+          - name: GOMODCACHE
+            value: /go-cache/pkg/mod
+          - name: GOCACHE
+            value: /go-cache/build
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+        volumeMounts:
+          - name: go-cache
+            mountPath: /go-cache
+    volumes:
+      - name: go-cache
+        emptyDir:
+          sizeLimit: 8Gi
+      - name: docker-storage
+        emptyDir:
+          sizeLimit: 16Gi

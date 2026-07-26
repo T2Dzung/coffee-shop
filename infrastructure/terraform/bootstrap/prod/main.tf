@@ -26,5 +26,13 @@ module "backend" {
   environment        = "prod"
   custom_bucket_name = var.custom_bucket_name
   allowed_principals = var.allowed_principals
-  additional_tags    = var.additional_tags
+  state_key_prefixes = ["prod/*"]
+  additional_backend_roles = {
+    ci = {
+      role_name          = "${var.project_name}-ci-terraform-backend-role"
+      state_key_prefixes = ["ci/*"]
+      allowed_principals = var.allowed_principals
+    }
+  }
+  additional_tags = var.additional_tags
 }

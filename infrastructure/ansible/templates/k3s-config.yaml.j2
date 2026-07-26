@@ -1,25 +1,35 @@
+{% if k3s_tls_sans | default([]) | length > 0 %}
 tls-san:
 {% for san in k3s_tls_sans %}
   - "{{ san }}"
 {% endfor %}
+{% endif %}
 disable:
   - traefik
   - servicelb
+{% if k3s_bootstrap_server_disable_default_networking | default(true) | bool %}
 flannel-backend: "none"
 disable-kube-proxy: true
 disable-network-policy: true
+{% endif %}
 write-kubeconfig-mode: "0600"
 secrets-encryption: true
 cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 cluster-dns: 10.43.0.10
 cluster-domain: cluster.local
+{% if k3s_bootstrap_server_cluster_init | default(is_bootstrap | default(false)) | bool %}
 etcd-snapshot-schedule-cron: "0 */12 * * *"
 etcd-snapshot-retention: 5
-{% if ec2_tags.K3sBootstrap == 'true' %}
-# Initialization of the cluster
 cluster-init: true
-{% else %}
+{% endif %}
+{% if k3s_bootstrap_server_node_labels | default([]) | length > 0 %}
+node-label:
+{% for label in k3s_bootstrap_server_node_labels %}
+  - "{{ label }}"
+{% endfor %}
+{% endif %}
+{% if not (is_bootstrap | default(false) | bool) %}
 # Join the existing cluster
 server: https://{{ k3s_registration_endpoint }}:6443
 {% endif %}

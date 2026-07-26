@@ -1,5 +1,5 @@
 # Pinned Helm values for Argo CD PROD-2 bootstrap
-# Chart version pinned in deploy-prod.sh to 6.7.18 (Argo CD v2.10.9)
+# Chart version is pinned by platformctl's PROD controller installer.
 global:
   domain: argocd.coffeeshop.internal
 
