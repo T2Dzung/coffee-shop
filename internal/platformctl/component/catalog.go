@@ -150,6 +150,26 @@ func (c Catalog) Resolve(names []string, allowMigration bool) ([]string, error) 
 	return result, nil
 }
 
+func (c Catalog) CandidateRepositoryNames(names []string) ([]string, error) {
+	resolved, err := c.Resolve(names, true)
+	if err != nil {
+		return nil, err
+	}
+	repositories := make([]string, 0, len(resolved))
+	for _, name := range resolved {
+		entry, err := c.Find(name)
+		if err != nil {
+			return nil, err
+		}
+		repositories = append(repositories, CandidateRepositoryName(entry))
+	}
+	return repositories, nil
+}
+
+func CandidateRepositoryName(entry Component) string {
+	return "coffeeshop-candidate-" + entry.ImageRepository
+}
+
 func JSONNames(names []string) ([]byte, error) {
 	return json.Marshal(names)
 }

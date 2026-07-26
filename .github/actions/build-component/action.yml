@@ -51,18 +51,8 @@ runs:
           value="$(jq -er --arg field "${field}" '.[$field]' "${RUNNER_TEMP}/component.json")"
           echo "${field}=${value}" >>"${GITHUB_OUTPUT}"
         done
-
-    - name: Require retained candidate repository
-      shell: bash
-      env:
-        IMAGE_REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
-      run: |
-        set -Eeuo pipefail
-        repository="coffeeshop-candidate-${IMAGE_REPOSITORY}"
-        aws ecr describe-repositories --repository-names "${repository}" >/dev/null || {
-          echo "Candidate ECR repository ${repository} is absent; reconcile PROD retained artifacts before building." >&2
-          exit 1
-        }
+        candidate_repository="$("${PLATFORMCTL}" component candidate-repositories --names "${COMPONENT}" | jq -er '.[0]')"
+        echo "candidate_repository=${candidate_repository}" >>"${GITHUB_OUTPUT}"
 
     - name: Build release binary
       shell: bash
@@ -92,24 +82,23 @@ runs:
         REGISTRY: ${{ inputs.registry }}
         CONTEXT: ${{ steps.metadata.outputs.context }}
         DOCKERFILE: ${{ steps.metadata.outputs.dockerfile }}
-        IMAGE_REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
+        CANDIDATE_REPOSITORY: ${{ steps.metadata.outputs.candidate_repository }}
       run: |
         set -Eeuo pipefail
         [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
-        repository="coffeeshop-candidate-${IMAGE_REPOSITORY}"
-        image="${REGISTRY}/${repository}"
+        image="${REGISTRY}/${CANDIDATE_REPOSITORY}"
         tag="candidate-${SOURCE_COMMIT}"
-        existing="$(aws ecr describe-images \
-          --repository-name "${repository}" --image-ids "imageTag=${tag}" \
-          --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+        manifest="$(docker buildx imagetools inspect "${image}:${tag}" \
+          --format '{{json .Manifest}}' 2>/dev/null || true)"
+        existing="$(jq -er '.digest // empty' <<<"${manifest}" 2>/dev/null || true)"
         if [[ "${existing}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
           digest="${existing}"
         else
+          metadata_file="${RUNNER_TEMP}/buildx-${COMPONENT}.json"
           docker buildx build --platform linux/amd64 --push \
+            --metadata-file "${metadata_file}" \
             --file "${DOCKERFILE}" --tag "${image}:${tag}" "${CONTEXT}"
-          digest="$(aws ecr describe-images \
-            --repository-name "${repository}" --image-ids "imageTag=${tag}" \
-            --query 'imageDetails[0].imageDigest' --output text)"
+          digest="$(jq -er '."containerimage.digest"' "${metadata_file}")"
         fi
         [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
         echo "image=${image}" >>"${GITHUB_OUTPUT}"

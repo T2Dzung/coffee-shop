@@ -59,3 +59,17 @@ func TestResolveRequiresExplicitMigrationIntent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"migrate", "web"}, resolved)
 }
+
+func TestCandidateRepositoryNamesUseResolvedCatalogMetadata(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog{Components: []Component{
+		{Name: "web", ImageRepository: "go-coffeeshop-web"},
+		{Name: "guard", ImageRepository: "platform-ownership-guard"},
+	}}
+	repositories, err := catalog.CandidateRepositoryNames([]string{"web", "guard", "web"})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"coffeeshop-candidate-platform-ownership-guard",
+		"coffeeshop-candidate-go-coffeeshop-web",
+	}, repositories)
+}

@@ -119,20 +119,16 @@ func (o *RealOperations) validateCandidateRepositories(ctx context.Context) erro
 	if err != nil {
 		return err
 	}
+	repositories, err := catalog.CandidateRepositoryNames(catalog.Names())
+	if err != nil {
+		return err
+	}
 	args := []string{"ecr", "describe-repositories", "--repository-names"}
-	args = append(args, candidateRepositoryNames(catalog)...)
+	args = append(args, repositories...)
 	if err := o.AWS.Run(ctx, args...); err != nil {
-		return fmt.Errorf("retained candidate ECR boundary is incomplete; run platformctl prod setup first: %w", err)
+		return fmt.Errorf("candidate ECR preflight failed; verify AWS identity/API availability and run platformctl prod setup if AWS reports RepositoryNotFoundException: %w", err)
 	}
 	return nil
-}
-
-func candidateRepositoryNames(catalog component.Catalog) []string {
-	names := make([]string, 0, len(catalog.Components))
-	for _, entry := range catalog.Components {
-		names = append(names, "coffeeshop-candidate-"+entry.ImageRepository)
-	}
-	return names
 }
 
 func (o *RealOperations) validateSetupSecrets() error {

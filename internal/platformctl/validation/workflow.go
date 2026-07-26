@@ -12,9 +12,13 @@ import (
 var fullActionSHA = regexp.MustCompile(`^[^@\s]+@[0-9a-fA-F]{40}$`)
 
 type workflowPolicyInput struct {
-	UsesSecretsInherit    bool     `json:"uses_secrets_inherit"`
-	UnpinnedActions       []string `json:"unpinned_actions"`
-	PullRequestSelfHosted bool     `json:"pull_request_self_hosted"`
+	UsesSecretsInherit                bool     `json:"uses_secrets_inherit"`
+	UnpinnedActions                   []string `json:"unpinned_actions"`
+	PullRequestSelfHosted             bool     `json:"pull_request_self_hosted"`
+	CandidateBuildWithoutECRPreflight bool     `json:"candidate_build_without_ecr_preflight"`
+	CandidatePreflightNotHosted       bool     `json:"candidate_preflight_not_hosted"`
+	CandidateBuildMissingToolchain    bool     `json:"candidate_build_missing_toolchain"`
+	ARCBuildUsesAWSCLI                bool     `json:"arc_build_uses_aws_cli"`
 }
 
 func normalizeWorkflow(path string) (workflowPolicyInput, error) {
@@ -29,7 +33,59 @@ func normalizeWorkflow(path string) (workflowPolicyInput, error) {
 	_, pullRequest := asMap(document["on"])["pull_request"]
 	result := workflowPolicyInput{}
 	walkWorkflow(document, pullRequest, &result)
+	normalizeCandidateContracts(document, &result)
 	return result, nil
+}
+
+func normalizeCandidateContracts(document map[string]any, result *workflowPolicyInput) {
+	jobs := asMap(document["jobs"])
+	if build, ok := jobs["build-candidate"]; ok {
+		buildJob := asMap(build)
+		result.CandidateBuildWithoutECRPreflight = !containsString(buildJob["needs"], "preflight-candidate-ecr")
+		preflightJob := asMap(jobs["preflight-candidate-ecr"])
+		result.CandidatePreflightNotHosted = len(preflightJob) == 0 || isSelfHosted(preflightJob["runs-on"])
+		result.CandidateBuildMissingToolchain = !containsRunText(buildJob, "toolchain verify --profile candidate-runner")
+	}
+	if name, _ := document["name"].(string); name == "Build immutable component" {
+		result.ARCBuildUsesAWSCLI = containsRunText(document, "aws ")
+	}
+}
+
+func containsString(value any, expected string) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == expected
+	case []any:
+		for _, item := range typed {
+			if text, ok := item.(string); ok && text == expected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsRunText(value any, expected string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "run" {
+				if text, ok := child.(string); ok && strings.Contains(text, expected) {
+					return true
+				}
+			}
+			if containsRunText(child, expected) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if containsRunText(child, expected) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func walkWorkflow(value any, pullRequest bool, result *workflowPolicyInput) {

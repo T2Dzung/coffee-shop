@@ -14,3 +14,19 @@ deny contains message if {
 deny contains "pull_request code can reach a self-hosted runner" if {
 	input.pull_request_self_hosted
 }
+
+deny contains "candidate ARC build is not gated by hosted ECR preflight" if {
+	input.candidate_build_without_ecr_preflight
+}
+
+deny contains "candidate ECR preflight must run on a GitHub-hosted runner" if {
+	input.candidate_preflight_not_hosted
+}
+
+deny contains "candidate ARC build does not enforce its typed toolchain profile" if {
+	input.candidate_build_missing_toolchain
+}
+
+deny contains "ARC build action calls AWS CLI; cloud API checks belong to the hosted preflight" if {
+	input.arc_build_uses_aws_cli
+}
