@@ -218,6 +218,15 @@ func (o *RealOperations) verifyTeardown(ctx context.Context) error {
 			return fmt.Errorf("retained candidate ECR lifecycle policy for %s is missing", candidate)
 		}
 	}
+	for _, role := range []string{
+		o.Config.ProjectName + "-prod-github-delivery-role",
+		o.Config.ProjectName + "-prod-github-emergency-delivery-role",
+		o.Config.ProjectName + "-dev-candidate-reader-role",
+	} {
+		if !o.awsSucceeds(ctx, "iam", "get-role", "--role-name", role) {
+			return fmt.Errorf("retained GitHub delivery role %s is missing", role)
+		}
+	}
 	if !o.awsSucceeds(ctx,
 		"budgets", "describe-budget",
 		"--account-id", o.Config.AccountID,

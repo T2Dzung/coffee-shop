@@ -17,6 +17,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/command"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/component"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/config"
+	platformdev "github.com/thangchung/go-coffeeshop/internal/platformctl/dev"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/evidence"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/policy"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/prod"
@@ -40,14 +41,22 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	operatorConfig, args, err := parseGlobalOptions(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl <prod|ci|component|toolchain|validate|terraform-plan|release|version> ...")
+		return fmt.Errorf("usage: platformctl [--operator-config path] <prod|dev|ci|config|component|toolchain|validate|terraform-plan|release|version> ...")
 	}
 	switch args[0] {
 	case "prod":
-		return runProd(ctx, args[1:], stdin, stdout, stderr)
+		return runProd(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
 	case "ci":
-		return runCI(ctx, args[1:], stdin, stdout, stderr)
+		return runCI(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
+	case "dev":
+		return runDev(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
+	case "config":
+		return runConfig(args[1:], stdout, stderr, operatorConfig)
 	case "component":
 		return runComponent(args[1:], stdout, stderr)
 	case "toolchain":
@@ -64,6 +73,90 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runDev(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: platformctl dev <setup|status|teardown> [flags]")
+	}
+	action := platformdev.Action(args[0])
+	if !action.Valid() {
+		return fmt.Errorf("unsupported DEV action %q", action)
+	}
+	flags := flag.NewFlagSet("dev "+string(action), flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	varFile := flags.String("var-file", "", "DEV Terraform tfvars file")
+	autoApprove := flags.Bool("auto-approve", false, "explicitly disable interactive approval")
+	evidencePath := flags.String("evidence", "", "structured evidence JSON path")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	loader := config.NewLoader()
+	loader.OperatorConfigPath = operatorConfig
+	cfg, err := loader.LoadDev(root, *varFile)
+	if err != nil {
+		return err
+	}
+	if *autoApprove {
+		cfg.AutoApprove = true
+	}
+	runner := command.OSRunner{Stdout: stdout, Stderr: stderr}
+	approver := platformdev.ConsoleApprover{Input: stdin, Output: stdout, AutoApprove: cfg.AutoApprove}
+	recorder := evidence.New("dev-" + string(action))
+	runErr := (platformdev.Engine{
+		Operations: platformdev.NewRealOperations(cfg, runner, stdout), Approver: approver, Evidence: recorder,
+	}).Run(ctx, action)
+	if *evidencePath == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr == nil {
+			*evidencePath = filepath.Join(home, "coffeeshop-evidence", "platformctl",
+				time.Now().UTC().Format("20060102T150405Z")+"-dev-"+string(action)+".json")
+		}
+	}
+	if *evidencePath != "" {
+		if err := evidence.WriteAtomic(*evidencePath, recorder.Snapshot()); err != nil && runErr == nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Evidence:", *evidencePath)
+	}
+	return runErr
+}
+
+func parseGlobalOptions(args []string) (string, []string, error) {
+	if len(args) == 0 || args[0] != "--operator-config" {
+		return "", args, nil
+	}
+	if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+		return "", nil, fmt.Errorf("--operator-config requires a path")
+	}
+	return args[1], args[2:], nil
+}
+
+func runConfig(args []string, stdout, stderr io.Writer, operatorConfig string) error {
+	if len(args) == 0 || args[0] != "doctor" {
+		return fmt.Errorf("usage: platformctl [--operator-config path] config doctor --environment <dev|ci|prod|all>")
+	}
+	flags := flag.NewFlagSet("config doctor", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	environment := flags.String("environment", "all", "dev, ci, prod or all")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	report, err := (config.Doctor{
+		Loader: config.Loader{OperatorConfigPath: operatorConfig}, ProjectRoot: root,
+	}).Run(*environment)
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, report)
 }
 
 func runToolchain(args []string, stdout, stderr io.Writer) error {
@@ -139,7 +232,7 @@ func runComponent(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runCI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func runCI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: platformctl ci <setup|status|teardown> [flags]")
 	}
@@ -159,7 +252,9 @@ func runCI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	if err != nil {
 		return err
 	}
-	cfg, err := config.NewLoader().LoadCI(root, *varFile)
+	loader := config.NewLoader()
+	loader.OperatorConfigPath = operatorConfig
+	cfg, err := loader.LoadCI(root, *varFile)
 	if err != nil {
 		return err
 	}
@@ -190,7 +285,7 @@ func runCI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 	return runErr
 }
 
-func runProd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func runProd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: platformctl prod <setup|reconcile|status|resilience|teardown> [flags]")
 	}
@@ -210,7 +305,9 @@ func runProd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err != nil {
 		return err
 	}
-	cfg, err := config.NewLoader().LoadProd(root, *varFile)
+	loader := config.NewLoader()
+	loader.OperatorConfigPath = operatorConfig
+	cfg, err := loader.LoadProd(root, *varFile)
 	if err != nil {
 		return err
 	}
@@ -307,7 +404,7 @@ func policyEvaluator(runner command.Runner, root string) policy.Evaluator {
 
 func runRelease(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl release <identity|candidate|standard|rollback|manifest> ...")
+		return fmt.Errorf("usage: platformctl release <identity|candidate|dev|standard|rollback|manifest> ...")
 	}
 	switch args[0] {
 	case "identity":
@@ -360,6 +457,23 @@ func runRelease(args []string, stdout io.Writer) error {
 			return err
 		}
 		return writeJSON(stdout, artifact)
+	case "dev":
+		flags := flag.NewFlagSet("release dev", flag.ContinueOnError)
+		service := flags.String("service", "", "component name")
+		commit := flags.String("source-commit", "", "source commit")
+		candidate := flags.String("candidate", "", "candidate JSON")
+		devRelease := flags.String("dev-release", "", "DEV release JSON")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := validateReleaseComponent(*service); err != nil {
+			return err
+		}
+		release, err := releasepolicy.ValidateDevRelease(*service, *commit, *candidate, *devRelease)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, release)
 	case "rollback":
 		flags := flag.NewFlagSet("release rollback", flag.ContinueOnError)
 		service := flags.String("service", "", "service name")

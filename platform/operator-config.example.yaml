@@ -1,0 +1,31 @@
+schemaVersion: 1
+
+# Copy this file to ~/.config/go-coffeeshop/operator.yaml. Keep credentials in
+# separate mode-0600 files; never put private keys or tokens directly in this YAML.
+environments:
+  dev:
+    # terraformVarFile is optional; the default is the repo's envs/dev/terraform.tfvars.
+    awsProfile: coffeeshop-dev
+    sshPrivateKeyFile: ~/.ssh/coffeeshop-dev.pem
+    ansibleVaultPasswordFile: ~/.vault-pass
+    kubeconfig: ~/.kube/coffeeshop-dev.yaml
+
+  ci:
+    # terraformVarFile is optional; the default is the repo's envs/ci/terraform.tfvars.
+    awsProfile: coffeeshop-prod
+    sshPrivateKeyFile: ~/.ssh/coffeeshop-ci-runner.pem
+    kubeconfig: ~/.kube/coffeeshop-ci.yaml
+    maxRunners: 2
+    githubAuth:
+      mode: pat
+      personalTokenFile: ~/.config/go-coffeeshop/arc-token
+      # For GitHub App mode, replace the two lines above with:
+      # mode: github_app
+      # appId: "123456"
+      # installationId: "12345678"
+      # appPrivateKeyFile: ~/.config/go-coffeeshop/arc-app.pem
+
+  prod:
+    # terraformVarFile is optional; the default is the repo's envs/prod/terraform.tfvars.
+    awsProfile: coffeeshop-prod
+    kubeconfig: ~/.kube/coffeeshop-prod.yaml

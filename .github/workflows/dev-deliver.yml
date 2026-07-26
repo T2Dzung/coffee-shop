@@ -1,0 +1,225 @@
+name: DEV — Deliver Immutable Candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Full protected-main commit whose candidate records are already merged
+        required: true
+      components:
+        description: Comma-separated component names, or all automatic components
+        required: true
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-delivery-${{ inputs.source_commit }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve DEV Delivery Set
+    runs-on: ubuntu-latest
+    outputs:
+      components: ${{ steps.resolve.outputs.components }}
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Set up platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Resolve component matrix
+        id: resolve
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          REQUESTED: ${{ inputs.components }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD
+          if [[ "${REQUESTED}" == "all" ]]; then
+            components="$("${RUNNER_TEMP}/platformctl" component list)"
+            components="$(jq -c '[.[] as $name | $name]' <<<"${components}")"
+          else
+            components="$("${RUNNER_TEMP}/platformctl" component resolve --names "${REQUESTED}")"
+          fi
+          components="$(jq -c '[.[] | select(. != "migrate")]' <<<"${components}")"
+          jq -e 'length > 0' <<<"${components}" >/dev/null
+          echo "components=${components}" >>"${GITHUB_OUTPUT}"
+
+  copy:
+    name: Copy ${{ matrix.component }} to DEV
+    needs: [resolve]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJson(needs.resolve.outputs.components) }}
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Resolve candidate and component metadata
+        id: artifact
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          candidate="infrastructure/release-candidates/${COMPONENT}/${SOURCE_COMMIT}.json"
+          "${RUNNER_TEMP}/platformctl" release candidate \
+            --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+            --candidate "${candidate}" >"${RUNNER_TEMP}/candidate.json"
+          "${RUNNER_TEMP}/platformctl" component describe --name "${COMPONENT}" \
+            >"${RUNNER_TEMP}/component.json"
+          {
+            echo "source_image=$(jq -er .image "${RUNNER_TEMP}/candidate.json")"
+            echo "source_digest=$(jq -er .digest "${RUNNER_TEMP}/candidate.json")"
+            echo "repository=$(jq -er .image_repository "${RUNNER_TEMP}/component.json")"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Configure candidate read identity
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5b3a # v4
+        with:
+          role-to-assume: ${{ secrets.DEV_CANDIDATE_READER_ROLE_ARN }}
+          aws-region: ${{ vars.CANDIDATE_AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Log in to candidate ECR
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Configure DEV delivery identity
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5b3a # v4
+        with:
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.DEV_AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Log in to DEV ECR
+        id: dev-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Copy exact candidate without rebuild
+        id: dev-artifact
+        uses: ./.github/actions/copy-immutable-artifact
+        with:
+          source-image: ${{ steps.artifact.outputs.source_image }}
+          source-digest: ${{ steps.artifact.outputs.source_digest }}
+          destination-image: ${{ steps.dev-ecr.outputs.registry }}/${{ steps.artifact.outputs.repository }}
+          destination-tag: dev-${{ inputs.source_commit }}
+
+      - name: Record DEV delivery metadata
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_IMAGE: ${{ steps.artifact.outputs.source_image }}
+          SOURCE_DIGEST: ${{ steps.artifact.outputs.source_digest }}
+          DEV_IMAGE: ${{ steps.dev-artifact.outputs.image }}
+          DEV_DIGEST: ${{ steps.dev-artifact.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${RUNNER_TEMP}/dev-releases"
+          jq -n \
+            --arg service "${COMPONENT}" --arg source_commit "${SOURCE_COMMIT}" \
+            --arg source_image "${SOURCE_IMAGE}" --arg source_digest "${SOURCE_DIGEST}" \
+            --arg dev_image "${DEV_IMAGE}" --arg dev_digest "${DEV_DIGEST}" \
+            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{schema_version: 1, status: "copied", service: $service,
+              source_commit: $source_commit, source_image: $source_image,
+              source_digest: $source_digest, dev_image: $dev_image,
+              dev_digest: $dev_digest, workflow_run: $workflow_run}' \
+            >"${RUNNER_TEMP}/dev-releases/${COMPONENT}.json"
+
+      - name: Upload DEV delivery metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dev-release-${{ matrix.component }}
+          path: ${{ runner.temp }}/dev-releases/${{ matrix.component }}.json
+          retention-days: 3
+
+  submit:
+    name: Submit DEV Desired-State PR
+    needs: [resolve, copy]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+
+      - name: Set up platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
+
+      - name: Download DEV delivery metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: dev-release-*
+          path: ${{ runner.temp }}/dev-releases
+          merge-multiple: true
+
+      - name: Update DEV desired state
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          for metadata in "${RUNNER_TEMP}"/dev-releases/*.json; do
+            component="$(jq -er .service "${metadata}")"
+            image="$(jq -er .dev_image "${metadata}")"
+            digest="$(jq -er .dev_digest "${metadata}")"
+            "${RUNNER_TEMP}/platformctl" component describe --name "${component}" \
+              >"${RUNNER_TEMP}/component.json"
+            overlay="$(jq -er .dev_overlay "${RUNNER_TEMP}/component.json")"
+            kustomize_image="$(jq -er .kustomize_image "${RUNNER_TEMP}/component.json")"
+            (
+              cd "${overlay}"
+              kustomize edit set image "${kustomize_image}=${image}@${digest}"
+            )
+            kustomize build "${overlay}" >/dev/null
+            destination="infrastructure/releases/dev/${component}/${SOURCE_COMMIT}.json"
+            mkdir -p "$(dirname "${destination}")"
+            cp "${metadata}" "${destination}"
+          done
+
+      - name: Commit DEV desired state
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add infrastructure/releases/dev infrastructure/k8s/apps/coffeeshop/overlays/dev \
+            platform-ownership-guard/config/dev
+          git commit -m "chore(dev): deliver immutable candidates ${SOURCE_COMMIT::12}"
+
+      - name: Open protected DEV desired-state PR
+        uses: ./.github/actions/submit-gitops-pr
+        with:
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/dev-delivery-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "chore(dev): deliver immutable candidates"
+          body: "Copies protected candidates into DEV ECR without rebuilding and updates DEV GitOps desired state to their exact digests."

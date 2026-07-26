@@ -16,6 +16,16 @@ variable "aws_region" {
   default     = "ap-southeast-1"
 }
 
+variable "expected_aws_account_id" {
+  description = "Explicit AWS account boundary for the DEV environment"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_aws_account_id))
+    error_message = "expected_aws_account_id must contain 12 digits."
+  }
+}
+
 variable "cluster_name" {
   description = "Name of the K3s cluster"
   type        = string
@@ -86,7 +96,12 @@ variable "k3s_instance_type" {
 variable "k3s_root_volume_size" {
   description = "Size of root volume in GiB"
   type        = number
-  default     = 80
+  default     = 30
+
+  validation {
+    condition     = var.k3s_root_volume_size >= 20
+    error_message = "k3s_root_volume_size must be at least 20 GiB."
+  }
 }
 
 variable "k3s_root_volume_iops" {

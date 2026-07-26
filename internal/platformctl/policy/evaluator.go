@@ -28,7 +28,8 @@ type Evaluator struct {
 
 func (e Evaluator) Terraform(ctx context.Context, policyName, inputPath string) error {
 	if policyName != "reconcile" && policyName != "teardown" &&
-		policyName != "ci-reconcile" && policyName != "ci-teardown" {
+		policyName != "ci-reconcile" && policyName != "ci-teardown" &&
+		policyName != "dev-reconcile" && policyName != "dev-teardown" {
 		return fmt.Errorf("unsupported Terraform policy %q", policyName)
 	}
 	namespace := "terraform." + strings.ReplaceAll(policyName, "-", "_")

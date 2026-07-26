@@ -134,7 +134,8 @@ func (o *RealOperations) firstBootstrap(ctx context.Context) error {
 			"aws_region": o.Config.Region, "expected_aws_account_id": o.Config.AccountID,
 			"project_name": o.Config.ProjectName,
 		},
-		Timeout: 45 * time.Minute,
+		Timeout:     45 * time.Minute,
+		Environment: awsEnvironment(o.Config.AWSProfile),
 	}
 	if err := client.Init(ctx); err != nil {
 		return fmt.Errorf("initialize first bootstrap staging %s: %w", staging, err)

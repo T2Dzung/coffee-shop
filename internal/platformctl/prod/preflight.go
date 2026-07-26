@@ -65,7 +65,7 @@ func (o *RealOperations) Preflight(ctx context.Context, action Action) error {
 
 func (o *RealOperations) showHourlyEstimate(ctx context.Context) error {
 	estimate, err := (platformaws.Pricing{Client: platformaws.Client{
-		Runner: o.Runner, Region: "us-east-1", Timeout: 2 * time.Minute,
+		Runner: o.Runner, Region: "us-east-1", Profile: o.Config.AWSProfile, Timeout: 2 * time.Minute,
 	}}).Estimate(ctx, platformaws.EstimateInput{
 		Region:           o.Config.Region,
 		NodeInstanceType: o.Config.NodeInstanceTypes[0],

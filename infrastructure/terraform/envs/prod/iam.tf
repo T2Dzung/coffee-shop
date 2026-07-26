@@ -121,3 +121,60 @@ resource "aws_iam_role_policy_attachment" "github_emergency_delivery_attach" {
   role       = aws_iam_role.github_emergency_delivery_role.name
   policy_arn = aws_iam_policy.github_delivery_policy.arn
 }
+
+# DEV delivery runs in a separate GitHub Environment and may only read retained
+# candidate repositories. It cannot write PROD repositories or mutate EKS.
+resource "aws_iam_role" "github_dev_candidate_reader_role" {
+  name        = "${var.project_name}-dev-candidate-reader-role"
+  description = "Read-only candidate ECR identity used by the DEV delivery workflow"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = local.github_oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:dev"
+        }
+      }
+    }]
+  })
+
+  tags = merge(local.common_tags, { DeliveryLane = "dev-candidate-read" })
+}
+
+resource "aws_iam_policy" "github_dev_candidate_reader_policy" {
+  name        = "${var.project_name}-dev-candidate-reader-policy"
+  description = "Read-only access to retained immutable candidate repositories"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = [for repository in aws_ecr_repository.candidate : repository.arn]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "github_dev_candidate_reader_attach" {
+  role       = aws_iam_role.github_dev_candidate_reader_role.name
+  policy_arn = aws_iam_policy.github_dev_candidate_reader_policy.arn
+}

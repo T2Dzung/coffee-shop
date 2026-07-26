@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func NewRealOperations(cfg config.Prod, runner command.Runner, approver Approver
 	timeout := 45 * time.Minute
 	return &RealOperations{
 		Config: cfg, Runner: runner, Approver: approver, Output: output,
-		AWS:    platformaws.Client{Runner: runner, Region: cfg.Region, Timeout: timeout},
+		AWS:    platformaws.Client{Runner: runner, Region: cfg.Region, Profile: cfg.AWSProfile, Timeout: timeout},
 		Kube:   kubernetes.Client{Runner: runner, Kubeconfig: cfg.Kubeconfig, Timeout: timeout},
 		Policy: policy.Evaluator{Runner: runner, ProjectRoot: cfg.ProjectRoot},
 		BootstrapTF: platformterraform.Client{
@@ -67,16 +68,25 @@ func NewRealOperations(cfg config.Prod, runner command.Runner, approver Approver
 				"aws_region": cfg.Region, "expected_aws_account_id": cfg.AccountID,
 				"project_name": cfg.ProjectName,
 			},
-			Timeout: timeout,
+			Timeout:     timeout,
+			Environment: awsEnvironment(cfg.AWSProfile),
 		},
 		FoundationTF: platformterraform.Client{
-			Runner:  runner,
-			Dir:     filepath.Join(cfg.ProjectRoot, "infrastructure", "terraform", "envs", "prod"),
-			DataDir: filepath.Join(cacheRoot, "prod-foundation-"+cfg.AccountID),
-			VarFile: cfg.VarFile,
-			Timeout: timeout,
+			Runner:      runner,
+			Dir:         filepath.Join(cfg.ProjectRoot, "infrastructure", "terraform", "envs", "prod"),
+			DataDir:     filepath.Join(cacheRoot, "prod-foundation-"+cfg.AccountID),
+			VarFile:     cfg.VarFile,
+			Timeout:     timeout,
+			Environment: awsEnvironment(cfg.AWSProfile),
 		},
 	}
+}
+
+func awsEnvironment(profile string) map[string]string {
+	if profile == "" {
+		return nil
+	}
+	return map[string]string{"AWS_PROFILE": profile}
 }
 
 func (o *RealOperations) Plan(ctx context.Context, action Action) (Plan, error) {
@@ -181,6 +191,9 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 	if err := o.loadRuntimeOutputs(ctx); err != nil {
 		return err
 	}
+	if err := o.printGitHubSettings(ctx); err != nil {
+		return err
+	}
 	if err := o.updateKubeconfig(ctx); err != nil {
 		return err
 	}
@@ -243,6 +256,27 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 		return err
 	}
 	return o.waitArgo(ctx, "coffeeshop-prod-ownership-guard")
+}
+
+func (o *RealOperations) printGitHubSettings(ctx context.Context) error {
+	outputs := []struct {
+		name  string
+		label string
+	}{
+		{"github_delivery_role_arn", "PROD_AWS_ROLE_ARN"},
+		{"github_emergency_delivery_role_arn", "PROD_EMERGENCY_AWS_ROLE_ARN"},
+		{"github_dev_candidate_reader_role_arn", "DEV_CANDIDATE_READER_ROLE_ARN"},
+	}
+	fmt.Fprintln(o.Output, "GitHub Environment values resolved from Terraform:")
+	for _, item := range outputs {
+		value, err := o.FoundationTF.Output(ctx, item.name)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", item.name, err)
+		}
+		fmt.Fprintf(o.Output, "  %s=%s\n", item.label, strings.TrimSpace(value))
+	}
+	fmt.Fprintf(o.Output, "  PROD_AWS_REGION=%s\n  CANDIDATE_AWS_REGION=%s\n", o.Config.Region, o.Config.Region)
+	return nil
 }
 
 func (o *RealOperations) loadRuntimeOutputs(ctx context.Context) error {
