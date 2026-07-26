@@ -96,9 +96,57 @@ jobs:
           jq -e 'type == "array"' <<<"${matrix}" >/dev/null
           echo "matrix=$(jq -c . <<<"${matrix}")" >>"${GITHUB_OUTPUT}"
 
+  preflight-candidate-ecr:
+    name: Preflight Candidate ECR
+    needs: [detect-components]
+    if: needs.detect-components.outputs.components != '[]'
+    runs-on: ubuntu-latest
+    environment: ci-build
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout exact protected source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.detect-components.outputs.source_commit }}
+
+      - name: Set up platformctl
+        id: platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Configure candidate-only AWS identity
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.CI_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.CI_AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Require retained candidate repositories
+        shell: bash
+        env:
+          COMPONENTS: ${{ needs.detect-components.outputs.components }}
+          PLATFORMCTL: ${{ steps.platformctl.outputs.path }}
+        run: |
+          set -Eeuo pipefail
+          command -v aws >/dev/null || {
+            echo "Hosted candidate preflight requires AWS CLI but the runner image does not provide it." >&2
+            exit 127
+          }
+          names="$(jq -er 'join(",")' <<<"${COMPONENTS}")"
+          repositories="$("${PLATFORMCTL}" component candidate-repositories --names "${names}")"
+          mapfile -t repository_args < <(jq -er '.[]' <<<"${repositories}")
+          if ! output="$(aws ecr describe-repositories \
+            --repository-names "${repository_args[@]}" 2>&1)"; then
+            echo "Candidate ECR preflight failed before ARC build scheduling." >&2
+            echo "${output}" >&2
+            echo "If AWS reports RepositoryNotFoundException, run platformctl prod setup first." >&2
+            exit 1
+          fi
+
   build-candidate:
     name: Build Immutable ${{ matrix.component }}
-    needs: [detect-components]
+    needs: [detect-components, preflight-candidate-ecr]
     if: needs.detect-components.outputs.components != '[]'
     runs-on: ${{ vars.TRUSTED_BUILD_RUNNER || 'ubuntu-latest' }}
     environment: ci-build
@@ -118,6 +166,15 @@ jobs:
       - name: Set up platformctl
         id: platformctl
         uses: ./.github/actions/setup-platformctl
+
+      - name: Verify trusted runner toolchain
+        shell: bash
+        env:
+          PLATFORMCTL: ${{ steps.platformctl.outputs.path }}
+        run: |
+          set -Eeuo pipefail
+          "${PLATFORMCTL}" toolchain verify --profile candidate-runner
+          docker info >/dev/null
 
       - name: Configure candidate-only AWS identity
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -241,7 +298,7 @@ jobs:
 
   release-status:
     name: Release Candidate Status
-    needs: [detect-components, build-candidate, submit-candidates]
+    needs: [detect-components, preflight-candidate-ecr, build-candidate, submit-candidates]
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -253,6 +310,7 @@ jobs:
         env:
           DETECT: ${{ needs.detect-components.result }}
           COMPONENTS: ${{ needs.detect-components.outputs.components }}
+          PREFLIGHT: ${{ needs.preflight-candidate-ecr.result }}
           BUILD: ${{ needs.build-candidate.result }}
           SUBMIT: ${{ needs.submit-candidates.result }}
         run: |
@@ -261,4 +319,4 @@ jobs:
           if [[ "${COMPONENTS}" == "[]" ]]; then
             exit 0
           fi
-          [[ "${BUILD}" == "success" && "${SUBMIT}" == "success" ]]
+          [[ "${PREFLIGHT}" == "success" && "${BUILD}" == "success" && "${SUBMIT}" == "success" ]]

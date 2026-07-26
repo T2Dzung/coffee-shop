@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -160,12 +161,13 @@ func runConfig(args []string, stdout, stderr io.Writer, operatorConfig string) e
 }
 
 func runToolchain(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] != "describe" {
-		return fmt.Errorf("usage: platformctl toolchain describe --name <tool> [--catalog path]")
+	if len(args) == 0 {
+		return fmt.Errorf("usage: platformctl toolchain <describe|verify> [flags]")
 	}
-	flags := flag.NewFlagSet("toolchain describe", flag.ContinueOnError)
+	flags := flag.NewFlagSet("toolchain "+args[0], flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	name := flags.String("name", "", "tool name")
+	profile := flags.String("profile", "", "toolchain execution profile")
 	catalogPath := flags.String("catalog", "platform/toolchain.yaml", "toolchain catalog")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -174,16 +176,29 @@ func runToolchain(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	tool, err := catalog.Find(*name)
-	if err != nil {
-		return err
+	switch args[0] {
+	case "describe":
+		tool, err := catalog.Find(*name)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, tool)
+	case "verify":
+		if *profile == "" {
+			return fmt.Errorf("--profile is required")
+		}
+		if err := catalog.VerifyProfile(*profile, exec.LookPath); err != nil {
+			return err
+		}
+		return writeJSON(stdout, map[string]string{"profile": *profile, "status": "ready"})
+	default:
+		return fmt.Errorf("unsupported toolchain action %q", args[0])
 	}
-	return writeJSON(stdout, tool)
 }
 
 func runComponent(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl component <describe|list|select|resolve> [flags]")
+		return fmt.Errorf("usage: platformctl component <describe|list|select|resolve|candidate-repositories> [flags]")
 	}
 	flags := flag.NewFlagSet("component "+args[0], flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -227,6 +242,15 @@ func runComponent(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return writeJSON(stdout, resolved)
+	case "candidate-repositories":
+		if strings.TrimSpace(*names) == "" {
+			return fmt.Errorf("--names is required")
+		}
+		repositories, err := catalog.CandidateRepositoryNames(strings.Split(*names, ","))
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, repositories)
 	default:
 		return fmt.Errorf("unsupported component action %q", args[0])
 	}

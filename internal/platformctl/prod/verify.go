@@ -210,7 +210,7 @@ func (o *RealOperations) verifyTeardown(ctx context.Context) error {
 		if !o.awsSucceeds(ctx, "ecr", "get-lifecycle-policy", "--repository-name", item.ImageRepository) {
 			return fmt.Errorf("retained ECR lifecycle policy for %s is missing", item.ImageRepository)
 		}
-		candidate := "coffeeshop-candidate-" + item.ImageRepository
+		candidate := component.CandidateRepositoryName(item)
 		if !o.awsSucceeds(ctx, "ecr", "describe-repositories", "--repository-names", candidate) {
 			return fmt.Errorf("retained candidate ECR repository %s is missing", candidate)
 		}

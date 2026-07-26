@@ -48,3 +48,40 @@ jobs:
 	require.False(t, input.PullRequestSelfHosted)
 	require.Empty(t, input.UnpinnedActions)
 }
+
+func TestNormalizeWorkflowFindsCandidateExecutionContractViolations(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "workflow.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+name: candidate
+jobs:
+  preflight-candidate-ecr:
+    runs-on: self-hosted
+  build-candidate:
+    needs: [detect-components]
+    runs-on: trusted-build
+    steps:
+      - run: docker info
+`), 0o600))
+	input, err := normalizeWorkflow(path)
+	require.NoError(t, err)
+	require.True(t, input.CandidateBuildWithoutECRPreflight)
+	require.True(t, input.CandidatePreflightNotHosted)
+	require.True(t, input.CandidateBuildMissingToolchain)
+}
+
+func TestNormalizeWorkflowFindsAWSCLIInARCBuildAction(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "action.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+name: Build immutable component
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: aws ecr describe-images
+`), 0o600))
+	input, err := normalizeWorkflow(path)
+	require.NoError(t, err)
+	require.True(t, input.ARCBuildUsesAWSCLI)
+}

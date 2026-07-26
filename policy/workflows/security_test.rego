@@ -34,3 +34,27 @@ test_deny_untrusted_self_hosted if {
 		"pull_request_self_hosted": true,
 	}
 }
+
+test_deny_candidate_build_without_preflight if {
+	deny["candidate ARC build is not gated by hosted ECR preflight"] with input as {
+		"candidate_build_without_ecr_preflight": true,
+	}
+}
+
+test_deny_candidate_preflight_on_self_hosted if {
+	deny["candidate ECR preflight must run on a GitHub-hosted runner"] with input as {
+		"candidate_preflight_not_hosted": true,
+	}
+}
+
+test_deny_candidate_build_without_toolchain_contract if {
+	deny["candidate ARC build does not enforce its typed toolchain profile"] with input as {
+		"candidate_build_missing_toolchain": true,
+	}
+}
+
+test_deny_aws_cli_in_arc_build_action if {
+	deny["ARC build action calls AWS CLI; cloud API checks belong to the hosted preflight"] with input as {
+		"arc_build_uses_aws_cli": true,
+	}
+}
