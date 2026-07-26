@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "status": "built",
+  "service": "web",
+  "source_commit": "00f9f722214fc0e700f2c8e0276ee7f8166880e8",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-go-coffeeshop-web",
+  "source_digest": "sha256:0f30967b6d2b19a2f81ca53fc062e95d4e63949c98f6c8bc87b6cbe98ea9d706",
+  "runner_class": "trusted-build",
+  "runner_name": "trusted-build-jqvhw-runner-6c8bf",
+  "runner_os": "Linux",
+  "runner_arch": "X64",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30208751552",
+  "created_at": "2026-07-26T15:45:33Z"
+}
