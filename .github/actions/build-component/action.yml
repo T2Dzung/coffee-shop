@@ -52,6 +52,18 @@ runs:
           echo "${field}=${value}" >>"${GITHUB_OUTPUT}"
         done
 
+    - name: Require retained candidate repository
+      shell: bash
+      env:
+        IMAGE_REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
+      run: |
+        set -Eeuo pipefail
+        repository="coffeeshop-candidate-${IMAGE_REPOSITORY}"
+        aws ecr describe-repositories --repository-names "${repository}" >/dev/null || {
+          echo "Candidate ECR repository ${repository} is absent; reconcile PROD retained artifacts before building." >&2
+          exit 1
+        }
+
     - name: Build release binary
       shell: bash
       env:

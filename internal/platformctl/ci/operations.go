@@ -11,6 +11,7 @@ import (
 
 	platformaws "github.com/thangchung/go-coffeeshop/internal/platformctl/aws"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/command"
+	"github.com/thangchung/go-coffeeshop/internal/platformctl/component"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/config"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/policy"
 	platformterraform "github.com/thangchung/go-coffeeshop/internal/platformctl/terraform"
@@ -92,6 +93,9 @@ func (o *RealOperations) Preflight(ctx context.Context, action Action) error {
 		if err := o.validateSetupSecrets(); err != nil {
 			return err
 		}
+		if err := o.validateCandidateRepositories(ctx); err != nil {
+			return err
+		}
 		estimate, err := o.Pricing.EstimateCI(ctx, platformaws.CIEstimateInput{
 			Region: o.Config.Region, InstanceType: o.Config.InstanceType, DiskGiB: o.Config.RootVolumeGiB,
 		})
@@ -108,6 +112,27 @@ func (o *RealOperations) Preflight(ctx context.Context, action Action) error {
 		}
 	}
 	return nil
+}
+
+func (o *RealOperations) validateCandidateRepositories(ctx context.Context) error {
+	catalog, err := component.Load(filepath.Join(o.Config.ProjectRoot, "platform", "components.yaml"))
+	if err != nil {
+		return err
+	}
+	args := []string{"ecr", "describe-repositories", "--repository-names"}
+	args = append(args, candidateRepositoryNames(catalog)...)
+	if err := o.AWS.Run(ctx, args...); err != nil {
+		return fmt.Errorf("retained candidate ECR boundary is incomplete; run platformctl prod setup first: %w", err)
+	}
+	return nil
+}
+
+func candidateRepositoryNames(catalog component.Catalog) []string {
+	names := make([]string, 0, len(catalog.Components))
+	for _, entry := range catalog.Components {
+		names = append(names, "coffeeshop-candidate-"+entry.ImageRepository)
+	}
+	return names
 }
 
 func (o *RealOperations) validateSetupSecrets() error {

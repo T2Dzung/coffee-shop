@@ -9,6 +9,19 @@ locals {
   }
 }
 
+# The component catalog key was normalized from an underscore to the public
+# hyphenated component name. Preserve the existing repository and lifecycle
+# policy in state instead of planning a delete/create of the same AWS object.
+moved {
+  from = aws_ecr_repository.app["platform_ownership_guard"]
+  to   = aws_ecr_repository.app["platform-ownership-guard"]
+}
+
+moved {
+  from = aws_ecr_lifecycle_policy.app["platform_ownership_guard"]
+  to   = aws_ecr_lifecycle_policy.app["platform-ownership-guard"]
+}
+
 resource "aws_ecr_repository" "app" {
   for_each             = local.ecr_repositories
   name                 = each.value
