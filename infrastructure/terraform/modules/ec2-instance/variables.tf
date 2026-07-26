@@ -27,6 +27,7 @@ variable "security_group_ids" {
 variable "key_name" {
   description = "Name of the AWS Key Pair to associate with the instance"
   type        = string
+  default     = null
 }
 
 variable "disk_size" {

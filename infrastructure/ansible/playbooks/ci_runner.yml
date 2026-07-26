@@ -1,0 +1,38 @@
+---
+- name: Provision dedicated CI runner plane
+  hosts: ci_runner
+  become: true
+  gather_facts: true
+  vars:
+    active_api_endpoint: "{{ ansible_host }}"
+    k3s_tls_sans:
+      - "{{ ansible_host }}"
+      - "{{ private_ip }}"
+    k3s_bootstrap_server_local_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-ci.yaml"
+    k3s_bootstrap_server_write_local_kubeconfig: false
+    k3s_bootstrap_server_cluster_init: true
+    k3s_bootstrap_server_disable_default_networking: false
+    k3s_bootstrap_server_install_etcdctl: false
+    k3s_bootstrap_server_node_labels:
+      - platform.coffeeshop.io/plane=ci
+      - platform.coffeeshop.io/workload=trusted-build
+  roles:
+    - role: preflight
+    - role: common
+    - role: k3s_bootstrap_server
+
+- name: Install ARC on the dedicated CI plane
+  hosts: ci_runner
+  become: false
+  gather_facts: false
+  vars:
+    arc_runner_kubeconfig: /home/ubuntu/.kube/config
+    arc_runner_github_config_url: "{{ lookup('env', 'ARC_GITHUB_CONFIG_URL') }}"
+    arc_runner_github_auth_mode: "{{ lookup('env', 'ARC_GITHUB_AUTH_MODE') | default('github_app', true) }}"
+    arc_runner_github_app_id: "{{ lookup('env', 'ARC_GITHUB_APP_ID') }}"
+    arc_runner_github_app_installation_id: "{{ lookup('env', 'ARC_GITHUB_APP_INSTALLATION_ID') }}"
+    arc_runner_github_app_private_key: "{{ lookup('env', 'ARC_GITHUB_APP_PRIVATE_KEY') }}"
+    arc_runner_github_token: "{{ lookup('env', 'ARC_GITHUB_TOKEN') }}"
+    arc_runner_max_runners: "{{ lookup('env', 'ARC_MAX_RUNNERS') | default('2', true) | int }}"
+  roles:
+    - role: arc_runner

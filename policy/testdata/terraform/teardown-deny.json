@@ -1,0 +1,1 @@
+{"resource_changes":[{"address":"aws_ecr_repository.app[\"web\"]","change":{"actions":["delete"]}}]}

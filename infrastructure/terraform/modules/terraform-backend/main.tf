@@ -99,11 +99,14 @@ resource "aws_iam_policy" "backend_policy" {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = [aws_s3_bucket.terraform_state.arn]
+        Condition = {
+          StringLike = { "s3:prefix" = var.state_key_prefixes }
+        }
       },
       {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = ["${aws_s3_bucket.terraform_state.arn}/*"]
+        Resource = [for prefix in var.state_key_prefixes : "${aws_s3_bucket.terraform_state.arn}/${prefix}"]
       },
       {
         Effect   = "Allow"
@@ -117,4 +120,58 @@ resource "aws_iam_policy" "backend_policy" {
 resource "aws_iam_role_policy_attachment" "backend_attach" {
   role       = aws_iam_role.backend_role.name
   policy_arn = aws_iam_policy.backend_policy.arn
+}
+
+resource "aws_iam_role" "additional_backend" {
+  for_each    = var.additional_backend_roles
+  name        = each.value.role_name
+  description = "Isolated Terraform backend role for ${each.key} state"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        AWS = each.value.allowed_principals != null ? each.value.allowed_principals : local.allowed_principals
+      }
+    }]
+  })
+  tags = merge(local.common_tags, { StateScope = each.key })
+}
+
+resource "aws_iam_policy" "additional_backend" {
+  for_each    = var.additional_backend_roles
+  name        = "${each.value.role_name}-policy"
+  description = "Prefix-scoped Terraform state access for ${each.key}"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [aws_s3_bucket.terraform_state.arn]
+        Condition = {
+          StringLike = { "s3:prefix" = each.value.state_key_prefixes }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = [
+          for prefix in each.value.state_key_prefixes : "${aws_s3_bucket.terraform_state.arn}/${prefix}"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:DescribeKey", "kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [aws_kms_key.state_key.arn]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "additional_backend" {
+  for_each   = var.additional_backend_roles
+  role       = aws_iam_role.additional_backend[each.key].name
+  policy_arn = aws_iam_policy.additional_backend[each.key].arn
 }

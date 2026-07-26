@@ -18,6 +18,13 @@ spec:
       containers:
         - name: migrate
           image: go-coffeeshop-migrate
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           env:
             - name: MIGRATION_MODE
               value: migrate

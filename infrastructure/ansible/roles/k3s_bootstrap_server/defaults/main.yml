@@ -1,0 +1,7 @@
+---
+k3s_bootstrap_server_local_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+k3s_bootstrap_server_write_local_kubeconfig: true
+k3s_bootstrap_server_cluster_init: true
+k3s_bootstrap_server_disable_default_networking: true
+k3s_bootstrap_server_install_etcdctl: true
+k3s_bootstrap_server_node_labels: []

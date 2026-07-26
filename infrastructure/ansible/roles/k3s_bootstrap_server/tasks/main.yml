@@ -74,12 +74,14 @@
     dest: "/tmp/etcd-{{ etcdctl_version }}-linux-amd64.tar.gz"
     checksum: "sha256:{{ etcdctl_linux_amd64_sha256 }}"
     mode: "0644"
+  when: k3s_bootstrap_server_install_etcdctl | bool
 
 - name: Extract etcdctl
   ansible.builtin.unarchive:
     src: "/tmp/etcd-{{ etcdctl_version }}-linux-amd64.tar.gz"
     dest: /tmp
     remote_src: true
+  when: k3s_bootstrap_server_install_etcdctl | bool
 
 - name: Install etcdctl binary
   ansible.builtin.copy:
@@ -87,6 +89,7 @@
     dest: /usr/local/bin/etcdctl
     remote_src: true
     mode: "0755"
+  when: k3s_bootstrap_server_install_etcdctl | bool
 
 - name: Read remote kubeconfig
   ansible.builtin.slurp:
@@ -98,8 +101,9 @@
   become: false
   ansible.builtin.copy:
     content: "{{ k3s_bootstrap_server_remote_kubeconfig.content | b64decode | replace('127.0.0.1', active_api_endpoint) }}"
-    dest: "{{ lookup('env', 'HOME') }}/.kube/coffeeshop-dev.yaml"
+    dest: "{{ k3s_bootstrap_server_local_kubeconfig }}"
     mode: "0600"
+  when: k3s_bootstrap_server_write_local_kubeconfig | bool
 
 - name: Create kube directory for ubuntu user
   ansible.builtin.file:

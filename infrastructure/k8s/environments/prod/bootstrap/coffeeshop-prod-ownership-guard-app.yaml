@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coffeeshop-prod-ownership-guard
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: coffeeshop-prod
+  source:
+    repoURL: __GITOPS_REPO_URL__
+    targetRevision: __GITOPS_REVISION__
+    path: platform-ownership-guard/config/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-ownership-guard-system
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status/terminatingReplicas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

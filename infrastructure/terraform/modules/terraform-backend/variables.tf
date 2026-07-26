@@ -30,3 +30,19 @@ variable "allowed_principals" {
   type        = list(string)
   default     = null
 }
+
+variable "state_key_prefixes" {
+  description = "S3 object prefixes available to the primary backend role"
+  type        = list(string)
+  default     = ["*"]
+}
+
+variable "additional_backend_roles" {
+  description = "Additional isolated backend roles keyed by logical environment"
+  type = map(object({
+    role_name          = string
+    state_key_prefixes = list(string)
+    allowed_principals = optional(list(string))
+  }))
+  default = {}
+}

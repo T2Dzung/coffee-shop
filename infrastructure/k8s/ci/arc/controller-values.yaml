@@ -1,0 +1,17 @@
+flags:
+  logLevel: info
+replicaCount: 1
+serviceAccount:
+  create: true
+  name: arc-controller
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

@@ -1,0 +1,15 @@
+plugin: amazon.aws.aws_ec2
+filters:
+  tag:Environment: ci
+  tag:ManagedBy: Terraform
+  tag:RunnerPlane: trusted-build
+  instance-state-name: [running]
+hostnames:
+  - ip-address
+strict: true
+groups:
+  ci_runner: ec2_tags.K8sRole == 'ci-runner'
+  k3s_servers: ec2_tags.K8sRole == 'ci-runner'
+  k3s_bootstrap_server: ec2_tags.K3sBootstrap == 'true'
+compose:
+  private_ip: private_ip_address

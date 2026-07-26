@@ -1,0 +1,53 @@
+name: Set up platformctl
+description: Build the repository-owned typed automation CLI once for a job
+
+inputs:
+  validation-tools:
+    description: Install catalog-pinned Conftest, actionlint, and kubeconform
+    required: false
+    default: "false"
+
+outputs:
+  path:
+    description: Absolute platformctl binary path
+    value: ${{ steps.build.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Build platformctl
+      id: build
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        binary="${RUNNER_TEMP}/platformctl"
+        go build -trimpath -o "${binary}" ./cmd/platformctl
+        echo "path=${binary}" >>"${GITHUB_OUTPUT}"
+
+    - name: Install validation tools from typed catalog
+      if: inputs.validation-tools == 'true'
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        binary="${RUNNER_TEMP}/platformctl"
+        conftest_version="$(${binary} toolchain describe --name conftest | jq -er .version)"
+        actionlint_version="$(${binary} toolchain describe --name actionlint | jq -er .version)"
+        kubeconform="$(${binary} toolchain describe --name kubeconform)"
+        kubeconform_version="$(jq -er .version <<<"${kubeconform}")"
+        kubeconform_sha256="$(jq -er .linux_amd64_sha256 <<<"${kubeconform}")"
+        GOBIN="${RUNNER_TEMP}/platform-tools" go install \
+          "github.com/open-policy-agent/conftest@${conftest_version}"
+        GOBIN="${RUNNER_TEMP}/platform-tools" go install \
+          "github.com/rhysd/actionlint/cmd/actionlint@${actionlint_version}"
+        curl --fail --location --silent --show-error \
+          "https://github.com/yannh/kubeconform/releases/download/${kubeconform_version}/kubeconform-linux-amd64.tar.gz" \
+          --output "${RUNNER_TEMP}/kubeconform.tar.gz"
+        echo "${kubeconform_sha256}  ${RUNNER_TEMP}/kubeconform.tar.gz" | sha256sum --check --status
+        tar -xzf "${RUNNER_TEMP}/kubeconform.tar.gz" -C "${RUNNER_TEMP}/platform-tools" kubeconform
+        echo "${RUNNER_TEMP}/platform-tools" >>"${GITHUB_PATH}"

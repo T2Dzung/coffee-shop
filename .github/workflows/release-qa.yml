@@ -1,0 +1,132 @@
+name: Release — Record QA Decision
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Component name from platform/components.yaml
+        required: true
+        type: string
+      source_commit:
+        description: Full 40-character source commit of the immutable service candidate
+        required: true
+      decision:
+        description: Formal QA decision for this exact candidate
+        required: true
+        type: choice
+        options:
+          - approved
+          - rejected
+      evidence_url:
+        description: URL to the manual QA result, ticket, or test evidence
+        required: true
+      summary:
+        description: Short QA scope/result summary
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: qa-release-candidate-${{ inputs.service }}-${{ inputs.source_commit }}
+  cancel-in-progress: false
+
+jobs:
+  record-qa-decision:
+    name: Record Exact-Digest QA Decision
+    runs-on: ubuntu-latest
+    environment: qa
+    steps:
+      - name: Checkout protected default branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+
+      - name: Set up typed release policy
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Validate candidate identity
+        id: candidate
+        env:
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          if ! git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD; then
+            echo "Candidate source commit is not contained in the protected default branch." >&2
+            exit 1
+          fi
+          CANDIDATE_FILE="infrastructure/release-candidates/${SERVICE}/${SOURCE_COMMIT}.json"
+          "${RUNNER_TEMP}/platformctl" release candidate \
+            --service "${SERVICE}" --source-commit "${SOURCE_COMMIT}" \
+            --candidate "${CANDIDATE_FILE}" >"${RUNNER_TEMP}/candidate.json"
+          {
+            echo "file=${CANDIDATE_FILE}"
+            echo "digest=$(jq -r '.digest' "${RUNNER_TEMP}/candidate.json")"
+            echo "image=$(jq -r '.image' "${RUNNER_TEMP}/candidate.json")"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Record QA evidence
+        env:
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_IMAGE: ${{ steps.candidate.outputs.image }}
+          SOURCE_DIGEST: ${{ steps.candidate.outputs.digest }}
+          DECISION: ${{ inputs.decision }}
+          EVIDENCE_URL: ${{ inputs.evidence_url }}
+          QA_SUMMARY: ${{ inputs.summary }}
+        run: |
+          EVIDENCE_DIR="infrastructure/release-candidates/${SERVICE}/qa"
+          mkdir -p "${EVIDENCE_DIR}"
+          jq -n \
+            --arg source_commit "${SOURCE_COMMIT}" \
+            --arg service "${SERVICE}" \
+            --arg source_image "${SOURCE_IMAGE}" \
+            --arg source_digest "${SOURCE_DIGEST}" \
+            --arg decision "${DECISION}" \
+            --arg evidence_url "${EVIDENCE_URL}" \
+            --arg summary "${QA_SUMMARY}" \
+            --arg approved_by "${GITHUB_ACTOR}" \
+            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg decided_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              schema_version: 2,
+              qa_status: $decision,
+              service: $service,
+              source_commit: $source_commit,
+              source_image: $source_image,
+              source_digest: $source_digest,
+              evidence_url: $evidence_url,
+              summary: $summary,
+              decided_by: $approved_by,
+              workflow_run: $workflow_run,
+              decided_at: $decided_at
+            }' >"${EVIDENCE_DIR}/${SOURCE_COMMIT}.json"
+
+      - name: Commit QA evidence
+        env:
+          SERVICE: ${{ inputs.service }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          DECISION: ${{ inputs.decision }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "infrastructure/release-candidates/${SERVICE}/qa/${SOURCE_COMMIT}.json"
+
+          if git diff --cached --quiet; then
+            echo "This QA decision is already recorded."
+            exit 0
+          fi
+          git commit -m "test(qa): ${DECISION} ${SERVICE} candidate ${SOURCE_COMMIT}"
+
+      - name: Open QA evidence pull request
+        uses: ./.github/actions/submit-gitops-pr
+        with:
+          token: ${{ secrets.GITOPS_PR_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/qa-${{ inputs.service }}-${{ inputs.decision }}-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "test(qa): ${{ inputs.decision }} ${{ inputs.service }} candidate"
+          body: "Formal QA ${{ inputs.decision }} decision for the exact immutable candidate. Evidence is recorded in the committed JSON document."

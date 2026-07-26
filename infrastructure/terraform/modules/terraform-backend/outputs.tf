@@ -9,3 +9,17 @@ output "config" {
     use_lockfile = true
   }
 }
+
+output "additional_configs" {
+  description = "Prefix-scoped backend coordinates for additional environments"
+  value = {
+    for key, role in aws_iam_role.additional_backend : key => {
+      bucket       = aws_s3_bucket.terraform_state.bucket
+      region       = data.aws_region.current.name
+      encrypt      = true
+      kms_key_id   = aws_kms_key.state_key.arn
+      role_arn     = role.arn
+      use_lockfile = true
+    }
+  }
+}

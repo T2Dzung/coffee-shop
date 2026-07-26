@@ -1,30 +1,149 @@
 ---
-- name: Create dev-ci namespace for runners
-  kubernetes.core.k8s:
-    name: dev-ci
-    api_version: v1
-    kind: Namespace
-    state: present
-
-- name: Require the ARC bootstrap token before GitOps reconciliation
+- name: Validate environment-neutral ARC inputs
   ansible.builtin.assert:
     that:
-      - arc_github_token is defined
-      - arc_github_token | length > 0
-    fail_msg: Define arc_github_token in Ansible Vault or secure extra vars.
+      - arc_runner_github_config_url is defined
+      - arc_runner_github_config_url | length > 0
+      - arc_runner_github_auth_mode in ['github_app', 'pat']
+      - arc_runner_max_runners | int >= 1
+    fail_msg: "Provide repository URL, supported auth mode and a positive max runner count."
+
+- name: Validate GitHub App credential inputs
+  ansible.builtin.assert:
+    that:
+      - arc_runner_github_app_id is defined
+      - arc_runner_github_app_installation_id is defined
+      - arc_runner_github_app_private_key is defined
+      - arc_runner_github_app_private_key | length > 0
+    fail_msg: "GitHub App mode requires app ID, installation ID and private key."
+  when: arc_runner_github_auth_mode == 'github_app'
   no_log: true
 
-- name: Create ARC bootstrap secret
+- name: Validate compatibility PAT input
+  ansible.builtin.assert:
+    that:
+      - arc_runner_github_token is defined
+      - arc_runner_github_token | length > 0
+    fail_msg: "PAT compatibility mode requires a repository-scoped token."
+  when: arc_runner_github_auth_mode == 'pat'
+  no_log: true
+
+- name: Create ARC namespaces
   kubernetes.core.k8s:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+        labels:
+          platform.coffeeshop.io/plane: ci
+  loop:
+    - "{{ arc_runner_controller_namespace }}"
+    - "{{ arc_runner_namespace }}"
+
+- name: Create remote ARC manifest directory
+  ansible.builtin.file:
+    path: "{{ arc_runner_manifest_root }}"
+    state: directory
+    mode: '0700'
+
+- name: Copy reviewed ARC values and guardrails to runner host
+  ansible.builtin.copy:
+    src: "{{ arc_runner_source_root }}/"
+    dest: "{{ arc_runner_manifest_root }}/"
+    mode: '0600'
+
+- name: Create GitHub App registration secret
+  kubernetes.core.k8s:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
     state: present
     definition:
       apiVersion: v1
       kind: Secret
       metadata:
-        name: github-actions-token-secret
-        namespace: dev-ci
+        name: github-actions-credentials
+        namespace: "{{ arc_runner_namespace }}"
       type: Opaque
       stringData:
-        # Provide this variable via ansible-vault, environment, or --extra-vars
-        github_token: "{{ arc_github_token }}"
+        github_app_id: "{{ arc_runner_github_app_id }}"
+        github_app_installation_id: "{{ arc_runner_github_app_installation_id }}"
+        github_app_private_key: "{{ arc_runner_github_app_private_key }}"
+  when: arc_runner_github_auth_mode == 'github_app'
   no_log: true
+
+- name: Create compatibility PAT registration secret
+  kubernetes.core.k8s:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: github-actions-credentials
+        namespace: "{{ arc_runner_namespace }}"
+      type: Opaque
+      stringData:
+        github_token: "{{ arc_runner_github_token }}"
+  when: arc_runner_github_auth_mode == 'pat'
+  no_log: true
+
+- name: Install pinned ARC controller chart
+  kubernetes.core.helm:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
+    name: "{{ arc_runner_controller_release }}"
+    chart_ref: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+    chart_version: "{{ arc_runner_chart_version }}"
+    release_namespace: "{{ arc_runner_controller_namespace }}"
+    create_namespace: false
+    values_files:
+      - "{{ arc_runner_manifest_root }}/controller-values.yaml"
+    wait: true
+    atomic: true
+
+- name: Apply runner network and resource guardrails
+  kubernetes.core.k8s:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
+    state: present
+    src: "{{ item }}"
+  loop:
+    - "{{ arc_runner_manifest_root }}/network-policy.yaml"
+    - "{{ arc_runner_manifest_root }}/resource-guardrails.yaml"
+
+- name: Install pinned trusted runner scale set
+  kubernetes.core.helm:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
+    name: "{{ arc_runner_release }}"
+    chart_ref: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+    chart_version: "{{ arc_runner_chart_version }}"
+    release_namespace: "{{ arc_runner_namespace }}"
+    create_namespace: false
+    values_files:
+      - "{{ arc_runner_manifest_root }}/runner-values.yaml"
+    set_values:
+      - value: "githubConfigUrl={{ arc_runner_github_config_url }}"
+        value_type: string
+      - value: "runnerScaleSetName={{ arc_runner_scale_set_name }}"
+        value_type: string
+      - value: "minRunners=0"
+        value_type: raw
+      - value: "maxRunners={{ arc_runner_max_runners }}"
+        value_type: raw
+    wait: true
+    atomic: true
+
+- name: Wait for ARC controller readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ arc_runner_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ arc_runner_controller_namespace }}"
+    label_selectors:
+      - app.kubernetes.io/name=gha-rs-controller
+  register: arc_runner_controller_deployment
+  retries: 30
+  delay: 10
+  until: >-
+    arc_runner_controller_deployment.resources | length == 1 and
+    arc_runner_controller_deployment.resources[0].status.readyReplicas | default(0) | int >= 1

@@ -1,0 +1,79 @@
+name: Detect release components
+description: Resolve a build matrix from the canonical component catalog
+
+inputs:
+  platformctl:
+    description: Absolute platformctl path
+    required: true
+  mode:
+    description: changed, all, or explicit
+    required: true
+  base:
+    description: Base Git revision for changed mode
+    required: false
+    default: ""
+  head:
+    description: Head Git revision for changed mode
+    required: false
+    default: HEAD
+  components:
+    description: Comma-separated names for explicit mode
+    required: false
+    default: ""
+  allow-migration:
+    description: Explicit acknowledgement for the stateful migration component
+    required: false
+    default: "false"
+  kind:
+    description: Optional component kind filter
+    required: false
+    default: ""
+
+outputs:
+  matrix:
+    description: JSON component array
+    value: ${{ steps.resolve.outputs.matrix }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve component matrix
+      id: resolve
+      shell: bash
+      env:
+        PLATFORMCTL: ${{ inputs.platformctl }}
+        MODE: ${{ inputs.mode }}
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+        COMPONENTS: ${{ inputs.components }}
+        ALLOW_MIGRATION: ${{ inputs.allow-migration }}
+        KIND: ${{ inputs.kind }}
+      run: |
+        set -Eeuo pipefail
+        case "${MODE}" in
+          all)
+            matrix="$(${PLATFORMCTL} component list --kind "${KIND}")"
+            ;;
+          explicit)
+            args=(component resolve --names "${COMPONENTS}")
+            if [[ "${ALLOW_MIGRATION}" == "true" ]]; then
+              args+=(--allow-migration)
+            fi
+            matrix="$(${PLATFORMCTL} "${args[@]}")"
+            ;;
+          changed)
+            [[ -n "${BASE}" ]] || {
+              echo "changed mode requires a base revision" >&2
+              exit 2
+            }
+            git diff --name-only "${BASE}...${HEAD}" >"${RUNNER_TEMP}/changed-files.txt"
+            matrix="$(${PLATFORMCTL} component select \
+              --changed-files "${RUNNER_TEMP}/changed-files.txt" --kind "${KIND}")"
+            ;;
+          *)
+            echo "unsupported detection mode: ${MODE}" >&2
+            exit 2
+            ;;
+        esac
+        jq -e 'type == "array" and all(.[]; type == "string")' <<<"${matrix}" >/dev/null
+        echo "matrix=$(jq -c . <<<"${matrix}")" >>"${GITHUB_OUTPUT}"
