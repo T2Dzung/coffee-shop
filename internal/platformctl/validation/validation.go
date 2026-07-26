@@ -172,6 +172,7 @@ func (v Validator) workflows(ctx context.Context) error {
 		return fmt.Errorf("actionlint: %w", err)
 	}
 	evaluator := policy.Evaluator{Runner: v.Runner, ProjectRoot: v.ProjectRoot}
+	pinnedActions := make([]string, 0)
 	for _, file := range files {
 		input, err := normalizeWorkflow(file)
 		if err != nil {
@@ -180,6 +181,7 @@ func (v Validator) workflows(ctx context.Context) error {
 		if err := evaluator.Workflow(ctx, input); err != nil {
 			return fmt.Errorf("workflow policy %s: %w", filepath.Base(file), err)
 		}
+		pinnedActions = append(pinnedActions, input.PinnedActions...)
 	}
 	actions, err := filepath.Glob(filepath.Join(v.ProjectRoot, ".github", "actions", "*", "action.yml"))
 	if err != nil {
@@ -194,8 +196,64 @@ func (v Validator) workflows(ctx context.Context) error {
 		if err := evaluator.Workflow(ctx, input); err != nil {
 			return fmt.Errorf("composite action policy %s: %w", filepath.Base(filepath.Dir(file)), err)
 		}
+		pinnedActions = append(pinnedActions, input.PinnedActions...)
+	}
+	return v.verifyPinnedActions(ctx, pinnedActions)
+}
+
+func (v Validator) verifyPinnedActions(ctx context.Context, references []string) error {
+	type pins struct {
+		shas map[string]struct{}
+	}
+	byRepository := map[string]*pins{}
+	for _, reference := range references {
+		repository, sha, err := parsePinnedAction(reference)
+		if err != nil {
+			return err
+		}
+		entry := byRepository[repository]
+		if entry == nil {
+			entry = &pins{shas: map[string]struct{}{}}
+			byRepository[repository] = entry
+		}
+		entry.shas[sha] = struct{}{}
+	}
+	repositories := make([]string, 0, len(byRepository))
+	for repository := range byRepository {
+		repositories = append(repositories, repository)
+	}
+	sort.Strings(repositories)
+	for _, repository := range repositories {
+		result, err := v.Runner.Run(ctx, command.Request{
+			Name: "git", Args: []string{"ls-remote", "https://github.com/" + repository + ".git"},
+			Timeout: 2 * time.Minute,
+		})
+		if err != nil {
+			return fmt.Errorf("resolve pinned actions from %s: %w", repository, err)
+		}
+		for sha := range byRepository[repository].shas {
+			if !strings.Contains(result.Stdout, sha+"\t") {
+				return fmt.Errorf("pinned action commit %s@%s is not advertised by upstream Git refs", repository, sha)
+			}
+		}
 	}
 	return nil
+}
+
+func parsePinnedAction(reference string) (string, string, error) {
+	separator := strings.LastIndex(reference, "@")
+	if separator < 1 || separator == len(reference)-1 {
+		return "", "", fmt.Errorf("invalid pinned action reference %q", reference)
+	}
+	pathParts := strings.Split(reference[:separator], "/")
+	if len(pathParts) < 2 || pathParts[0] == "" || pathParts[1] == "" {
+		return "", "", fmt.Errorf("invalid pinned action repository %q", reference)
+	}
+	sha := reference[separator+1:]
+	if len(sha) != 40 {
+		return "", "", fmt.Errorf("invalid pinned action commit %q", reference)
+	}
+	return pathParts[0] + "/" + pathParts[1], sha, nil
 }
 
 func (v Validator) kubernetes(ctx context.Context, environment string) error {

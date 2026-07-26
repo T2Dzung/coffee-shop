@@ -1,11 +1,13 @@
 package validation
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/thangchung/go-coffeeshop/internal/platformctl/command"
 )
 
 func TestNormalizeWorkflowFindsSecurityBoundaries(t *testing.T) {
@@ -28,6 +30,43 @@ jobs:
 	require.True(t, input.UsesSecretsInherit)
 	require.True(t, input.PullRequestSelfHosted)
 	require.Equal(t, []string{"actions/checkout@main"}, input.UnpinnedActions)
+	require.Equal(t, []string{"actions/setup-go@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, input.PinnedActions)
+}
+
+func TestVerifyPinnedActionsDeduplicatesRepositories(t *testing.T) {
+	t.Parallel()
+	checkoutSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	setupSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	runner := &command.FakeRunner{Expectations: []command.Expectation{
+		{
+			Name: "git", Args: []string{"ls-remote", "https://github.com/actions/checkout.git"},
+			Result: command.Result{Stdout: checkoutSHA + "\trefs/tags/v7\n"},
+		},
+		{
+			Name: "git", Args: []string{"ls-remote", "https://github.com/actions/setup-go.git"},
+			Result: command.Result{Stdout: setupSHA + "\trefs/tags/v6^{}\n"},
+		},
+	}}
+	validator := Validator{Runner: runner}
+	require.NoError(t, validator.verifyPinnedActions(context.Background(), []string{
+		"actions/setup-go@" + setupSHA,
+		"actions/checkout@" + checkoutSHA,
+		"actions/checkout@" + checkoutSHA,
+	}))
+	require.NoError(t, runner.Verify())
+}
+
+func TestVerifyPinnedActionsRejectsUnresolvableCommit(t *testing.T) {
+	t.Parallel()
+	sha := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	runner := &command.FakeRunner{Expectations: []command.Expectation{{
+		Name: "git", Args: []string{"ls-remote", "https://github.com/anchore/sbom-action.git"},
+		Result: command.Result{Stdout: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/v0.20.4\n"},
+	}}}
+	err := (Validator{Runner: runner}).verifyPinnedActions(context.Background(), []string{
+		"anchore/sbom-action@" + sha,
+	})
+	require.ErrorContains(t, err, "not advertised by upstream Git refs")
 }
 
 func TestNormalizeWorkflowAllowsHostedPinnedWorkflow(t *testing.T) {

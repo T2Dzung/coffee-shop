@@ -30,6 +30,20 @@ starts_with_prod_permission(action) if { startswith(lower(action), "rds:") }
 starts_with_prod_permission(action) if { startswith(lower(action), "elasticloadbalancing:") }
 starts_with_prod_permission(action) if { lower(action) == "iam:passrole" }
 
+deny contains "CI candidate build policy is missing ecr:DescribeRepositories required by hosted preflight" if {
+	some change in input.resource_changes
+	change.address == "aws_iam_role_policy.build"
+	change.change.after != null
+	policy_doc := json.unmarshal(change.change.after.policy)
+	not policy_has_action(policy_doc, "ecr:DescribeRepositories")
+}
+
+policy_has_action(policy_doc, required) if {
+	some statement in policy_doc.Statement
+	some action in array.concat([], statement.Action)
+	lower(action) == lower(required)
+}
+
 deny contains message if {
 	some change in input.resource_changes
 	change.mode == "managed"

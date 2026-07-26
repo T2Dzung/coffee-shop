@@ -25,7 +25,7 @@ runs:
         cache: "true"
 
     - name: Generate SPDX SBOM
-      uses: anchore/sbom-action@cee1b8e05c7b3a80d97a6f79b1a68a5c870ecb51 # v0.20.4
+      uses: anchore/sbom-action@7b36ad622f042cab6f59a75c2ac24ccb256e9b45 # v0.20.4
       with:
         image: ${{ inputs.image }}@${{ inputs.digest }}
         format: spdx-json
