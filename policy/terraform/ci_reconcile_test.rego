@@ -48,3 +48,26 @@ test_deny_prod_iam_permission if {
 		}]
 	}
 }
+
+test_allow_candidate_preflight_permission if {
+	result := deny with input as {
+		"resource_changes": [{
+			"address": "aws_iam_role_policy.build", "mode": "managed", "type": "aws_iam_role_policy",
+			"change": {"actions": ["update"], "after": {
+				"policy": "{\"Statement\":[{\"Action\":[\"ecr:DescribeRepositories\",\"ecr:PutImage\"],\"Resource\":\"candidate\"}]}"
+			}},
+		}]
+	}
+	count(result) == 0
+}
+
+test_deny_missing_candidate_preflight_permission if {
+	deny["CI candidate build policy is missing ecr:DescribeRepositories required by hosted preflight"] with input as {
+		"resource_changes": [{
+			"address": "aws_iam_role_policy.build", "mode": "managed", "type": "aws_iam_role_policy",
+			"change": {"actions": ["update"], "after": {
+				"policy": "{\"Statement\":[{\"Action\":[\"ecr:PutImage\"],\"Resource\":\"candidate\"}]}"
+			}},
+		}]
+	}
+}

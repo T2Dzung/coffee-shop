@@ -84,6 +84,7 @@ data "aws_iam_policy_document" "build" {
       "ecr:CompleteLayerUpload",
       "ecr:GetDownloadUrlForLayer",
       "ecr:InitiateLayerUpload",
+      "ecr:DescribeRepositories",
       "ecr:DescribeImages",
       "ecr:ListImages",
       "ecr:PutImage",

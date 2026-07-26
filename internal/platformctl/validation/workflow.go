@@ -19,6 +19,7 @@ type workflowPolicyInput struct {
 	CandidatePreflightNotHosted       bool     `json:"candidate_preflight_not_hosted"`
 	CandidateBuildMissingToolchain    bool     `json:"candidate_build_missing_toolchain"`
 	ARCBuildUsesAWSCLI                bool     `json:"arc_build_uses_aws_cli"`
+	PinnedActions                     []string `json:"pinned_actions"`
 }
 
 func normalizeWorkflow(path string) (workflowPolicyInput, error) {
@@ -100,9 +101,12 @@ func walkWorkflow(value any, pullRequest bool, result *workflowPolicyInput) {
 			case "uses":
 				if reference, ok := child.(string); ok &&
 					!strings.HasPrefix(reference, "./") &&
-					!strings.HasPrefix(reference, "docker://") &&
-					!fullActionSHA.MatchString(reference) {
-					result.UnpinnedActions = append(result.UnpinnedActions, reference)
+					!strings.HasPrefix(reference, "docker://") {
+					if fullActionSHA.MatchString(reference) {
+						result.PinnedActions = append(result.PinnedActions, reference)
+					} else {
+						result.UnpinnedActions = append(result.UnpinnedActions, reference)
+					}
 				}
 			case "runs-on":
 				if pullRequest && isSelfHosted(child) {
