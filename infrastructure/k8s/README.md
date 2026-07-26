@@ -34,5 +34,5 @@ environments/
 - PROD bootstrap chỉ target `apps/coffeeshop/overlays/prod`; nó không recurse DEV.
 - Tài nguyên phase cũ, probe tạm và manifest test không được giữ trong active tree.
   Evidence lịch sử nằm trong tài liệu phase và Git history.
-- Layout contract được enforce bởi
-  `scripts/validation/validate-k8s-layout.sh`.
+- Layout contract được enforce bởi typed validation entrypoint
+  `bash scripts/validate-infra.sh` (Kubernetes scope/profile tương ứng).

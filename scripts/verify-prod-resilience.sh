@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec "${project_root}/scripts/platformctl.sh" prod resilience "$@"

@@ -15,7 +15,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS_FILE = PROJECT_ROOT / "infrastructure/ansible/playbooks/group_vars/all/versions.yml"
 DESTINATION = PROJECT_ROOT / "infrastructure/k8s/environments/dev/gitops/addons/rabbitmq-operator/cluster-operator.yaml"
 

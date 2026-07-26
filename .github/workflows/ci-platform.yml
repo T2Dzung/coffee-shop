@@ -159,11 +159,15 @@ jobs:
         run: tflint --init
         working-directory: .
 
-      - name: Run TFLint on Deployable Environments
+      - name: Initialize Terraform Modules and Run TFLint
         run: |
-          tflint --config="$(pwd)/.tflint.hcl" --chdir=infrastructure/terraform/envs/dev
-          tflint --config="$(pwd)/.tflint.hcl" --chdir=infrastructure/terraform/envs/ci
-          tflint --config="$(pwd)/.tflint.hcl" --chdir=infrastructure/terraform/envs/prod
+          set -Eeuo pipefail
+          config="$(pwd)/.tflint.hcl"
+          for environment in dev ci prod; do
+            root="infrastructure/terraform/envs/${environment}"
+            terraform -chdir="${root}" init -backend=false -input=false -no-color
+            tflint --config="${config}" --chdir="${root}"
+          done
 
   guard-tests:
     name: Guard Unit & Envtest
