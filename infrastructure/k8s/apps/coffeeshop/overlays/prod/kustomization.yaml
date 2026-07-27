@@ -31,7 +31,7 @@ images:
 - digest: sha256:1f28e1145d235fdda3fbd949b4950c71effefb601116653c78e030816b031a04
   name: go-coffeeshop-proxy
   newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
-- digest: sha256:f0ea7d646e19b7728f0ffa9aa3a04567020a0fc22a0a94d3465324469f1775e6
+- digest: sha256:581e209ef5971ebee143650eb5c92da90f4ab13bd25ff3bb8ecf71c7d46cd209
   name: go-coffeeshop-web
   newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
 
