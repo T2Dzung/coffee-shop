@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "status": "built",
+  "service": "platform-ownership-guard",
+  "source_commit": "e861963cba9054ea55d79d42f787b7ebba8890cf",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-platform-ownership-guard",
+  "source_digest": "sha256:17af08d685086753df7b66d2f2bbe8b20893a8716d3e058b9709e34dd5b6750f",
+  "runner_class": "trusted-build",
+  "runner_name": "trusted-build-q86fn-runner-74g9c",
+  "runner_os": "Linux",
+  "runner_arch": "X64",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30278411599",
+  "created_at": "2026-07-27T15:18:37Z"
+}
