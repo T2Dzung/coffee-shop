@@ -77,7 +77,10 @@ jobs:
           fi
           [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD
-          components="$("${RUNNER_TEMP}/platformctl" component resolve --names "${COMPONENTS}")"
+          components="$(
+            "${RUNNER_TEMP}/platformctl" component resolve --names "${COMPONENTS}" |
+              jq -c .
+          )"
           jq -e 'length > 0' <<<"${components}" >/dev/null
           echo "components=${components}" >>"${GITHUB_OUTPUT}"
           echo "source_commit=${SOURCE_COMMIT}" >>"${GITHUB_OUTPUT}"
