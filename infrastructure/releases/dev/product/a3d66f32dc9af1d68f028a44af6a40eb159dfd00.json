@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "status": "copied",
+  "service": "product",
+  "source_commit": "a3d66f32dc9af1d68f028a44af6a40eb159dfd00",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-go-coffeeshop-product",
+  "source_digest": "sha256:03e7e015e96abe245bbd4c7c2fb60f77273d93fda6dcb185f96bbe7217f3b27a",
+  "dev_image": "423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product",
+  "dev_digest": "sha256:03e7e015e96abe245bbd4c7c2fb60f77273d93fda6dcb185f96bbe7217f3b27a",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30291053676"
+}
