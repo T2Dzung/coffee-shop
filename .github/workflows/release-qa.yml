@@ -3,8 +3,8 @@ name: Release — Record QA Decision
 on:
   workflow_dispatch:
     inputs:
-      service:
-        description: Component name from platform/components.yaml
+      components:
+        description: Comma-separated component names from platform/components.yaml
         required: true
         type: string
       source_commit:
@@ -32,7 +32,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: qa-release-candidate-${{ inputs.service }}-${{ inputs.source_commit }}
+  group: qa-release-set-${{ inputs.source_commit }}
   cancel-in-progress: false
 
 jobs:
@@ -51,10 +51,9 @@ jobs:
       - name: Set up typed release policy
         uses: ./.github/actions/setup-platformctl
 
-      - name: Validate candidate identity
-        id: candidate
+      - name: Validate exact DEV release set
         env:
-          SERVICE: ${{ inputs.service }}
+          COMPONENTS: ${{ inputs.components }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -Eeuo pipefail
@@ -62,90 +61,83 @@ jobs:
             echo "Candidate source commit is not contained in the protected default branch." >&2
             exit 1
           fi
-          CANDIDATE_FILE="infrastructure/release-candidates/${SERVICE}/${SOURCE_COMMIT}.json"
-          DEV_RELEASE_FILE="infrastructure/releases/dev/${SERVICE}/${SOURCE_COMMIT}.json"
-          "${RUNNER_TEMP}/platformctl" release candidate \
-            --service "${SERVICE}" --source-commit "${SOURCE_COMMIT}" \
-            --candidate "${CANDIDATE_FILE}" >"${RUNNER_TEMP}/candidate.json"
-          "${RUNNER_TEMP}/platformctl" release dev \
-            --service "${SERVICE}" --source-commit "${SOURCE_COMMIT}" \
-            --candidate "${CANDIDATE_FILE}" --dev-release "${DEV_RELEASE_FILE}" \
-            >"${RUNNER_TEMP}/dev-release.json"
-          {
-            echo "file=${CANDIDATE_FILE}"
-            echo "digest=$(jq -r '.digest' "${RUNNER_TEMP}/candidate.json")"
-            echo "image=$(jq -r '.image' "${RUNNER_TEMP}/candidate.json")"
-            echo "dev_image=$(jq -r '.dev_image' "${RUNNER_TEMP}/dev-release.json")"
-            echo "dev_digest=$(jq -r '.dev_digest' "${RUNNER_TEMP}/dev-release.json")"
-          } >>"${GITHUB_OUTPUT}"
+          components="$("${RUNNER_TEMP}/platformctl" component resolve --names "${COMPONENTS}")"
+          jq -e 'length > 0' <<<"${components}" >/dev/null
+          mkdir -p "${RUNNER_TEMP}/qa-release-set"
+          while IFS= read -r service; do
+            candidate_file="infrastructure/release-candidates/${service}/${SOURCE_COMMIT}.json"
+            dev_release_file="infrastructure/releases/dev/${service}/${SOURCE_COMMIT}.json"
+            "${RUNNER_TEMP}/platformctl" release candidate \
+              --service "${service}" --source-commit "${SOURCE_COMMIT}" \
+              --candidate "${candidate_file}" >"${RUNNER_TEMP}/candidate.json"
+            "${RUNNER_TEMP}/platformctl" release dev \
+              --service "${service}" --source-commit "${SOURCE_COMMIT}" \
+              --candidate "${candidate_file}" --dev-release "${dev_release_file}" \
+              >"${RUNNER_TEMP}/dev-release.json"
+            jq -n \
+              --arg service "${service}" \
+              --arg source_image "$(jq -er .image "${RUNNER_TEMP}/candidate.json")" \
+              --arg source_digest "$(jq -er .digest "${RUNNER_TEMP}/candidate.json")" \
+              --arg dev_image "$(jq -er .dev_image "${RUNNER_TEMP}/dev-release.json")" \
+              --arg dev_digest "$(jq -er .dev_digest "${RUNNER_TEMP}/dev-release.json")" \
+              '{service: $service, source_image: $source_image, source_digest: $source_digest,
+                dev_image: $dev_image, dev_digest: $dev_digest}' \
+              >"${RUNNER_TEMP}/qa-release-set/${service}.json"
+          done < <(jq -r '.[]' <<<"${components}")
 
-      - name: Record QA evidence
+      - name: Record one QA decision for the release set
         env:
-          SERVICE: ${{ inputs.service }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
-          SOURCE_IMAGE: ${{ steps.candidate.outputs.image }}
-          SOURCE_DIGEST: ${{ steps.candidate.outputs.digest }}
-          DEV_IMAGE: ${{ steps.candidate.outputs.dev_image }}
-          DEV_DIGEST: ${{ steps.candidate.outputs.dev_digest }}
           DECISION: ${{ inputs.decision }}
           EVIDENCE_URL: ${{ inputs.evidence_url }}
           DEV_EVIDENCE_URL: ${{ inputs.dev_evidence_url }}
           QA_SUMMARY: ${{ inputs.summary }}
         run: |
-          EVIDENCE_DIR="infrastructure/release-candidates/${SERVICE}/qa"
-          mkdir -p "${EVIDENCE_DIR}"
-          jq -n \
-            --arg source_commit "${SOURCE_COMMIT}" \
-            --arg service "${SERVICE}" \
-            --arg source_image "${SOURCE_IMAGE}" \
-            --arg source_digest "${SOURCE_DIGEST}" \
-            --arg dev_image "${DEV_IMAGE}" \
-            --arg dev_digest "${DEV_DIGEST}" \
-            --arg decision "${DECISION}" \
-            --arg evidence_url "${EVIDENCE_URL}" \
-            --arg dev_evidence_url "${DEV_EVIDENCE_URL}" \
-            --arg summary "${QA_SUMMARY}" \
-            --arg approved_by "${GITHUB_ACTOR}" \
-            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg decided_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{
-              schema_version: 3,
-              qa_status: $decision,
-              service: $service,
-              source_commit: $source_commit,
-              source_image: $source_image,
-              source_digest: $source_digest,
-              dev_image: $dev_image,
-              dev_digest: $dev_digest,
-              dev_evidence_url: $dev_evidence_url,
-              evidence_url: $evidence_url,
-              summary: $summary,
-              decided_by: $approved_by,
-              workflow_run: $workflow_run,
-              decided_at: $decided_at
-            }' >"${EVIDENCE_DIR}/${SOURCE_COMMIT}.json"
+          set -Eeuo pipefail
+          for artifact in "${RUNNER_TEMP}"/qa-release-set/*.json; do
+            service="$(jq -er .service "${artifact}")"
+            evidence_dir="infrastructure/release-candidates/${service}/qa"
+            mkdir -p "${evidence_dir}"
+            jq \
+              --arg source_commit "${SOURCE_COMMIT}" \
+              --arg decision "${DECISION}" \
+              --arg evidence_url "${EVIDENCE_URL}" \
+              --arg dev_evidence_url "${DEV_EVIDENCE_URL}" \
+              --arg summary "${QA_SUMMARY}" \
+              --arg approved_by "${GITHUB_ACTOR}" \
+              --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --arg decided_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{schema_version: 3, qa_status: $decision, service: .service,
+                source_commit: $source_commit, source_image: .source_image,
+                source_digest: .source_digest, dev_image: .dev_image,
+                dev_digest: .dev_digest, dev_evidence_url: $dev_evidence_url,
+                evidence_url: $evidence_url, summary: $summary,
+                decided_by: $approved_by, workflow_run: $workflow_run,
+                decided_at: $decided_at}' "${artifact}" \
+              >"${evidence_dir}/${SOURCE_COMMIT}.json"
+          done
 
       - name: Commit QA evidence
         env:
-          SERVICE: ${{ inputs.service }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           DECISION: ${{ inputs.decision }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "infrastructure/release-candidates/${SERVICE}/qa/${SOURCE_COMMIT}.json"
+          git add infrastructure/release-candidates/*/qa/"${SOURCE_COMMIT}.json"
 
           if git diff --cached --quiet; then
             echo "This QA decision is already recorded."
             exit 0
           fi
-          git commit -m "test(qa): ${DECISION} ${SERVICE} candidate ${SOURCE_COMMIT}"
+          git commit -m "test(qa): ${DECISION} release set ${SOURCE_COMMIT}"
 
       - name: Open QA evidence pull request
         uses: ./.github/actions/submit-gitops-pr
         with:
           token: ${{ secrets.GITOPS_PR_TOKEN }}
           base: ${{ github.event.repository.default_branch }}
-          branch: automation/qa-${{ inputs.service }}-${{ inputs.decision }}-${{ github.run_id }}-${{ github.run_attempt }}
-          title: "test(qa): ${{ inputs.decision }} ${{ inputs.service }} candidate"
-          body: "Formal QA ${{ inputs.decision }} decision for the exact immutable candidate. Evidence is recorded in the committed JSON document."
+          branch: automation/qa-release-set-${{ inputs.decision }}-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "test(qa): ${{ inputs.decision }} immutable release set"
+          body: "One formal QA decision for every exact immutable DEV digest in this release set. Evidence is recorded per component for typed PROD policy."
+          auto-merge: "true"

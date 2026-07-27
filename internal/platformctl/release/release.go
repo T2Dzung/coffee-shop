@@ -13,6 +13,7 @@ var (
 	commitPattern    = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	digestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	componentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	ecrImagePattern  = regexp.MustCompile(`^[0-9]{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?/[a-z0-9][a-z0-9._/-]*$`)
 	validLanes       = map[string]struct{}{"standard": {}, "emergency": {}, "rollback": {}}
 )
 
@@ -50,6 +51,13 @@ type DevRelease struct {
 	WorkflowRun   string `json:"workflow_run"`
 }
 
+type Request struct {
+	SchemaVersion int      `json:"schema_version"`
+	Status        string   `json:"status"`
+	SourceCommit  string   `json:"source_commit"`
+	Components    []string `json:"components"`
+}
+
 type HistoricalRelease struct {
 	SchemaVersion int    `json:"schema_version"`
 	Service       string `json:"service"`
@@ -63,6 +71,7 @@ type Artifact struct {
 	SourceCommit string `json:"source_commit"`
 	Image        string `json:"image"`
 	Digest       string `json:"digest"`
+	Region       string `json:"region"`
 }
 
 type Manifest struct {
@@ -143,10 +152,36 @@ func ValidateCandidate(service, sourceCommit, candidatePath string) (Artifact, e
 		candidate.SourceImage == "" || !digestPattern.MatchString(candidate.SourceDigest) {
 		return Artifact{}, errors.New("candidate metadata does not match the requested immutable artifact")
 	}
+	imageMatch := ecrImagePattern.FindStringSubmatch(candidate.SourceImage)
+	if len(imageMatch) != 2 {
+		return Artifact{}, errors.New("candidate source_image must be an untagged Amazon ECR repository URI")
+	}
 	return Artifact{
 		Service: service, SourceCommit: sourceCommit,
-		Image: candidate.SourceImage, Digest: candidate.SourceDigest,
+		Image: candidate.SourceImage, Digest: candidate.SourceDigest, Region: imageMatch[1],
 	}, nil
+}
+
+func ValidateRequest(path string) (Request, error) {
+	var request Request
+	if err := readJSON(path, &request); err != nil {
+		return Request{}, err
+	}
+	if request.SchemaVersion != 1 || request.Status != "requested" ||
+		!commitPattern.MatchString(request.SourceCommit) || len(request.Components) == 0 {
+		return Request{}, errors.New("release request does not contain a valid source commit and component set")
+	}
+	seen := make(map[string]struct{}, len(request.Components))
+	for _, name := range request.Components {
+		if !componentPattern.MatchString(name) {
+			return Request{}, fmt.Errorf("release request contains invalid component %q", name)
+		}
+		if _, exists := seen[name]; exists {
+			return Request{}, fmt.Errorf("release request contains duplicate component %q", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return request, nil
 }
 
 func ValidateRollback(service, sourceCommit, historyPath string) (Artifact, error) {

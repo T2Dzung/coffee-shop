@@ -428,7 +428,7 @@ func policyEvaluator(runner command.Runner, root string) policy.Evaluator {
 
 func runRelease(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl release <identity|candidate|dev|standard|rollback|manifest> ...")
+		return fmt.Errorf("usage: platformctl release <identity|request|candidate|dev|standard|rollback|manifest> ...")
 	}
 	switch args[0] {
 	case "identity":
@@ -448,6 +448,22 @@ func runRelease(args []string, stdout io.Writer) error {
 		return writeJSON(stdout, map[string]string{
 			"lane": *lane, "service": *service, "source_commit": *commit,
 		})
+	case "request":
+		flags := flag.NewFlagSet("release request", flag.ContinueOnError)
+		requestPath := flags.String("request", "", "release request JSON")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		request, err := releasepolicy.ValidateRequest(*requestPath)
+		if err != nil {
+			return err
+		}
+		for _, service := range request.Components {
+			if err := validateReleaseComponent(service); err != nil {
+				return err
+			}
+		}
+		return writeJSON(stdout, request)
 	case "standard":
 		flags := flag.NewFlagSet("release standard", flag.ContinueOnError)
 		service := flags.String("service", "", "service name")

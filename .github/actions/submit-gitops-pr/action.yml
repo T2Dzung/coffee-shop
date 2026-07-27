@@ -12,6 +12,10 @@ inputs:
     required: true
   body:
     required: true
+  auto-merge:
+    description: Wait for protected checks, then squash merge without bypassing them
+    required: false
+    default: "false"
 
 outputs:
   url:
@@ -29,6 +33,7 @@ runs:
         UPDATE_BRANCH: ${{ inputs.branch }}
         PR_TITLE: ${{ inputs.title }}
         PR_BODY: ${{ inputs.body }}
+        AUTO_MERGE: ${{ inputs.auto-merge }}
       run: |
         set -Eeuo pipefail
         [[ "${BASE_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]
@@ -39,3 +44,8 @@ runs:
           -f base="${BASE_BRANCH}" -f body="${PR_BODY}" --jq .html_url)"
         echo "url=${url}" >>"${GITHUB_OUTPUT}"
         echo "Created desired-state pull request: ${url}"
+        if [[ "${AUTO_MERGE}" == "true" ]]; then
+          gh pr checks "${url}" --required --watch --interval 10
+          gh pr merge "${url}" --squash --delete-branch
+          echo "Merged after protected required checks passed: ${url}"
+        fi

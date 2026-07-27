@@ -11,6 +11,7 @@ import (
 const (
 	testCommit = "0123456789abcdef0123456789abcdef01234567"
 	testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	testImage  = "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/candidate/web"
 )
 
 func TestValidateStandard(t *testing.T) {
@@ -20,11 +21,11 @@ func TestValidateStandard(t *testing.T) {
 	qa := filepath.Join(dir, "qa.json")
 	require.NoError(t, os.WriteFile(candidate, []byte(`{
 		"schema_version":1,"status":"built","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"dev/web","source_digest":"`+testDigest+`"
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`","source_digest":"`+testDigest+`"
 	}`), 0o600))
 	require.NoError(t, os.WriteFile(qa, []byte(`{
 		"schema_version":3,"qa_status":"approved","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"dev/web",
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`",
 		"source_digest":"`+testDigest+`","dev_image":"dev-runtime/web",
 		"dev_digest":"`+testDigest+`","evidence_url":"https://example.test/qa",
 		"dev_evidence_url":"https://example.test/dev"
@@ -42,11 +43,11 @@ func TestValidateStandardRejectsDigestMismatch(t *testing.T) {
 	qa := filepath.Join(dir, "qa.json")
 	require.NoError(t, os.WriteFile(candidate, []byte(`{
 		"schema_version":1,"status":"built","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"dev/web","source_digest":"`+testDigest+`"
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`","source_digest":"`+testDigest+`"
 	}`), 0o600))
 	require.NoError(t, os.WriteFile(qa, []byte(`{
 		"schema_version":3,"qa_status":"approved","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"dev/web",
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`",
 		"source_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"dev_image":"dev-runtime/web","dev_digest":"`+testDigest+`",
 		"evidence_url":"https://example.test/qa","dev_evidence_url":"https://example.test/dev"
@@ -63,11 +64,11 @@ func TestValidateDevReleaseRequiresExactCandidateDigest(t *testing.T) {
 	devRelease := filepath.Join(dir, "dev.json")
 	require.NoError(t, os.WriteFile(candidate, []byte(`{
 		"schema_version":2,"status":"built","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"candidate/web","source_digest":"`+testDigest+`"
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`","source_digest":"`+testDigest+`"
 	}`), 0o600))
 	require.NoError(t, os.WriteFile(devRelease, []byte(`{
 		"schema_version":1,"status":"copied","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"candidate/web",
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`",
 		"source_digest":"`+testDigest+`","dev_image":"dev/web","dev_digest":"`+testDigest+`",
 		"workflow_run":"https://example.test/run/1"
 	}`), 0o600))
@@ -77,7 +78,7 @@ func TestValidateDevReleaseRequiresExactCandidateDigest(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(devRelease, []byte(`{
 		"schema_version":1,"status":"copied","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"candidate/web",
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`",
 		"source_digest":"`+testDigest+`","dev_image":"dev/web",
 		"dev_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"workflow_run":"https://example.test/run/1"
@@ -91,11 +92,50 @@ func TestValidateCandidateAcceptsCurrentSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "candidate.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{
 		"schema_version":2,"status":"built","service":"web",
-		"source_commit":"`+testCommit+`","source_image":"candidate/web","source_digest":"`+testDigest+`"
+		"source_commit":"`+testCommit+`","source_image":"`+testImage+`","source_digest":"`+testDigest+`"
 	}`), 0o600))
 	artifact, err := ValidateCandidate("web", testCommit, path)
 	require.NoError(t, err)
-	require.Equal(t, "candidate/web", artifact.Image)
+	require.Equal(t, testImage, artifact.Image)
+	require.Equal(t, "ap-southeast-1", artifact.Region)
+}
+
+func TestValidateCandidateRejectsNonECRSource(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "candidate.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{
+		"schema_version":2,"status":"built","service":"web",
+		"source_commit":"`+testCommit+`","source_image":"candidate/web","source_digest":"`+testDigest+`"
+	}`), 0o600))
+
+	_, err := ValidateCandidate("web", testCommit, path)
+	require.ErrorContains(t, err, "Amazon ECR")
+}
+
+func TestValidateRequest(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "request.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{
+		"schema_version":1,"status":"requested","source_commit":"`+testCommit+`",
+		"components":["web","platform-ownership-guard"]
+	}`), 0o600))
+
+	request, err := ValidateRequest(path)
+	require.NoError(t, err)
+	require.Equal(t, testCommit, request.SourceCommit)
+	require.Equal(t, []string{"web", "platform-ownership-guard"}, request.Components)
+}
+
+func TestValidateRequestRejectsDuplicateComponent(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "request.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{
+		"schema_version":1,"status":"requested","source_commit":"`+testCommit+`",
+		"components":["web","web"]
+	}`), 0o600))
+
+	_, err := ValidateRequest(path)
+	require.ErrorContains(t, err, "duplicate")
 }
 
 func TestValidateRollback(t *testing.T) {

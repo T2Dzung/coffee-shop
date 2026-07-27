@@ -295,6 +295,7 @@ jobs:
             Candidate metadata records exact digests and runner evidence from protected
             commit ${{ needs.detect-components.outputs.source_commit }}. Merge before
             recording QA approval.
+          auto-merge: "true"
 
   release-status:
     name: Release Candidate Status

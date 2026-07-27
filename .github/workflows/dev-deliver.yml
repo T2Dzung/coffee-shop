@@ -1,6 +1,10 @@
 name: DEV — Deliver Immutable Candidates
 
 on:
+  push:
+    paths:
+      - infrastructure/release-candidates/*/*.json
+      - infrastructure/releases/requests/*.json
   workflow_dispatch:
     inputs:
       source_commit:
@@ -15,15 +19,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: dev-delivery-${{ inputs.source_commit }}
+  group: dev-delivery-${{ inputs.source_commit || github.sha }}
   cancel-in-progress: false
 
 jobs:
   resolve:
     name: Resolve DEV Delivery Set
+    if: github.event_name == 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     outputs:
       components: ${{ steps.resolve.outputs.components }}
+      source_commit: ${{ steps.resolve.outputs.source_commit }}
     steps:
       - name: Checkout protected desired state
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -37,10 +43,46 @@ jobs:
       - name: Resolve component matrix
         id: resolve
         env:
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
           REQUESTED: ${{ inputs.components }}
         run: |
           set -Eeuo pipefail
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            [[ "${BEFORE_SHA}" =~ ^[0-9a-f]{40}$ && "${AFTER_SHA}" =~ ^[0-9a-f]{40}$ ]]
+            mapfile -t request_files < <(
+              git diff --diff-filter=AM --name-only "${BEFORE_SHA}" "${AFTER_SHA}" -- \
+                'infrastructure/releases/requests/*.json'
+            )
+            mapfile -t candidate_files < <(
+              git diff --diff-filter=AM --name-only "${BEFORE_SHA}" "${AFTER_SHA}" -- \
+                'infrastructure/release-candidates/*/*.json'
+            )
+            if ((${#request_files[@]} > 0)); then
+              ((${#request_files[@]} == 1))
+              "${RUNNER_TEMP}/platformctl" release request \
+                --request "${request_files[0]}" >"${RUNNER_TEMP}/release-request.json"
+              SOURCE_COMMIT="$(jq -er .source_commit "${RUNNER_TEMP}/release-request.json")"
+              REQUESTED="$(jq -er '.components | join(",")' "${RUNNER_TEMP}/release-request.json")"
+            else
+              ((${#candidate_files[@]} > 0))
+              components_json="$(
+                printf '%s\n' "${candidate_files[@]}" |
+                  jq -Rsc 'split("\n") | map(select(length > 0) | split("/")[2]) | unique'
+              )"
+              source_commits="$(
+                printf '%s\n' "${candidate_files[@]}" |
+                  jq -Rsc 'split("\n") | map(select(length > 0) | split("/")[3] | rtrimstr(".json")) | unique'
+              )"
+              [[ "$(jq 'length' <<<"${source_commits}")" -eq 1 ]]
+              SOURCE_COMMIT="$(jq -r '.[0]' <<<"${source_commits}")"
+              REQUESTED="$(jq -r 'join(",")' <<<"${components_json}")"
+            fi
+          else
+            SOURCE_COMMIT="${INPUT_SOURCE_COMMIT}"
+          fi
           [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD
           if [[ "${REQUESTED}" == "all" ]]; then
@@ -52,6 +94,7 @@ jobs:
           components="$(jq -c '[.[] | select(. != "migrate")]' <<<"${components}")"
           jq -e 'length > 0' <<<"${components}" >/dev/null
           echo "components=${components}" >>"${GITHUB_OUTPUT}"
+          echo "source_commit=${SOURCE_COMMIT}" >>"${GITHUB_OUTPUT}"
 
   copy:
     name: Copy ${{ matrix.component }} to DEV
@@ -78,7 +121,7 @@ jobs:
         id: artifact
         env:
           COMPONENT: ${{ matrix.component }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
         run: |
           set -Eeuo pipefail
           candidate="infrastructure/release-candidates/${COMPONENT}/${SOURCE_COMMIT}.json"
@@ -90,6 +133,7 @@ jobs:
           {
             echo "source_image=$(jq -er .image "${RUNNER_TEMP}/candidate.json")"
             echo "source_digest=$(jq -er .digest "${RUNNER_TEMP}/candidate.json")"
+            echo "source_region=$(jq -er .region "${RUNNER_TEMP}/candidate.json")"
             echo "repository=$(jq -er .image_repository "${RUNNER_TEMP}/component.json")"
           } >>"${GITHUB_OUTPUT}"
 
@@ -97,7 +141,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ secrets.DEV_CANDIDATE_READER_ROLE_ARN }}
-          aws-region: ${{ vars.CANDIDATE_AWS_REGION }}
+          aws-region: ${{ steps.artifact.outputs.source_region }}
           mask-aws-account-id: true
 
       - name: Log in to candidate ECR
@@ -121,12 +165,12 @@ jobs:
           source-image: ${{ steps.artifact.outputs.source_image }}
           source-digest: ${{ steps.artifact.outputs.source_digest }}
           destination-image: ${{ steps.dev-ecr.outputs.registry }}/${{ steps.artifact.outputs.repository }}
-          destination-tag: dev-${{ inputs.source_commit }}
+          destination-tag: dev-${{ needs.resolve.outputs.source_commit }}
 
       - name: Record DEV delivery metadata
         env:
           COMPONENT: ${{ matrix.component }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
           SOURCE_IMAGE: ${{ steps.artifact.outputs.source_image }}
           SOURCE_DIGEST: ${{ steps.artifact.outputs.source_digest }}
           DEV_IMAGE: ${{ steps.dev-artifact.outputs.image }}
@@ -183,7 +227,7 @@ jobs:
 
       - name: Update DEV desired state
         env:
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
         run: |
           set -Eeuo pipefail
           for metadata in "${RUNNER_TEMP}"/dev-releases/*.json; do
@@ -206,7 +250,7 @@ jobs:
 
       - name: Commit DEV desired state
         env:
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
         run: |
           set -Eeuo pipefail
           git config user.name github-actions[bot]
@@ -223,3 +267,4 @@ jobs:
           branch: automation/dev-delivery-${{ github.run_id }}-${{ github.run_attempt }}
           title: "chore(dev): deliver immutable candidates"
           body: "Copies protected candidates into DEV ECR without rebuilding and updates DEV GitOps desired state to their exact digests."
+          auto-merge: "true"

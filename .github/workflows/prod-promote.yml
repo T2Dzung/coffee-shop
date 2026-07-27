@@ -1,10 +1,13 @@
 name: PROD — Promote QA-Approved Digest
 
 on:
+  push:
+    paths:
+      - infrastructure/release-candidates/*/qa/*.json
   workflow_dispatch:
     inputs:
-      service:
-        description: QA-approved component name from platform/components.yaml
+      components:
+        description: Comma-separated QA-approved component names from one release set
         required: true
         type: string
       source_commit:
@@ -17,13 +20,75 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: prod-desired-state
+  group: prod-desired-state-${{ inputs.source_commit || github.sha }}
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    name: Resolve QA-Approved Release Set
+    if: github.event_name == 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      components: ${{ steps.resolve.outputs.components }}
+      source_commit: ${{ steps.resolve.outputs.source_commit }}
+    steps:
+      - name: Checkout protected desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up platformctl
+        uses: ./.github/actions/setup-platformctl
+
+      - name: Resolve component matrix
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          INPUT_COMPONENTS: ${{ inputs.components }}
+          INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            [[ "${BEFORE_SHA}" =~ ^[0-9a-f]{40}$ && "${AFTER_SHA}" =~ ^[0-9a-f]{40}$ ]]
+            mapfile -t qa_files < <(
+              git diff --diff-filter=AM --name-only "${BEFORE_SHA}" "${AFTER_SHA}" -- \
+                'infrastructure/release-candidates/*/qa/*.json'
+            )
+            ((${#qa_files[@]} > 0))
+            components_json="$(
+              printf '%s\n' "${qa_files[@]}" |
+                jq -Rsc 'split("\n") | map(select(length > 0) | split("/")[2]) | unique'
+            )"
+            source_commits="$(
+              printf '%s\n' "${qa_files[@]}" |
+                jq -Rsc 'split("\n") | map(select(length > 0) | split("/")[4] | rtrimstr(".json")) | unique'
+            )"
+            [[ "$(jq 'length' <<<"${source_commits}")" -eq 1 ]]
+            SOURCE_COMMIT="$(jq -er '.[0]' <<<"${source_commits}")"
+            COMPONENTS="$(jq -er 'join(",")' <<<"${components_json}")"
+          else
+            SOURCE_COMMIT="${INPUT_SOURCE_COMMIT}"
+            COMPONENTS="${INPUT_COMPONENTS}"
+          fi
+          [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD
+          components="$("${RUNNER_TEMP}/platformctl" component resolve --names "${COMPONENTS}")"
+          jq -e 'length > 0' <<<"${components}" >/dev/null
+          echo "components=${components}" >>"${GITHUB_OUTPUT}"
+          echo "source_commit=${SOURCE_COMMIT}" >>"${GITHUB_OUTPUT}"
+
   standard:
+    needs: [resolve]
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJson(needs.resolve.outputs.components) }}
     uses: ./.github/workflows/_reusable-prod-delivery.yml
     with:
       lane: standard
-      service: ${{ inputs.service }}
-      source_commit: ${{ inputs.source_commit }}
+      service: ${{ matrix.component }}
+      source_commit: ${{ needs.resolve.outputs.source_commit }}

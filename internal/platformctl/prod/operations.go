@@ -275,7 +275,7 @@ func (o *RealOperations) printGitHubSettings(ctx context.Context) error {
 		}
 		fmt.Fprintf(o.Output, "  %s=%s\n", item.label, strings.TrimSpace(value))
 	}
-	fmt.Fprintf(o.Output, "  PROD_AWS_REGION=%s\n  CANDIDATE_AWS_REGION=%s\n", o.Config.Region, o.Config.Region)
+	fmt.Fprintf(o.Output, "  PROD_AWS_REGION=%s\n", o.Config.Region)
 	return nil
 }
 

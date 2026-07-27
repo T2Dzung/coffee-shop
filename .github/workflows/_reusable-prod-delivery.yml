@@ -308,6 +308,7 @@ jobs:
           branch: automation/prod-${{ inputs.lane }}-${{ inputs.service }}-${{ github.run_id }}-${{ github.run_attempt }}
           title: "chore(prod): ${{ inputs.lane }} ${{ inputs.service }}"
           body: "${{ inputs.lane }} lane requests a reviewed desired-state change for ${{ inputs.service }}@${{ steps.prod-artifact.outputs.digest }}."
+          auto-merge: "true"
 
       - name: Prepare emergency source reconciliation
         if: inputs.lane == 'emergency'
