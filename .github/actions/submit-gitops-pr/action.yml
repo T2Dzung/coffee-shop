@@ -45,6 +45,24 @@ runs:
         echo "url=${url}" >>"${GITHUB_OUTPUT}"
         echo "Created desired-state pull request: ${url}"
         if [[ "${AUTO_MERGE}" == "true" ]]; then
+          head_sha="$(gh pr view "${url}" --json headRefOid --jq .headRefOid)"
+          checks_registered="false"
+          for attempt in $(seq 1 30); do
+            check_count="$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/check-runs" \
+              --jq .total_count)"
+            if (( check_count > 0 )); then
+              checks_registered="true"
+              break
+            fi
+            echo "Attempt ${attempt}/30: checks are not registered yet. Waiting 10s..."
+            sleep 10
+          done
+          if [[ "${checks_registered}" != "true" ]]; then
+            echo "Required checks were not registered within 5 minutes; leaving the PR open."
+            exit 1
+          fi
           gh pr checks "${url}" --required --watch --interval 10
           gh pr merge "${url}" --squash --delete-branch
           echo "Merged after protected required checks passed: ${url}"

@@ -1,0 +1,81 @@
+name: Notify Telegram
+description: Send a non-blocking lifecycle notification through the Telegram Bot API
+
+inputs:
+  token:
+    description: Telegram bot token
+    required: false
+  chat-id:
+    description: Telegram destination chat ID
+    required: false
+  title:
+    description: Short lifecycle event title
+    required: true
+  status:
+    description: SUCCESS, FAILED, APPROVED, REJECTED, or ROLLBACK
+    required: true
+  details:
+    description: Optional event-specific context
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Send non-blocking Telegram notification
+      shell: bash
+      env:
+        TELEGRAM_TOKEN: ${{ inputs.token }}
+        TELEGRAM_CHAT_ID: ${{ inputs.chat-id }}
+        NOTIFICATION_TITLE: ${{ inputs.title }}
+        NOTIFICATION_STATUS: ${{ inputs.status }}
+        NOTIFICATION_DETAILS: ${{ inputs.details }}
+      run: |
+        set -Eeuo pipefail
+        if [[ -z "${TELEGRAM_TOKEN}" || -z "${TELEGRAM_CHAT_ID}" ]]; then
+          echo "::notice::Telegram notification skipped because repository secrets are unavailable."
+          exit 0
+        fi
+
+        echo "::add-mask::${TELEGRAM_TOKEN}"
+        echo "::add-mask::${TELEGRAM_CHAT_ID}"
+        case "${NOTIFICATION_STATUS^^}" in
+          SUCCESS | APPROVED)
+            icon="✅"
+            ;;
+          FAILED | REJECTED)
+            icon="❌"
+            ;;
+          ROLLBACK)
+            icon="⏪"
+            ;;
+          *)
+            icon="ℹ️"
+            ;;
+        esac
+
+        message="$(
+          printf '%s %s — %s\nRepository: %s\nActor: %s\nRef: %s\nRun: %s/%s/actions/runs/%s' \
+            "${icon}" "${NOTIFICATION_TITLE}" "${NOTIFICATION_STATUS^^}" \
+            "${GITHUB_REPOSITORY}" "${GITHUB_ACTOR}" "${GITHUB_REF_NAME}" \
+            "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
+        )"
+        if [[ -n "${NOTIFICATION_DETAILS}" ]]; then
+          message+=$'\n'
+          message+="${NOTIFICATION_DETAILS}"
+        fi
+
+        response_file="${RUNNER_TEMP}/telegram-response-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+        if ! curl --fail --silent --show-error --max-time 15 \
+          --request POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+          --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+          --data-urlencode "text=${message}" \
+          >"${response_file}" 2>/dev/null; then
+          echo "::warning::Telegram API request failed; the workflow result is unchanged."
+          exit 0
+        fi
+        if ! jq -e '.ok == true' "${response_file}" >/dev/null 2>&1; then
+          echo "::warning::Telegram rejected the notification; the workflow result is unchanged."
+          exit 0
+        fi
+        echo "Telegram lifecycle notification sent."

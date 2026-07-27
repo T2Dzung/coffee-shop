@@ -268,3 +268,35 @@ jobs:
           title: "chore(dev): deliver immutable candidates"
           body: "Copies protected candidates into DEV ECR without rebuilding and updates DEV GitOps desired state to their exact digests."
           auto-merge: "true"
+
+  delivery-status:
+    name: DEV Delivery Status
+    needs: [resolve, copy, submit]
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout notification action
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Notify DEV delivery result
+        uses: ./.github/actions/notify-telegram
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          chat-id: ${{ secrets.TELEGRAM_TO }}
+          title: DEV immutable delivery
+          status: ${{ needs.submit.result == 'success' && 'SUCCESS' || 'FAILED' }}
+          details: Source commit ${{ needs.resolve.outputs.source_commit }}
+
+      - name: Enforce DEV delivery result
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+          COPY: ${{ needs.copy.result }}
+          SUBMIT: ${{ needs.submit.result }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${RESOLVE}" == "success" ]]
+          [[ "${COPY}" == "success" ]]
+          [[ "${SUBMIT}" == "success" ]]

@@ -92,3 +92,32 @@ jobs:
       lane: standard
       service: ${{ matrix.component }}
       source_commit: ${{ needs.resolve.outputs.source_commit }}
+    secrets:
+      GITOPS_PR_TOKEN: ${{ secrets.GITOPS_PR_TOKEN }}
+
+  promotion-status:
+    name: PROD Promotion Status
+    needs: [resolve, standard]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout notification action
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Notify PROD promotion result
+        uses: ./.github/actions/notify-telegram
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          chat-id: ${{ secrets.TELEGRAM_TO }}
+          title: PROD standard promotion
+          status: ${{ needs.standard.result == 'success' && 'SUCCESS' || 'FAILED' }}
+          details: Source commit ${{ needs.resolve.outputs.source_commit }}
+
+      - name: Enforce PROD promotion result
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+          DELIVERY: ${{ needs.standard.result }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${RESOLVE}" == "success" ]]
+          [[ "${DELIVERY}" == "success" ]]
