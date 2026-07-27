@@ -21,6 +21,9 @@ type Component struct {
 	Name            string   `yaml:"name" json:"name"`
 	Kind            string   `yaml:"kind" json:"kind"`
 	Build           string   `yaml:"build" json:"build"`
+	ModuleRoot      string   `yaml:"moduleRoot" json:"module_root"`
+	Package         string   `yaml:"package" json:"package"`
+	Binary          string   `yaml:"binary" json:"binary"`
 	Dockerfile      string   `yaml:"dockerfile" json:"dockerfile"`
 	ImageRepository string   `yaml:"imageRepository" json:"image_repository"`
 	KustomizeImage  string   `yaml:"kustomizeImage" json:"kustomize_image"`
@@ -60,6 +63,7 @@ func (c Catalog) Validate() error {
 	seen := map[string]struct{}{}
 	for _, component := range c.Components {
 		if component.Name == "" || component.Kind == "" || component.Build == "" ||
+			component.ModuleRoot == "" || component.Package == "" || component.Binary == "" ||
 			component.Dockerfile == "" || component.ImageRepository == "" || component.KustomizeImage == "" ||
 			component.Context == "" || component.DevOverlay == "" || component.ProdOverlay == "" || len(component.Paths) == 0 {
 			return fmt.Errorf("component %q has incomplete build or image metadata", component.Name)
@@ -99,7 +103,7 @@ func (c Catalog) Select(changedFiles []string) []string {
 		if !candidate.Automatic {
 			continue
 		}
-		if shared || matchesAny(changedFiles, candidate.Paths) {
+		if (shared && candidate.Kind == "service") || matchesAny(changedFiles, candidate.Paths) {
 			selected[candidate.Name] = struct{}{}
 		}
 	}

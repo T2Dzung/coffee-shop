@@ -49,7 +49,16 @@ jobs:
               - 'internal/platformctl/**'
               - 'platform-ownership-guard/**'
             guard:
-              - 'platform-ownership-guard/**'
+              - 'platform-ownership-guard/api/**'
+              - 'platform-ownership-guard/cmd/**'
+              - 'platform-ownership-guard/internal/**'
+              - 'platform-ownership-guard/test/**'
+              - 'platform-ownership-guard/config/crd/**'
+              - 'platform-ownership-guard/config/rbac/**'
+              - 'platform-ownership-guard/hack/**'
+              - 'platform-ownership-guard/go.mod'
+              - 'platform-ownership-guard/go.sum'
+              - 'platform-ownership-guard/Makefile'
 
       - name: Normalize Merge Queue Scope
         id: result

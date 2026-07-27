@@ -18,6 +18,9 @@ components:
     name: web
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/web
+    binary: bin/web
     dockerfile: docker/Dockerfile-web
     imageRepository: web
     kustomizeImage: web
@@ -37,14 +40,38 @@ func TestSelectUsesCatalogPathsAndExcludesMigration(t *testing.T) {
 		SchemaVersion: 1,
 		SharedPaths:   []string{"go.mod"},
 		Components: []Component{
-			{Name: "web", Automatic: true, Paths: []string{"cmd/web/**"}},
-			{Name: "guard", Automatic: true, Paths: []string{"guard/**"}},
+			{Name: "web", Kind: "service", Automatic: true, Paths: []string{"cmd/web/**"}},
+			{Name: "guard", Kind: "operator", Automatic: true, Paths: []string{"guard/**"}},
 			{Name: "migrate", Kind: "migration", Paths: []string{"db/**"}},
 		},
 	}
 	require.Equal(t, []string{"web"}, catalog.Select([]string{"cmd/web/main.go"}))
-	require.Equal(t, []string{"guard", "web"}, catalog.Select([]string{"go.mod"}))
+	require.Equal(t, []string{"web"}, catalog.Select([]string{"go.mod"}))
 	require.Empty(t, catalog.Select([]string{"db/migrate.go"}))
+}
+
+func TestRepositoryCatalogDoesNotRebuildGuardForEnvironmentDelivery(t *testing.T) {
+	t.Parallel()
+	catalogPath := filepath.Join("..", "..", "..", "platform", "components.yaml")
+	catalog, err := Load(catalogPath)
+	require.NoError(t, err)
+
+	for _, desiredState := range []string{
+		"platform-ownership-guard/config/dev/kustomization.yaml",
+		"platform-ownership-guard/config/prod/kustomization.yaml",
+		"go.mod",
+	} {
+		require.NotContains(t, catalog.Select([]string{desiredState}), "platform-ownership-guard")
+	}
+
+	for _, imageInput := range []string{
+		"platform-ownership-guard/internal/controller/ownershipaudit_controller.go",
+		"platform-ownership-guard/cmd/main.go",
+		"platform-ownership-guard/go.sum",
+		"platform-ownership-guard/Dockerfile.release",
+	} {
+		require.Contains(t, catalog.Select([]string{imageInput}), "platform-ownership-guard")
+	}
 }
 
 func TestResolveRequiresExplicitMigrationIntent(t *testing.T) {

@@ -14,6 +14,10 @@ inputs:
   platformctl:
     required: true
     description: Absolute platformctl path
+  use-hosted-cache:
+    required: false
+    default: "false"
+    description: Use GitHub-hosted Go and BuildKit caches; keep false on ARC
 
 outputs:
   image:
@@ -47,31 +51,60 @@ runs:
       run: |
         set -Eeuo pipefail
         "${PLATFORMCTL}" component describe --name "${COMPONENT}" >"${RUNNER_TEMP}/component.json"
-        for field in kind context dockerfile image_repository dev_overlay prod_overlay kustomize_image; do
+        for field in kind module_root package binary context dockerfile image_repository dev_overlay prod_overlay kustomize_image; do
           value="$(jq -er --arg field "${field}" '.[$field]' "${RUNNER_TEMP}/component.json")"
           echo "${field}=${value}" >>"${GITHUB_OUTPUT}"
         done
         candidate_repository="$("${PLATFORMCTL}" component candidate-repositories --names "${COMPONENT}" | jq -er '.[0]')"
         echo "candidate_repository=${candidate_repository}" >>"${GITHUB_OUTPUT}"
 
-    - name: Build release binary
+    - name: Resolve existing immutable candidate
+      id: existing
       shell: bash
       env:
-        COMPONENT: ${{ inputs.component }}
-        KIND: ${{ steps.metadata.outputs.kind }}
+        SOURCE_COMMIT: ${{ inputs.source-commit }}
+        REGISTRY: ${{ inputs.registry }}
+        CANDIDATE_REPOSITORY: ${{ steps.metadata.outputs.candidate_repository }}
       run: |
         set -Eeuo pipefail
-        if [[ "${KIND}" == "operator" ]]; then
-          (
-            cd platform-ownership-guard
-            make test
-            git diff --exit-code
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-              go build -mod=readonly -trimpath -ldflags="-s -w" -o bin/manager ./cmd/main.go
-          )
+        [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+        image="${REGISTRY}/${CANDIDATE_REPOSITORY}"
+        tag="candidate-${SOURCE_COMMIT}"
+        manifest="$(docker buildx imagetools inspect "${image}:${tag}" \
+          --format '{{json .Manifest}}' 2>/dev/null || true)"
+        digest="$(jq -er '.digest // empty' <<<"${manifest}" 2>/dev/null || true)"
+        if [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
         else
-          bash scripts/ci/build-go-service.sh "${COMPONENT}"
+          echo "digest=" >>"${GITHUB_OUTPUT}"
         fi
+
+    - name: Restore nested module cache on GitHub-hosted runner
+      if: >-
+        inputs.use-hosted-cache == 'true' &&
+        steps.metadata.outputs.module_root != '.' &&
+        steps.existing.outputs.digest == ''
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version-file: ${{ steps.metadata.outputs.module_root }}/go.mod
+        cache: true
+        cache-dependency-path: ${{ steps.metadata.outputs.module_root }}/go.sum
+
+    - name: Build release binary
+      if: steps.existing.outputs.digest == ''
+      shell: bash
+      env:
+        MODULE_ROOT: ${{ steps.metadata.outputs.module_root }}
+        PACKAGE: ${{ steps.metadata.outputs.package }}
+        BINARY: ${{ steps.metadata.outputs.binary }}
+      run: |
+        set -Eeuo pipefail
+        (
+          cd "${MODULE_ROOT}"
+          mkdir -p "$(dirname "${BINARY}")"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -mod=readonly -trimpath -ldflags="-s -w" -o "${BINARY}" "${PACKAGE}"
+        )
 
     - name: Build and push immutable candidate
       id: artifact
@@ -83,19 +116,26 @@ runs:
         CONTEXT: ${{ steps.metadata.outputs.context }}
         DOCKERFILE: ${{ steps.metadata.outputs.dockerfile }}
         CANDIDATE_REPOSITORY: ${{ steps.metadata.outputs.candidate_repository }}
+        EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+        USE_HOSTED_CACHE: ${{ inputs.use-hosted-cache }}
       run: |
         set -Eeuo pipefail
         [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
         image="${REGISTRY}/${CANDIDATE_REPOSITORY}"
         tag="candidate-${SOURCE_COMMIT}"
-        manifest="$(docker buildx imagetools inspect "${image}:${tag}" \
-          --format '{{json .Manifest}}' 2>/dev/null || true)"
-        existing="$(jq -er '.digest // empty' <<<"${manifest}" 2>/dev/null || true)"
-        if [[ "${existing}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-          digest="${existing}"
+        if [[ "${EXISTING_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          digest="${EXISTING_DIGEST}"
         else
           metadata_file="${RUNNER_TEMP}/buildx-${COMPONENT}.json"
+          cache_args=()
+          if [[ "${USE_HOSTED_CACHE}" == "true" ]]; then
+            cache_args+=(
+              --cache-from "type=gha,scope=candidate-${COMPONENT}"
+              --cache-to "type=gha,mode=max,scope=candidate-${COMPONENT}"
+            )
+          fi
           docker buildx build --platform linux/amd64 --push \
+            "${cache_args[@]}" \
             --metadata-file "${metadata_file}" \
             --file "${DOCKERFILE}" --tag "${image}:${tag}" "${CONTEXT}"
           digest="$(jq -er '."containerimage.digest"' "${metadata_file}")"

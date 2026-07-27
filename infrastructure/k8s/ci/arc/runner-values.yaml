@@ -44,7 +44,7 @@ template:
         # Built and imported into the CI host's K3s containerd by the arc_runner
         # Ansible role. The image extends the pinned upstream runner only with
         # tools declared by the candidate-runner contract.
-        image: docker.io/library/coffeeshop-actions-runner:2.334.0-make1
+        image: docker.io/library/coffeeshop-actions-runner:2.334.0-go1
         imagePullPolicy: Never
         command: ["/home/runner/run.sh"]
         securityContext:
@@ -54,10 +54,6 @@ template:
         env:
           - name: DOCKER_HOST
             value: tcp://localhost:2375
-          - name: GOMODCACHE
-            value: /go-cache/pkg/mod
-          - name: GOCACHE
-            value: /go-cache/build
         resources:
           requests:
             cpu: 500m
@@ -70,8 +66,8 @@ template:
             mountPath: /go-cache
     volumes:
       - name: go-cache
-        emptyDir:
-          sizeLimit: 8Gi
+        persistentVolumeClaim:
+          claimName: go-cache
       - name: docker-storage
         emptyDir:
           sizeLimit: 16Gi
