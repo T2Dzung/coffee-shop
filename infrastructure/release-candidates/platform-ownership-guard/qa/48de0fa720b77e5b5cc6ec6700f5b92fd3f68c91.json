@@ -1,0 +1,16 @@
+{
+  "schema_version": 3,
+  "qa_status": "approved",
+  "service": "platform-ownership-guard",
+  "source_commit": "48de0fa720b77e5b5cc6ec6700f5b92fd3f68c91",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-platform-ownership-guard",
+  "source_digest": "sha256:dafb1477c415abd562b353997dee8cfe8e7a0d2b345c6225bd60c1a949ef9a95",
+  "dev_image": "423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard",
+  "dev_digest": "sha256:dafb1477c415abd562b353997dee8cfe8e7a0d2b345c6225bd60c1a949ef9a95",
+  "dev_evidence_url": "https://github.com/T2Dzung/coffee-shop/pull/43#issuecomment-5091732893",
+  "evidence_url": "https://github.com/T2Dzung/coffee-shop/pull/43#issuecomment-5091732893",
+  "summary": "DEV runtime, GitOps, exact-digest web and PlatformOwnershipGuard, RabbitMQ HA and external platform checks passed.",
+  "decided_by": "T2Dzung",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30269205897",
+  "decided_at": "2026-07-27T13:12:56Z"
+}
