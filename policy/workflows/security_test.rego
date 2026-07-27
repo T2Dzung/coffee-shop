@@ -53,6 +53,12 @@ test_deny_non_atomic_prod_release_set if {
 	}
 }
 
+test_deny_ungated_prod_status_job if {
+	deny["PROD status job must ignore non-default push branches"] with input as {
+		"prod_status_missing_default_branch_gate": true,
+	}
+}
+
 test_deny_candidate_build_without_toolchain_contract if {
 	deny["candidate ARC build does not enforce its typed toolchain profile"] with input as {
 		"candidate_build_missing_toolchain": true,

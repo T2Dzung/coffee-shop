@@ -156,8 +156,36 @@ jobs:
     needs: [copy-standard]
     steps:
       - uses: ./.github/actions/submit-gitops-pr
+  promotion-status:
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
 `), 0o600))
 	input, err := normalizeWorkflow(path)
 	require.NoError(t, err)
 	require.False(t, input.ProdStandardMissingAtomicFanIn)
+	require.False(t, input.ProdStatusMissingDefaultBranchGate)
+}
+
+func TestNormalizeWorkflowRejectsUngatedProdStatusJob(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "workflow.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+name: PROD — Promote QA-Approved Digest
+jobs:
+  copy-standard:
+    strategy:
+      matrix:
+        component: [web]
+  submit-standard:
+    needs: [copy-standard]
+    steps:
+      - uses: ./.github/actions/submit-gitops-pr
+  promotion-status:
+    if: always() && !cancelled()
+`), 0o600))
+	input, err := normalizeWorkflow(path)
+	require.NoError(t, err)
+	require.True(t, input.ProdStatusMissingDefaultBranchGate)
 }
