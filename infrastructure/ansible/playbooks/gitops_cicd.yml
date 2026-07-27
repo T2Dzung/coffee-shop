@@ -27,3 +27,9 @@
 
     - role: coffeeshop_rabbitmq_app
       tags: ['coffeeshop_rabbitmq_app']
+
+    # Runtime workloads are intentionally a second App-of-Apps layer. The
+    # CoffeeShop services and Guard are not created until PostgreSQL and
+    # RabbitMQ report their runtime-ready conditions.
+    - role: coffeeshop_runtime_apps
+      tags: ['coffeeshop_runtime_apps']

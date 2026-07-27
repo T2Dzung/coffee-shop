@@ -1,7 +1,7 @@
 # Generates private ECR repositories for all 6 microservices.
 resource "aws_ecr_repository" "services" {
-  for_each             = toset(["product", "counter", "barista", "kitchen", "proxy", "web"])
-  name                 = "go-coffeeshop-${each.key}"
+  for_each             = local.service_repositories
+  name                 = each.value
   image_tag_mutability = "IMMUTABLE"
   force_delete         = true
   image_scanning_configuration {
@@ -36,8 +36,9 @@ resource "aws_ecr_repository" "platform_ownership_guard" {
 # Retain a bounded candidate history. Twenty candidates leaves room for parallel
 # feature/release work without expiring the digest currently under formal QA.
 resource "aws_ecr_lifecycle_policy" "cleanup" {
-  for_each   = aws_ecr_repository.services
-  repository = each.value.name
+  for_each   = local.service_repositories
+  repository = each.value
+  depends_on = [aws_ecr_repository.services]
   policy = jsonencode({
     rules = [
       {

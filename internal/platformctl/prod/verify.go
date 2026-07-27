@@ -235,7 +235,7 @@ func (o *RealOperations) verifyTeardown(ctx context.Context) error {
 		return fmt.Errorf("retained AWS Budget is missing")
 	}
 	fmt.Fprintf(o.Output,
-		"Teardown inventory passed; retained backend S3/KMS, %d PROD + %d candidate ECR repositories and AWS Budget confirmed.\n",
+		"Teardown inventory passed; retained backend S3/KMS, %d PROD + %d candidate ECR repositories, GitHub delivery roles and AWS Budget confirmed.\n",
 		len(catalog.Components), len(catalog.Components),
 	)
 	return nil

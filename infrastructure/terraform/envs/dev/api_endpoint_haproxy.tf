@@ -99,6 +99,7 @@ resource "aws_iam_role" "haproxy_role" {
       }
     ]
   })
+  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "haproxy_ssm" {
@@ -111,6 +112,7 @@ resource "aws_iam_instance_profile" "haproxy_profile" {
   count = local.create_haproxy_runtime ? 1 : 0
   name  = "${var.cluster_name}-haproxy-profile"
   role  = aws_iam_role.haproxy_role[0].name
+  tags  = local.common_tags
 }
 
 

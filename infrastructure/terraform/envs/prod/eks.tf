@@ -72,5 +72,14 @@ resource "aws_eks_addon" "cloudwatch_observability" {
 
   tags = local.common_tags
 
-  depends_on = [aws_eks_pod_identity_association.cloudwatch_agent]
+  # The add-on writes to these groups. Keeping the dependency explicit makes
+  # Terraform remove the add-on before deleting its log groups during teardown,
+  # so the agent cannot recreate a group after Terraform has deleted it.
+  depends_on = [
+    aws_eks_pod_identity_association.cloudwatch_agent,
+    aws_cloudwatch_log_group.application_logs,
+    aws_cloudwatch_log_group.host_logs,
+    aws_cloudwatch_log_group.dataplane_logs,
+    aws_cloudwatch_log_group.performance_logs,
+  ]
 }

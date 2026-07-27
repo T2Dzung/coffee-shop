@@ -23,6 +23,13 @@ resource "aws_cloudwatch_log_group" "dataplane_logs" {
   tags = local.common_tags
 }
 
+resource "aws_cloudwatch_log_group" "performance_logs" {
+  name              = "/aws/containerinsights/${var.cluster_name}/performance"
+  retention_in_days = var.cw_log_retention_days
+
+  tags = local.common_tags
+}
+
 # ==============================================================================
 # Scoped CloudWatch Alarms (Core Operational Metrics)
 # ==============================================================================

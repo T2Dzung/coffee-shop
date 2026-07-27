@@ -25,8 +25,6 @@ deletes contains address if {
 	address := change.address
 }
 
-deny contains "CI teardown plan contains no delete actions" if { count(deletes) == 0 }
-
 deny contains message if {
 	some address in deletes
 	not is_allowed(address)

@@ -2,6 +2,10 @@ package terraform.teardown
 
 import rego.v1
 
+test_allow_empty_idempotent_teardown if {
+	count(deny) == 0 with input as {"resource_changes": []}
+}
+
 test_allow_ephemeral if {
 	result := deny with input as {
 		"resource_changes": [
@@ -15,6 +19,14 @@ test_deny_retained if {
 	deny["teardown attempts to delete retained resource aws_ecr_repository.app[\"web\"]"] with input as {
 		"resource_changes": [
 			{"address": "aws_ecr_repository.app[\"web\"]", "change": {"actions": ["delete"]}},
+		],
+	}
+}
+
+test_deny_retained_github_delivery_role if {
+	deny["teardown attempts to delete retained resource aws_iam_role.github_delivery_role"] with input as {
+		"resource_changes": [
+			{"address": "aws_iam_role.github_delivery_role", "change": {"actions": ["delete"]}},
 		],
 	}
 }

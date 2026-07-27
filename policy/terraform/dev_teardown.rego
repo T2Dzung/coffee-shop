@@ -26,7 +26,23 @@ deny contains message if {
 	some change in deletes
 	not tagged_dev(change)
 	not untagged_runtime_child_type(change.type)
+	not legacy_untagged_haproxy_identity(change)
 	message := sprintf("DEV teardown resource lacks the DEV runtime boundary: %s", [change.address])
+}
+
+# Migration-only compatibility for the two HAProxy identities created before
+# tags were added to their Terraform resources. Exact address, type and name
+# matching prevents this from becoming a general IAM deletion exception.
+legacy_untagged_haproxy_identity(change) if {
+	change.address == "aws_iam_role.haproxy_role[0]"
+	change.type == "aws_iam_role"
+	change.change.before.name == "coffeeshop-dev-haproxy-role"
+}
+
+legacy_untagged_haproxy_identity(change) if {
+	change.address == "aws_iam_instance_profile.haproxy_profile[0]"
+	change.type == "aws_iam_instance_profile"
+	change.change.before.name == "coffeeshop-dev-haproxy-profile"
 }
 
 tagged_dev(change) if {

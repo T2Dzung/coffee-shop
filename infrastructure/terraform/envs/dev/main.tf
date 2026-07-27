@@ -28,6 +28,11 @@ data "aws_ami" "ubuntu_24_04" {
 }
 
 locals {
+  service_repositories = {
+    for service in ["product", "counter", "barista", "kitchen", "proxy", "web"] :
+    service => "go-coffeeshop-${service}"
+  }
+
   # Pin AMI from input or fall back to latest lookup
   resolved_ami_id = coalesce(var.pinned_ami_id, data.aws_ami.ubuntu_24_04.id)
 

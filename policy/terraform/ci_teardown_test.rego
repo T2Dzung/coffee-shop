@@ -2,6 +2,10 @@ package terraform.ci_teardown
 
 import rego.v1
 
+test_allow_empty_idempotent_teardown if {
+	count(deny) == 0 with input as {"resource_changes": []}
+}
+
 test_allow_ci_destroy if {
 	result := deny with input as {"resource_changes": [{
 		"address": "aws_vpc.ci", "change": {

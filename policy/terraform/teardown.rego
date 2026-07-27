@@ -32,10 +32,6 @@ deletes contains address if {
 	address := change.address
 }
 
-deny contains "teardown plan contains no delete actions" if {
-	count(deletes) == 0
-}
-
 deny contains message if {
 	some address in deletes
 	is_retained(address)
@@ -55,6 +51,16 @@ is_retained(address) if {
 
 is_retained(address) if {
 	address == "aws_iam_openid_connect_provider.github"
+}
+
+is_retained(address) if {
+	address in {
+		"aws_iam_role_policy_attachment.github_delivery_attach",
+		"aws_iam_role_policy_attachment.github_emergency_delivery_attach",
+		"aws_iam_policy.github_delivery_policy",
+		"aws_iam_role.github_delivery_role",
+		"aws_iam_role.github_emergency_delivery_role",
+	}
 }
 
 is_retained(address) if {
