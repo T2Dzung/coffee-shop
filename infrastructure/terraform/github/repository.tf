@@ -1,3 +1,6 @@
+# This portfolio repository is intentionally public. Runtime credentials and
+# environment secrets remain in GitHub encrypted stores or local mode-0600 files.
+#trivy:ignore:GIT-0001
 resource "github_repository" "this" {
   name       = var.repository_name
   visibility = var.repository_visibility
