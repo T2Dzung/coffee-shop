@@ -39,7 +39,7 @@ resource "github_repository_ruleset" "default_branch" {
     }
 
     required_status_checks {
-      strict_required_status_checks_policy = true
+      strict_required_status_checks_policy = var.strict_required_status_checks_policy
 
       dynamic "required_check" {
         for_each = var.required_status_checks

@@ -2,6 +2,10 @@ github_owner    = "OWNER"
 repository_name = "REPOSITORY"
 ruleset_bypass_username = "OWNER_USERNAME"
 
+# Loose required checks avoid repeated CI when automation advances main. Required
+# checks still must pass; high-concurrency organization repos should use merge queue.
+strict_required_status_checks_policy = false
+
 # Common clone/fork case: the destination repository exists, but its GitHub
 # Environments do not. Set the second value to true only when all environments
 # in delivery_environments already exist and should be adopted.
