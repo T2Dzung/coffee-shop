@@ -9,22 +9,22 @@ resources:
 - hpa-product.yaml
 
 images:
-- name: go-coffeeshop-barista
+- digest: sha256:4cbb6110e714028731dd3b3120305511fb1ff2d84a29735357fc550dab99c676
+  name: go-coffeeshop-barista
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
-  newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
-- name: go-coffeeshop-counter
+- digest: sha256:f5b134a8a62905129347ee36e12a922380580f6c84de11218b752d195f9b16d4
+  name: go-coffeeshop-counter
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
-  newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
-- name: go-coffeeshop-kitchen
+- digest: sha256:bc55dc93a4f69fcda56eea75ed88543ca9085b63dd84c613169b35a171021adf
+  name: go-coffeeshop-kitchen
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
-  newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
-- name: go-coffeeshop-product
+- digest: sha256:03e7e015e96abe245bbd4c7c2fb60f77273d93fda6dcb185f96bbe7217f3b27a
+  name: go-coffeeshop-product
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
-  newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
-- name: go-coffeeshop-proxy
+- digest: sha256:32186b4cae7582aeb904ba5a6291aa8ae0e975d6a720408d7cb7c3d4d405d7ff
+  name: go-coffeeshop-proxy
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
-  newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
-- digest: sha256:581e209ef5971ebee143650eb5c92da90f4ab13bd25ff3bb8ecf71c7d46cd209
+- digest: sha256:c74e05d07260a1678f434b3a9e0b8334f717d0a328ae460a7fa0245d73a4d7da
   name: go-coffeeshop-web
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
 
