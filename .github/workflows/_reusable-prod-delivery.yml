@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       lane:
-        description: standard, emergency, or rollback
+        description: emergency or rollback
         required: true
         type: string
       service:
@@ -54,6 +54,10 @@ jobs:
           "${RUNNER_TEMP}/platformctl" component describe --name "${COMPONENT}" \
             >"${RUNNER_TEMP}/component.json"
           kind="$(jq -er .kind "${RUNNER_TEMP}/component.json")"
+          [[ "${LANE}" == "emergency" || "${LANE}" == "rollback" ]] || {
+            echo "Reusable exceptional delivery accepts emergency or rollback only." >&2
+            exit 1
+          }
           if [[ "${LANE}" == "emergency" && "${kind}" != "service" ]]; then
             echo "Emergency build lane accepts application services only; ${COMPONENT} is ${kind}." >&2
             exit 1
@@ -67,8 +71,8 @@ jobs:
               >>"${GITHUB_OUTPUT}"
           done
 
-      - name: Resolve standard or rollback artifact
-        if: inputs.lane != 'emergency'
+      - name: Resolve rollback artifact
+        if: inputs.lane == 'rollback'
         id: source-artifact
         env:
           LANE: ${{ inputs.lane }}
@@ -76,34 +80,23 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -Eeuo pipefail
-          if [[ "${LANE}" == "standard" ]]; then
-            git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD || {
-              echo "Standard candidate is not contained in the protected default branch." >&2
-              exit 1
-            }
-            "${RUNNER_TEMP}/platformctl" release standard \
-              --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
-              --candidate "infrastructure/release-candidates/${COMPONENT}/${SOURCE_COMMIT}.json" \
-              --qa "infrastructure/release-candidates/${COMPONENT}/qa/${SOURCE_COMMIT}.json" \
-              >"${RUNNER_TEMP}/artifact.json"
-          else
-            history=""
-            for candidate in \
-              "infrastructure/releases/prod/lanes/standard/${COMPONENT}/${SOURCE_COMMIT}.json" \
-              "infrastructure/releases/prod/lanes/emergency/${COMPONENT}/${SOURCE_COMMIT}.json"; do
-              if [[ -f "${candidate}" ]]; then
-                history="${candidate}"
-                break
-              fi
-            done
-            [[ -n "${history}" ]] || {
-              echo "No reviewed PROD release history exists for ${COMPONENT}@${SOURCE_COMMIT}." >&2
-              exit 1
-            }
-            "${RUNNER_TEMP}/platformctl" release rollback \
-              --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
-              --history "${history}" >"${RUNNER_TEMP}/artifact.json"
-          fi
+          [[ "${LANE}" == "rollback" ]]
+          history=""
+          for candidate in \
+            "infrastructure/releases/prod/lanes/standard/${COMPONENT}/${SOURCE_COMMIT}.json" \
+            "infrastructure/releases/prod/lanes/emergency/${COMPONENT}/${SOURCE_COMMIT}.json"; do
+            if [[ -f "${candidate}" ]]; then
+              history="${candidate}"
+              break
+            fi
+          done
+          [[ -n "${history}" ]] || {
+            echo "No reviewed PROD release history exists for ${COMPONENT}@${SOURCE_COMMIT}." >&2
+            exit 1
+          }
+          "${RUNNER_TEMP}/platformctl" release rollback \
+            --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+            --history "${history}" >"${RUNNER_TEMP}/artifact.json"
           echo "image=$(jq -er .image "${RUNNER_TEMP}/artifact.json")" >>"${GITHUB_OUTPUT}"
           echo "digest=$(jq -er .digest "${RUNNER_TEMP}/artifact.json")" >>"${GITHUB_OUTPUT}"
 
@@ -148,39 +141,6 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
 
-      - name: Verify candidate workflow identity
-        if: inputs.lane == 'standard'
-        env:
-          ARTIFACT: ${{ steps.source-artifact.outputs.image }}@${{ steps.source-artifact.outputs.digest }}
-        run: |
-          set -Eeuo pipefail
-          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/heads/${{ github.event.repository.default_branch }}"
-          cosign verify --certificate-identity "${identity}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${ARTIFACT}"
-
-      - name: Re-scan exact QA-approved candidate
-        if: inputs.lane == 'standard'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          version: v0.72.0
-          image-ref: ${{ steps.source-artifact.outputs.image }}@${{ steps.source-artifact.outputs.digest }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: CRITICAL
-          cache: "true"
-
-      - name: Copy exact standard candidate without rebuild
-        id: standard-copy
-        if: inputs.lane == 'standard'
-        uses: ./.github/actions/copy-immutable-artifact
-        with:
-          source-image: ${{ steps.source-artifact.outputs.image }}
-          source-digest: ${{ steps.source-artifact.outputs.digest }}
-          destination-image: ${{ steps.prod-ecr.outputs.registry }}/${{ steps.component.outputs.image_repository }}
-          destination-tag: release-${{ inputs.source_commit }}
-
       - name: Build exact emergency artifact
         if: inputs.lane == 'emergency'
         working-directory: emergency-source
@@ -189,7 +149,6 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           REGISTRY: ${{ steps.prod-ecr.outputs.registry }}
           REPOSITORY: ${{ steps.component.outputs.image_repository }}
-          COPIED_DIGEST: ${{ steps.standard-copy.outputs.digest }}
         run: |
           set -Eeuo pipefail
           bash scripts/ci/build-go-service.sh "${COMPONENT}"
@@ -211,10 +170,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           destination_image="${PROD_REGISTRY}/${REPOSITORY}"
-          if [[ "${LANE}" == "standard" ]]; then
-            [[ "${COPIED_DIGEST}" == "${SOURCE_DIGEST}" ]]
-            digest="${COPIED_DIGEST}"
-          elif [[ "${LANE}" == "emergency" ]]; then
+          if [[ "${LANE}" == "emergency" ]]; then
             digest="$(aws ecr describe-images --repository-name "${REPOSITORY}" \
               --image-ids "imageTag=emergency-${SOURCE_COMMIT}" \
               --query 'imageDetails[0].imageDigest' --output text)"
@@ -245,7 +201,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/"
-          identity+="prod-(promote|hotfix|rollback)\\.yml@refs/heads/${{ github.event.repository.default_branch }}"
+          identity+="prod-(hotfix|rollback)\\.yml@refs/heads/${{ github.event.repository.default_branch }}"
           if ! cosign verify --certificate-identity-regexp "${identity}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${ARTIFACT}" >/dev/null 2>&1; then

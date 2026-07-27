@@ -131,12 +131,6 @@ func (o *RealOperations) initRemote(ctx context.Context) error {
 }
 
 func (o *RealOperations) Configure(ctx context.Context) error {
-	devRole, err := o.output(ctx, "github_actions_role_arn")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(o.Output, "GitHub Actions variable DEV_AWS_ROLE_ARN=%s\n", devRole)
-	fmt.Fprintf(o.Output, "GitHub dev variable DEV_AWS_REGION=%s\n", o.Config.Region)
 	if err := o.waitForInstances(ctx); err != nil {
 		return err
 	}

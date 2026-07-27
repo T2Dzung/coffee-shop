@@ -30,3 +30,7 @@ deny contains "candidate ARC build does not enforce its typed toolchain profile"
 deny contains "ARC build action calls AWS CLI; cloud API checks belong to the hosted preflight" if {
 	input.arc_build_uses_aws_cli
 }
+
+deny contains "standard PROD release set must fan in to one protected desired-state PR" if {
+	input.prod_standard_missing_atomic_fan_in
+}

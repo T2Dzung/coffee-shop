@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -191,9 +190,6 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 	if err := o.loadRuntimeOutputs(ctx); err != nil {
 		return err
 	}
-	if err := o.printGitHubSettings(ctx); err != nil {
-		return err
-	}
 	if err := o.updateKubeconfig(ctx); err != nil {
 		return err
 	}
@@ -256,27 +252,6 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 		return err
 	}
 	return o.waitArgo(ctx, "coffeeshop-prod-ownership-guard")
-}
-
-func (o *RealOperations) printGitHubSettings(ctx context.Context) error {
-	outputs := []struct {
-		name  string
-		label string
-	}{
-		{"github_delivery_role_arn", "PROD_AWS_ROLE_ARN"},
-		{"github_emergency_delivery_role_arn", "PROD_EMERGENCY_AWS_ROLE_ARN"},
-		{"github_dev_candidate_reader_role_arn", "DEV_CANDIDATE_READER_ROLE_ARN"},
-	}
-	fmt.Fprintln(o.Output, "GitHub Actions variables resolved from Terraform:")
-	for _, item := range outputs {
-		value, err := o.FoundationTF.Output(ctx, item.name)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", item.name, err)
-		}
-		fmt.Fprintf(o.Output, "  %s=%s\n", item.label, strings.TrimSpace(value))
-	}
-	fmt.Fprintf(o.Output, "  PROD_AWS_REGION=%s\n", o.Config.Region)
-	return nil
 }
 
 func (o *RealOperations) loadRuntimeOutputs(ctx context.Context) error {

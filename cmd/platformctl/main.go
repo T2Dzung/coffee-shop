@@ -20,6 +20,7 @@ import (
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/config"
 	platformdev "github.com/thangchung/go-coffeeshop/internal/platformctl/dev"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/evidence"
+	platformgithub "github.com/thangchung/go-coffeeshop/internal/platformctl/github"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/policy"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/prod"
 	releasepolicy "github.com/thangchung/go-coffeeshop/internal/platformctl/release"
@@ -47,7 +48,7 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl [--operator-config path] <prod|dev|ci|config|component|toolchain|validate|terraform-plan|release|version> ...")
+		return fmt.Errorf("usage: platformctl [--operator-config path] <prod|dev|ci|github|config|component|toolchain|validate|terraform-plan|release|version> ...")
 	}
 	switch args[0] {
 	case "prod":
@@ -56,6 +57,8 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return runCI(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
 	case "dev":
 		return runDev(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
+	case "github":
+		return runGitHub(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
 	case "config":
 		return runConfig(args[1:], stdout, stderr, operatorConfig)
 	case "component":
@@ -74,6 +77,53 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runGitHub(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {
+	if len(args) == 0 || (args[0] != "bootstrap" && args[0] != "doctor") {
+		return fmt.Errorf("usage: platformctl github <bootstrap|doctor> [--auto-approve]")
+	}
+	flags := flag.NewFlagSet("github "+args[0], flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	autoApprove := flags.Bool("auto-approve", false, "explicitly disable interactive approval")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	loader := config.NewLoader()
+	loader.OperatorConfigPath = operatorConfig
+	cfg, err := loader.LoadGitHub(root)
+	if err != nil {
+		return err
+	}
+	runner := command.OSRunner{Stdout: stdout, Stderr: stderr}
+	operations, err := platformgithub.NewRealOperations(cfg, runner)
+	if err != nil {
+		return err
+	}
+	defer operations.Close()
+	engine := platformgithub.Engine{
+		Operations: operations,
+		Approver: platformgithub.ConsoleApprover{
+			Input: stdin, Output: stdout, AutoApprove: *autoApprove,
+		},
+		Secrets: cfg.RepositorySecretData,
+	}
+	if args[0] == "doctor" {
+		if err := engine.Doctor(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "GitHub governance doctor passed.")
+		return nil
+	}
+	if err := engine.Bootstrap(ctx); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "GitHub governance bootstrap passed.")
+	return nil
 }
 
 func runDev(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {

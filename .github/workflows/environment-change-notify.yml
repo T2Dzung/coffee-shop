@@ -1,0 +1,57 @@
+name: Delivery — Notify Environment Change
+
+on:
+  push:
+    paths:
+      - infrastructure/releases/dev/**
+      - infrastructure/releases/prod/lanes/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: environment-change-notify-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Notify Merged Environment Change
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merged desired state
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Classify environment change
+        id: changes
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
+        with:
+          base: ${{ github.event.before }}
+          ref: ${{ github.sha }}
+          filters: |
+            dev:
+              - 'infrastructure/releases/dev/**'
+            prod:
+              - 'infrastructure/releases/prod/lanes/**'
+            rollback:
+              - 'infrastructure/releases/prod/lanes/rollback/**'
+
+      - name: Notify merged DEV desired state
+        if: steps.changes.outputs.dev == 'true'
+        uses: ./.github/actions/notify-telegram
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          chat-id: ${{ secrets.TELEGRAM_TO }}
+          title: DEV immutable delivery
+          status: SUCCESS
+          details: Merged desired state ${{ github.sha }}
+
+      - name: Notify merged PROD desired state
+        if: steps.changes.outputs.prod == 'true'
+        uses: ./.github/actions/notify-telegram
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          chat-id: ${{ secrets.TELEGRAM_TO }}
+          title: PROD delivery
+          status: ${{ steps.changes.outputs.rollback == 'true' && 'ROLLBACK' || 'SUCCESS' }}
+          details: Merged desired state ${{ github.sha }}

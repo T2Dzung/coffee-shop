@@ -58,3 +58,81 @@ func TestLoadOperatorRejectsLooseSecretPermission(t *testing.T) {
 	_, err := readSecretFile(path, "token")
 	require.ErrorContains(t, err, "group or others")
 }
+
+func TestLoadGitHubResolvesSecretFilesWithoutPuttingValuesInYAML(t *testing.T) {
+	dir := t.TempDir()
+	tfvars := filepath.Join(dir, "github.tfvars")
+	prodTFVars := filepath.Join(dir, "prod.tfvars")
+	token := filepath.Join(dir, "governance-token")
+	telegram := filepath.Join(dir, "telegram-token")
+	require.NoError(t, os.WriteFile(tfvars, []byte(`
+github_owner = "owner"
+repository_name = "repo"
+`), 0o600))
+	require.NoError(t, os.WriteFile(prodTFVars, []byte(`
+project_name = "coffeeshop"
+environment = "prod"
+aws_region = "ap-southeast-1"
+expected_aws_account_id = "123456789012"
+github_repository = "owner/repo"
+cluster_endpoint_public_access_cidrs = ["203.0.113.10/32"]
+node_instance_types = ["t3.medium"]
+node_desired_size = 2
+node_disk_size = 20
+`), 0o600))
+	require.NoError(t, os.WriteFile(token, []byte("governance"), 0o600))
+	require.NoError(t, os.WriteFile(telegram, []byte("telegram"), 0o600))
+	operator := filepath.Join(dir, "operator.yaml")
+	require.NoError(t, os.WriteFile(operator, []byte(`schemaVersion: 1
+github:
+  terraformVarFile: github.tfvars
+  governanceTokenFile: governance-token
+  repositorySecretFiles:
+    TELEGRAM_TOKEN: telegram-token
+environments:
+  prod:
+    terraformVarFile: prod.tfvars
+    awsProfile: coffeeshop-prod
+`), 0o600))
+	cfg, err := (Loader{OperatorConfigPath: operator}).LoadGitHub("/repo")
+	require.NoError(t, err)
+	require.Equal(t, "owner", cfg.Owner)
+	require.Equal(t, "repo", cfg.Repository)
+	require.Equal(t, "governance", cfg.GovernanceToken)
+	require.Equal(t, "telegram", cfg.RepositorySecretData["TELEGRAM_TOKEN"])
+	require.Equal(t, "coffeeshop-prod", cfg.AWSProfile)
+	require.Equal(t, "coffeeshop-terraform-state-123456789012", cfg.StateBucket)
+	require.Equal(t, "prod/github-governance.tfstate", cfg.StateKey)
+	require.Equal(t, "alias/coffeeshop-state-key", cfg.StateKMSKeyID)
+}
+
+func TestLoadGitHubRejectsRepositoryDifferentFromProd(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "github.tfvars"), []byte(`
+github_owner = "other"
+repository_name = "repo"
+`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prod.tfvars"), []byte(`
+project_name = "coffeeshop"
+environment = "prod"
+aws_region = "ap-southeast-1"
+expected_aws_account_id = "123456789012"
+github_repository = "owner/repo"
+cluster_endpoint_public_access_cidrs = ["203.0.113.10/32"]
+node_instance_types = ["t3.medium"]
+node_desired_size = 2
+node_disk_size = 20
+`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "token"), []byte("governance"), 0o600))
+	operator := filepath.Join(dir, "operator.yaml")
+	require.NoError(t, os.WriteFile(operator, []byte(`schemaVersion: 1
+github:
+  terraformVarFile: github.tfvars
+  governanceTokenFile: token
+environments:
+  prod:
+    terraformVarFile: prod.tfvars
+`), 0o600))
+	_, err := (Loader{OperatorConfigPath: operator}).LoadGitHub("/repo")
+	require.ErrorContains(t, err, "does not match PROD github_repository")
+}

@@ -124,3 +124,40 @@ runs:
 	require.NoError(t, err)
 	require.True(t, input.ARCBuildUsesAWSCLI)
 }
+
+func TestNormalizeWorkflowRequiresAtomicProdReleaseSetFanIn(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "workflow.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+name: PROD — Promote QA-Approved Digest
+jobs:
+  standard:
+    strategy:
+      matrix:
+        component: [web, proxy]
+    uses: ./.github/workflows/_reusable-prod-delivery.yml
+`), 0o600))
+	input, err := normalizeWorkflow(path)
+	require.NoError(t, err)
+	require.True(t, input.ProdStandardMissingAtomicFanIn)
+}
+
+func TestNormalizeWorkflowAllowsAtomicProdReleaseSetFanIn(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "workflow.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+name: PROD — Promote QA-Approved Digest
+jobs:
+  copy-standard:
+    strategy:
+      matrix:
+        component: [web, proxy]
+  submit-standard:
+    needs: [copy-standard]
+    steps:
+      - uses: ./.github/actions/submit-gitops-pr
+`), 0o600))
+	input, err := normalizeWorkflow(path)
+	require.NoError(t, err)
+	require.False(t, input.ProdStandardMissingAtomicFanIn)
+}

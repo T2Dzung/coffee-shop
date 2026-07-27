@@ -281,13 +281,14 @@ jobs:
       - name: Checkout notification action
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Notify DEV delivery result
+      - name: Notify failed DEV delivery submission
+        if: needs.submit.result != 'success'
         uses: ./.github/actions/notify-telegram
         with:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           chat-id: ${{ secrets.TELEGRAM_TO }}
           title: DEV immutable delivery
-          status: ${{ needs.submit.result == 'success' && 'SUCCESS' || 'FAILED' }}
+          status: FAILED
           details: Source commit ${{ needs.resolve.outputs.source_commit }}
 
       - name: Enforce DEV delivery result

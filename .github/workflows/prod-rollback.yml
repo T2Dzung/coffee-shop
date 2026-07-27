@@ -39,13 +39,14 @@ jobs:
       - name: Checkout notification action
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Notify rollback result
+      - name: Notify failed rollback submission
+        if: needs.rollback.result != 'success'
         uses: ./.github/actions/notify-telegram
         with:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           chat-id: ${{ secrets.TELEGRAM_TO }}
           title: PROD rollback
-          status: ${{ needs.rollback.result == 'success' && 'ROLLBACK' || 'FAILED' }}
+          status: FAILED
           details: ${{ inputs.service }} to ${{ inputs.source_commit }}
 
       - name: Enforce rollback result

@@ -18,6 +18,7 @@ const OperatorSchemaVersion = 1
 type OperatorFile struct {
 	SchemaVersion int                  `yaml:"schemaVersion" json:"schemaVersion"`
 	Environments  OperatorEnvironments `yaml:"environments" json:"environments"`
+	GitHub        OperatorGitHub       `yaml:"github,omitempty" json:"github,omitempty"`
 }
 
 type OperatorEnvironments struct {
@@ -41,6 +42,12 @@ type OperatorGitHubAuth struct {
 	InstallationID    string `yaml:"installationId,omitempty" json:"installationId,omitempty"`
 	AppPrivateKeyFile string `yaml:"appPrivateKeyFile,omitempty" json:"appPrivateKeyFile,omitempty"`
 	PersonalTokenFile string `yaml:"personalTokenFile,omitempty" json:"personalTokenFile,omitempty"`
+}
+
+type OperatorGitHub struct {
+	TerraformVarFile      string            `yaml:"terraformVarFile,omitempty" json:"terraformVarFile,omitempty"`
+	GovernanceTokenFile   string            `yaml:"governanceTokenFile,omitempty" json:"governanceTokenFile,omitempty"`
+	RepositorySecretFiles map[string]string `yaml:"repositorySecretFiles,omitempty" json:"repositorySecretFiles,omitempty"`
 }
 
 type OperatorSource struct {
@@ -111,6 +118,26 @@ func (l Loader) LoadOperator() (OperatorSource, error) {
 			}
 			*target = resolved
 		}
+	}
+	for target, value := range map[*string]string{
+		&file.GitHub.TerraformVarFile:    file.GitHub.TerraformVarFile,
+		&file.GitHub.GovernanceTokenFile: file.GitHub.GovernanceTokenFile,
+	} {
+		if value == "" {
+			continue
+		}
+		resolved, resolveErr := expandPath(value, base)
+		if resolveErr != nil {
+			return OperatorSource{}, resolveErr
+		}
+		*target = resolved
+	}
+	for name, value := range file.GitHub.RepositorySecretFiles {
+		resolved, resolveErr := expandPath(value, base)
+		if resolveErr != nil {
+			return OperatorSource{}, resolveErr
+		}
+		file.GitHub.RepositorySecretFiles[name] = resolved
 	}
 	return OperatorSource{Path: path, Explicit: explicit, File: file}, nil
 }

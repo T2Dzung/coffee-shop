@@ -47,6 +47,12 @@ test_deny_candidate_preflight_on_self_hosted if {
 	}
 }
 
+test_deny_non_atomic_prod_release_set if {
+	deny["standard PROD release set must fan in to one protected desired-state PR"] with input as {
+		"prod_standard_missing_atomic_fan_in": true,
+	}
+}
+
 test_deny_candidate_build_without_toolchain_contract if {
 	deny["candidate ARC build does not enforce its typed toolchain profile"] with input as {
 		"candidate_build_missing_toolchain": true,

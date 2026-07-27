@@ -22,6 +22,7 @@ type Client struct {
 	Variables        map[string]string
 	BooleanVariables map[string]bool
 	Environment      map[string]string
+	Redactions       []string
 	Timeout          time.Duration
 }
 
@@ -169,11 +170,12 @@ func (c Client) run(ctx context.Context, stream bool, args ...string) (command.R
 		environment[key] = value
 	}
 	return c.Runner.Run(ctx, command.Request{
-		Name:    "terraform",
-		Args:    args,
-		Env:     environment,
-		Timeout: c.Timeout,
-		Stream:  stream,
+		Name:       "terraform",
+		Args:       args,
+		Env:        environment,
+		Timeout:    c.Timeout,
+		Stream:     stream,
+		Redactions: c.Redactions,
 	})
 }
 

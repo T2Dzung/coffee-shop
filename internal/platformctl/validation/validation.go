@@ -108,7 +108,7 @@ func (v Validator) terraform(ctx context.Context) error {
 		roots = append(roots, "bootstrap/dev", "envs/dev")
 	}
 	if v.Profile == ProfileAll || v.Profile == ProfileProd {
-		roots = append(roots, "bootstrap/prod", "envs/prod")
+		roots = append(roots, "bootstrap/prod", "envs/prod", "github")
 	}
 	if v.Profile == ProfileAll || v.Profile == ProfileCI {
 		roots = append(roots, "envs/ci")

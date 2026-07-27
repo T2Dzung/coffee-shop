@@ -43,13 +43,14 @@ jobs:
       - name: Checkout notification action
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Notify emergency result
+      - name: Notify failed emergency submission
+        if: needs.emergency.result != 'success'
         uses: ./.github/actions/notify-telegram
         with:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           chat-id: ${{ secrets.TELEGRAM_TO }}
           title: PROD emergency hotfix
-          status: ${{ needs.emergency.result == 'success' && 'SUCCESS' || 'FAILED' }}
+          status: FAILED
           details: ${{ inputs.service }} at ${{ inputs.source_commit }}
 
       - name: Enforce emergency result

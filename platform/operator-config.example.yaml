@@ -2,6 +2,15 @@ schemaVersion: 1
 
 # Copy this file to ~/.config/go-coffeeshop/operator.yaml. Keep credentials in
 # separate mode-0600 files; never put private keys or tokens directly in this YAML.
+github:
+  # terraformVarFile is optional; the default is resolved from the checked-out
+  # repository. Remote-state settings are derived from the PROD config below.
+  governanceTokenFile: ~/.config/go-coffeeshop/github-governance-token
+  repositorySecretFiles:
+    GITOPS_PR_TOKEN: ~/.config/go-coffeeshop/gitops-pr-token
+    TELEGRAM_TOKEN: ~/.config/go-coffeeshop/telegram-token
+    TELEGRAM_TO: ~/.config/go-coffeeshop/telegram-to
+
 environments:
   dev:
     # terraformVarFile is optional; the default is the repo's envs/dev/terraform.tfvars.

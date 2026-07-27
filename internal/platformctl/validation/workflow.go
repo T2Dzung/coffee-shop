@@ -19,6 +19,7 @@ type workflowPolicyInput struct {
 	CandidatePreflightNotHosted       bool     `json:"candidate_preflight_not_hosted"`
 	CandidateBuildMissingToolchain    bool     `json:"candidate_build_missing_toolchain"`
 	ARCBuildUsesAWSCLI                bool     `json:"arc_build_uses_aws_cli"`
+	ProdStandardMissingAtomicFanIn    bool     `json:"prod_standard_missing_atomic_fan_in"`
 	PinnedActions                     []string `json:"pinned_actions"`
 }
 
@@ -49,6 +50,15 @@ func normalizeCandidateContracts(document map[string]any, result *workflowPolicy
 	}
 	if name, _ := document["name"].(string); name == "Build immutable component" {
 		result.ARCBuildUsesAWSCLI = containsRunText(document, "aws ")
+	}
+	if name, _ := document["name"].(string); name == "PROD — Promote QA-Approved Digest" {
+		copyJob := asMap(jobs["copy-standard"])
+		submitJob := asMap(jobs["submit-standard"])
+		copyMatrix := asMap(asMap(copyJob["strategy"])["matrix"])
+		result.ProdStandardMissingAtomicFanIn = len(copyMatrix) == 0 ||
+			!containsString(submitJob["needs"], "copy-standard") ||
+			containsUsesReference(copyJob, "./.github/actions/submit-gitops-pr") ||
+			!containsUsesReference(submitJob, "./.github/actions/submit-gitops-pr")
 	}
 }
 
@@ -82,6 +92,29 @@ func containsRunText(value any, expected string) bool {
 	case []any:
 		for _, child := range typed {
 			if containsRunText(child, expected) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsUsesReference(value any, expected string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "uses" {
+				if text, ok := child.(string); ok && text == expected {
+					return true
+				}
+			}
+			if containsUsesReference(child, expected) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if containsUsesReference(child, expected) {
 				return true
 			}
 		}

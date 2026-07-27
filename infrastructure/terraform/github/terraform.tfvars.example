@@ -1,0 +1,28 @@
+github_owner    = "OWNER"
+repository_name = "REPOSITORY"
+ruleset_bypass_username = "OWNER_USERNAME"
+
+# Common clone/fork case: the destination repository exists, but its GitHub
+# Environments do not. Set the second value to true only when all environments
+# in delivery_environments already exist and should be adopted.
+import_existing_repository   = true
+import_existing_environments = false
+import_existing_actions_variables = false
+
+repository_actions_variables = {
+  TRUSTED_BUILD_RUNNER                 = "trusted-build"
+  CI_AWS_ROLE_ARN                      = "YOUR_CI_BUILD_ROLE_ARN"
+  CI_AWS_REGION                        = "YOUR_CI_AWS_REGION"
+  DEV_CANDIDATE_READER_ROLE_ARN        = "YOUR_CANDIDATE_READER_ROLE_ARN"
+  DEV_AWS_ROLE_ARN                     = "YOUR_DEV_DELIVERY_ROLE_ARN"
+  DEV_AWS_REGION                       = "YOUR_DEV_AWS_REGION"
+  PROD_AWS_ROLE_ARN                    = "YOUR_PROD_DELIVERY_ROLE_ARN"
+  PROD_EMERGENCY_AWS_ROLE_ARN          = "YOUR_PROD_EMERGENCY_ROLE_ARN"
+  PROD_AWS_REGION                      = "YOUR_PROD_AWS_REGION"
+}
+
+# A one-person lab cannot provide independent approval. Set these only after
+# adding a second trusted reviewer; otherwise automation will wait forever.
+required_approving_review_count  = 0
+environment_reviewer_usernames   = {}
+prevent_self_review_environments = []

@@ -354,12 +354,6 @@ func (o *RealOperations) Verify(ctx context.Context, action Action) error {
 	if err := o.initRemote(ctx, true); err != nil {
 		return err
 	}
-	buildRole, err := o.Terraform.Output(ctx, "candidate_build_role_arn")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(o.Output, "GitHub Actions variable CI_AWS_ROLE_ARN=%s\n", strings.TrimSpace(buildRole))
-	fmt.Fprintf(o.Output, "GitHub ci-build variable CI_AWS_REGION=%s\n", o.Config.Region)
 	host, err := o.Terraform.Output(ctx, "public_ip")
 	if err != nil {
 		return err
