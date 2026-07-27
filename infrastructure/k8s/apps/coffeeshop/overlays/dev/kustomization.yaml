@@ -2,11 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../base
-  - configmap.yaml
-  - postgres.yaml
-  - hpa-proxy.yaml
-  - hpa-product.yaml
+- ../../base
+- configmap.yaml
+- postgres.yaml
+- hpa-proxy.yaml
+- hpa-product.yaml
 
 images:
 - name: go-coffeeshop-barista
@@ -24,9 +24,9 @@ images:
 - name: go-coffeeshop-proxy
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
   newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
-- name: go-coffeeshop-web
+- digest: sha256:f0ea7d646e19b7728f0ffa9aa3a04567020a0fc22a0a94d3465324469f1775e6
+  name: go-coffeeshop-web
   newName: 423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
-  newTag: 28f1dc16b80dd063617780e3281fc56b300ed83f
 
 patches:
 - patch: |-
