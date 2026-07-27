@@ -97,6 +97,12 @@ variable "required_status_checks" {
   }
 }
 
+variable "strict_required_status_checks_policy" {
+  description = "Require each PR branch to contain the latest default-branch commit before merge. Keep false for personal repos with frequent automation PRs; prefer a merge queue for high-concurrency organization repos."
+  type        = bool
+  default     = false
+}
+
 variable "required_approving_review_count" {
   description = "Required PR approvals. Keep 0 for a single-user lab; use 1 or more with independent reviewers."
   type        = number
