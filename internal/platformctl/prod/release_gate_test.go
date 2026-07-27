@@ -19,6 +19,9 @@ components:
   - name: platform-ownership-guard
     kind: operator
     build: go
+    moduleRoot: platform-ownership-guard
+    package: ./cmd/main.go
+    binary: bin/manager
     dockerfile: platform-ownership-guard/Dockerfile
     imageRepository: platform-ownership-guard
     kustomizeImage: controller

@@ -61,6 +61,9 @@ components:
   - name: web
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/web
+    binary: bin/web
     context: .
     dockerfile: docker/Dockerfile-web
     imageRepository: go-coffeeshop-web
@@ -72,6 +75,9 @@ components:
   - name: guard
     kind: operator
     build: operator
+    moduleRoot: guard
+    package: ./cmd/main.go
+    binary: bin/manager
     context: guard
     dockerfile: guard/Dockerfile
     imageRepository: platform-ownership-guard

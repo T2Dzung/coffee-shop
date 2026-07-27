@@ -18,6 +18,9 @@ components:
   - name: web
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/web
+    binary: bin/web
     context: .
     dockerfile: docker/Dockerfile-web
     imageRepository: go-coffeeshop-web
@@ -30,6 +33,9 @@ components:
   - name: proxy
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/proxy
+    binary: bin/proxy
     context: .
     dockerfile: docker/Dockerfile-proxy
     imageRepository: go-coffeeshop-proxy
@@ -42,6 +48,9 @@ components:
   - name: product
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/product
+    binary: bin/product
     context: .
     dockerfile: docker/Dockerfile-product
     imageRepository: go-coffeeshop-product
@@ -54,6 +63,9 @@ components:
   - name: counter
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/counter
+    binary: bin/counter
     context: .
     dockerfile: docker/Dockerfile-counter
     imageRepository: go-coffeeshop-counter
@@ -66,6 +78,9 @@ components:
   - name: barista
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/barista
+    binary: bin/barista
     context: .
     dockerfile: docker/Dockerfile-barista
     imageRepository: go-coffeeshop-barista
@@ -78,6 +93,9 @@ components:
   - name: kitchen
     kind: service
     build: go
+    moduleRoot: .
+    package: ./cmd/kitchen
+    binary: bin/kitchen
     context: .
     dockerfile: docker/Dockerfile-kitchen
     imageRepository: go-coffeeshop-kitchen
@@ -90,6 +108,9 @@ components:
   - name: migrate
     kind: migration
     build: go-migrate
+    moduleRoot: .
+    package: ./cmd/migrate
+    binary: bin/migrate
     context: .
     dockerfile: docker/Dockerfile-migrate
     imageRepository: go-coffeeshop-migrate
@@ -102,6 +123,9 @@ components:
   - name: platform-ownership-guard
     kind: operator
     build: operator
+    moduleRoot: platform-ownership-guard
+    package: ./cmd/main.go
+    binary: bin/manager
     context: platform-ownership-guard
     dockerfile: platform-ownership-guard/Dockerfile.release
     imageRepository: platform-ownership-guard
@@ -110,4 +134,12 @@ components:
     prodOverlay: platform-ownership-guard/config/prod
     automatic: true
     paths:
-      - platform-ownership-guard/**
+      # Candidate selection follows runtime image inputs, not GitOps desired state.
+      # In particular, DEV/PROD delivery rewrites config/{dev,prod}/kustomization.yaml;
+      # selecting those generated changes would recursively build another candidate.
+      - platform-ownership-guard/api/**
+      - platform-ownership-guard/cmd/**
+      - platform-ownership-guard/internal/**
+      - platform-ownership-guard/go.mod
+      - platform-ownership-guard/go.sum
+      - platform-ownership-guard/Dockerfile.release

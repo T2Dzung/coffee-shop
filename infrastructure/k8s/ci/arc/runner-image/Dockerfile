@@ -3,8 +3,15 @@ FROM ${RUNNER_BASE_IMAGE}
 
 USER root
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends make=4.3-4.1build2 \
-    && rm -rf /var/lib/apt/lists/*
+ARG GO_VERSION=1.26.2
+ARG GO_LINUX_AMD64_SHA256=990e6b4bbba816dc3ee129eaeaf4b42f17c2800b88a2166c265ac1a200262282
+
+ADD https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz /tmp/go.tar.gz
+
+RUN echo "${GO_LINUX_AMD64_SHA256}  /tmp/go.tar.gz" | sha256sum --check --status \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \
+    && rm /tmp/go.tar.gz
+
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 USER runner

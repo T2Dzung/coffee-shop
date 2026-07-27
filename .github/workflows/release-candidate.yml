@@ -163,9 +163,30 @@ jobs:
         with:
           ref: ${{ needs.detect-components.outputs.source_commit }}
 
+      - name: Configure isolated component Go cache
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SELF_HOSTED: ${{ vars.TRUSTED_BUILD_RUNNER != '' }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${COMPONENT}" =~ ^[a-z0-9-]+$ ]]
+          if [[ "${SELF_HOSTED}" == "true" ]]; then
+            cache_root=/go-cache
+          else
+            cache_root="${RUNNER_TEMP}/go-cache"
+          fi
+          module_cache="${cache_root}/mod/${COMPONENT}"
+          build_cache="${cache_root}/build/${COMPONENT}"
+          mkdir -p "${module_cache}" "${build_cache}"
+          echo "GOMODCACHE=${module_cache}" >>"${GITHUB_ENV}"
+          echo "GOCACHE=${build_cache}" >>"${GITHUB_ENV}"
+
       - name: Set up platformctl
         id: platformctl
         uses: ./.github/actions/setup-platformctl
+        with:
+          setup-go: ${{ vars.TRUSTED_BUILD_RUNNER == '' && 'true' || 'false' }}
 
       - name: Verify trusted runner toolchain
         shell: bash
@@ -198,6 +219,7 @@ jobs:
           source-commit: ${{ needs.detect-components.outputs.source_commit }}
           registry: ${{ steps.ecr.outputs.registry }}
           platformctl: ${{ steps.platformctl.outputs.path }}
+          use-hosted-cache: ${{ vars.TRUSTED_BUILD_RUNNER == '' && 'true' || 'false' }}
 
       - name: Verify supply-chain evidence
         uses: ./.github/actions/scan-artifact

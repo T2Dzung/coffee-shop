@@ -6,6 +6,8 @@ arc_runner_controller_release: arc-controller
 arc_runner_release: trusted-build
 arc_runner_scale_set_name: trusted-build
 arc_runner_chart_version: "0.14.2"
+arc_runner_go_cache_storage_class: local-path
+arc_runner_go_cache_size: 8Gi
 arc_runner_github_auth_mode: github_app
 # Resolve checked-in ARC artifacts from the role's stable location, not from
 # whichever playbook happens to call the role.
