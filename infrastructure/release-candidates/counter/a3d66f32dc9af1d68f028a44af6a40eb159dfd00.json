@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "status": "built",
+  "service": "counter",
+  "source_commit": "a3d66f32dc9af1d68f028a44af6a40eb159dfd00",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-go-coffeeshop-counter",
+  "source_digest": "sha256:f5b134a8a62905129347ee36e12a922380580f6c84de11218b752d195f9b16d4",
+  "runner_class": "trusted-build",
+  "runner_name": "trusted-build-kq6fc-runner-kq5mg",
+  "runner_os": "Linux",
+  "runner_arch": "X64",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30289267534",
+  "created_at": "2026-07-27T17:36:55Z"
+}

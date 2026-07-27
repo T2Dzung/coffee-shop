@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "status": "built",
+  "service": "kitchen",
+  "source_commit": "a3d66f32dc9af1d68f028a44af6a40eb159dfd00",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-go-coffeeshop-kitchen",
+  "source_digest": "sha256:bc55dc93a4f69fcda56eea75ed88543ca9085b63dd84c613169b35a171021adf",
+  "runner_class": "trusted-build",
+  "runner_name": "trusted-build-kq6fc-runner-tnhgb",
+  "runner_os": "Linux",
+  "runner_arch": "X64",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30289267534",
+  "created_at": "2026-07-27T17:31:19Z"
+}
