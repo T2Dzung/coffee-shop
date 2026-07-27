@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "lane": "standard",
+  "service": "web",
+  "source_commit": "ce155698e7e25b508536b839155c0d76976ac8d1",
+  "prod_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web",
+  "prod_digest": "sha256:581e209ef5971ebee143650eb5c92da90f4ab13bd25ff3bb8ecf71c7d46cd209",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30291613861",
+  "recorded_at": "2026-07-27T18:00:00Z"
+}
