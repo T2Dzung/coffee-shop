@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "status": "copied",
+  "service": "platform-ownership-guard",
+  "source_commit": "ce155698e7e25b508536b839155c0d76976ac8d1",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-platform-ownership-guard",
+  "source_digest": "sha256:2167c59935ed0e02c3b3fb9ec47a07bb98d88a35578adcf15c445496f02e7d0d",
+  "dev_image": "423623841278.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard",
+  "dev_digest": "sha256:2167c59935ed0e02c3b3fb9ec47a07bb98d88a35578adcf15c445496f02e7d0d",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30289611284"
+}
