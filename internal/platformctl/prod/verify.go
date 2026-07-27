@@ -75,13 +75,13 @@ func (o *RealOperations) Verify(ctx context.Context, action Action) error {
 		return fmt.Errorf("Guard OwnershipAudit readiness: %w", err)
 	}
 	guardIdentity := "system:serviceaccount:platform-ownership-guard-system:platform-ownership-guard-controller-manager"
-	allowed, err := o.Kube.Kubectl(ctx, nil,
-		"auth", "can-i", "patch", "deployments.apps", "-n", "coffeeshop", "--as", guardIdentity,
+	allowed, err := o.Kube.CanI(ctx,
+		"patch", "deployments.apps", "coffeeshop", guardIdentity,
 	)
 	if err != nil {
 		return fmt.Errorf("Guard negative RBAC check: %w", err)
 	}
-	if strings.TrimSpace(allowed) != "no" {
+	if allowed {
 		return fmt.Errorf("Guard service account can mutate target Deployments")
 	}
 	if err := o.verifyIngressAndTransaction(ctx); err != nil {

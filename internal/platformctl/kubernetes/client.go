@@ -25,6 +25,37 @@ func (c Client) Kubectl(ctx context.Context, stdin io.Reader, args ...string) (s
 	return strings.TrimSpace(result.Stdout), err
 }
 
+func (c Client) CanI(ctx context.Context, verb, resource, namespace, identity string) (bool, error) {
+	result, err := c.Runner.Run(ctx, command.Request{
+		Name: "kubectl",
+		Args: []string{
+			"auth", "can-i", verb, resource,
+			"-n", namespace, "--as", identity,
+		},
+		Env:     map[string]string{"KUBECONFIG": c.Kubeconfig},
+		Timeout: c.Timeout,
+	})
+	answer := strings.TrimSpace(result.Stdout)
+	switch answer {
+	case "yes":
+		if err != nil {
+			return false, fmt.Errorf("kubectl auth can-i returned yes with an error: %w", err)
+		}
+		return true, nil
+	case "no":
+		// kubectl uses exit code 1 for a valid authorization denial.
+		if err == nil || result.ExitCode == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("kubectl auth can-i denial failed unexpectedly: %w", err)
+	default:
+		if err != nil {
+			return false, fmt.Errorf("kubectl auth can-i: %w", err)
+		}
+		return false, fmt.Errorf("kubectl auth can-i returned unexpected answer %q", answer)
+	}
+}
+
 func (c Client) Helm(ctx context.Context, args ...string) (string, error) {
 	result, err := c.Runner.Run(ctx, command.Request{
 		Name: "helm", Args: args,
