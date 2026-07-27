@@ -41,8 +41,11 @@ template:
             mountPath: /var/lib/docker
     containers:
       - name: runner
-        image: ghcr.io/actions/actions-runner:2.334.0
-        imagePullPolicy: IfNotPresent
+        # Built and imported into the CI host's K3s containerd by the arc_runner
+        # Ansible role. The image extends the pinned upstream runner only with
+        # tools declared by the candidate-runner contract.
+        image: docker.io/library/coffeeshop-actions-runner:2.334.0-make1
+        imagePullPolicy: Never
         command: ["/home/runner/run.sh"]
         securityContext:
           allowPrivilegeEscalation: false

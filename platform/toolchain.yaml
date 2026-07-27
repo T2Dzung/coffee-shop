@@ -15,7 +15,7 @@ profiles:
     # actions/setup-go owns Go installation before this contract is checked.
     # Cloud API checks run on the hosted preflight job, so AWS CLI is deliberately
     # not a dependency of the isolated ARC build plane.
-    requiredCommands: [bash, docker, git, go, jq]
+    requiredCommands: [bash, docker, git, go, jq, make]
 
 # shellcheck, terraform, kubectl, helm and Ansible are provisioned by the
 # environment bootstrap. WP3's setup-platformctl action consumes this manifest

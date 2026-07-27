@@ -24,6 +24,20 @@ require_command() {
   }
 }
 
+duration_seconds() {
+  local duration="$1"
+  if [[ "${duration}" =~ ^([0-9]+)s$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return
+  fi
+  if [[ "${duration}" =~ ^([0-9]+)m$ ]]; then
+    printf '%s\n' "$((BASH_REMATCH[1] * 60))"
+    return
+  fi
+  echo "Unsupported duration ${duration}; use whole seconds (for example 300s) or minutes (for example 5m)." >&2
+  return 1
+}
+
 require_command kubectl
 require_command jq
 
@@ -290,12 +304,25 @@ prometheus_service="$(kubectl get service -n monitoring \
 if [[ -z "${prometheus_service}" ]]; then
   record_failure "Prometheus Service could not be discovered"
 else
-  prometheus_targets="$(kubectl get --raw \
-    "/api/v1/namespaces/monitoring/services/http:${prometheus_service}:9090/proxy/api/v1/targets" 2>/dev/null || true)"
+  # Argo CD can report the ServiceMonitor and manager Deployment healthy before
+  # Prometheus finishes target discovery and its first scrape. Poll the actual
+  # runtime condition instead of racing it with Kubernetes object readiness.
+  prometheus_targets=""
+  prometheus_target_healthy=false
+  prometheus_target_deadline=$((SECONDS + $(duration_seconds "${WAIT_TIMEOUT}")))
+  while ((SECONDS < prometheus_target_deadline)); do
+    prometheus_targets="$(kubectl get --raw \
+      "/api/v1/namespaces/monitoring/services/http:${prometheus_service}:9090/proxy/api/v1/targets" 2>/dev/null || true)"
+    if jq -e '.data.activeTargets[] | select(.labels.namespace == "platform-ownership-guard-system" and .health == "up")' \
+        >/dev/null 2>&1 <<<"${prometheus_targets}"; then
+      prometheus_target_healthy=true
+      break
+    fi
+    sleep 5
+  done
   printf '%s\n' "${prometheus_targets}" > "${EVIDENCE_DIR}/guard-prometheus-targets.json"
-  if ! jq -e '.data.activeTargets[] | select(.labels.namespace == "platform-ownership-guard-system" and .health == "up")' \
-      >/dev/null 2>&1 <<<"${prometheus_targets}"; then
-    record_failure "Prometheus has no healthy PlatformOwnershipGuard scrape target"
+  if [[ "${prometheus_target_healthy}" != "true" ]]; then
+    record_failure "Prometheus has no healthy PlatformOwnershipGuard scrape target within ${WAIT_TIMEOUT}"
   fi
 fi
 

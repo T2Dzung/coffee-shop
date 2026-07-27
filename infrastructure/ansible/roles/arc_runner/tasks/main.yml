@@ -53,6 +53,81 @@
     src: "{{ arc_runner_source_root }}/"
     dest: "{{ arc_runner_manifest_root }}/"
     mode: '0600'
+    directory_mode: '0700'
+
+- name: Read the runner image contract from reviewed ARC values
+  ansible.builtin.set_fact:
+    arc_runner_image: >-
+      {{
+        (
+          lookup('file', arc_runner_source_root ~ '/runner-values.yaml')
+          | from_yaml
+        ).template.spec.containers
+        | selectattr('name', 'equalto', 'runner')
+        | map(attribute='image')
+        | first
+      }}
+
+- name: Validate the local runner image contract
+  ansible.builtin.assert:
+    that:
+      - arc_runner_image is match('^docker\\.io/library/coffeeshop-actions-runner:[0-9]+\\.[0-9]+\\.[0-9]+-make[0-9]+$')
+    fail_msg: "runner-values.yaml must select a versioned, locally built coffeeshop-actions-runner image."
+
+- name: Inspect images already imported into K3s
+  become: true
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - ctr
+      - images
+      - list
+      - --quiet
+  register: arc_runner_imported_images
+  changed_when: false
+
+- name: Build the pinned candidate runner image
+  become: true
+  ansible.builtin.command:
+    argv:
+      - docker
+      - build
+      - --tag
+      - "{{ arc_runner_image }}"
+      - "{{ arc_runner_manifest_root }}/runner-image"
+  when: arc_runner_image not in arc_runner_imported_images.stdout_lines
+  changed_when: true
+
+- name: Export the candidate runner image for K3s
+  become: true
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - save
+      - --output
+      - "{{ arc_runner_manifest_root }}/runner-image.tar"
+      - "{{ arc_runner_image }}"
+  when: arc_runner_image not in arc_runner_imported_images.stdout_lines
+  changed_when: true
+
+- name: Import the candidate runner image into K3s containerd
+  become: true
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - ctr
+      - images
+      - import
+      - "{{ arc_runner_manifest_root }}/runner-image.tar"
+  when: arc_runner_image not in arc_runner_imported_images.stdout_lines
+  changed_when: true
+
+- name: Remove the transient runner image archive
+  become: true
+  ansible.builtin.file:
+    path: "{{ arc_runner_manifest_root }}/runner-image.tar"
+    state: absent
 
 - name: Create GitHub App registration secret
   kubernetes.core.k8s:
