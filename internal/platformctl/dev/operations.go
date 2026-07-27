@@ -135,7 +135,7 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(o.Output, "GitHub dev secret DEV_AWS_ROLE_ARN=%s\n", devRole)
+	fmt.Fprintf(o.Output, "GitHub Actions variable DEV_AWS_ROLE_ARN=%s\n", devRole)
 	fmt.Fprintf(o.Output, "GitHub dev variable DEV_AWS_REGION=%s\n", o.Config.Region)
 	if err := o.waitForInstances(ctx); err != nil {
 		return err

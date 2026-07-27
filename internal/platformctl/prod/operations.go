@@ -267,7 +267,7 @@ func (o *RealOperations) printGitHubSettings(ctx context.Context) error {
 		{"github_emergency_delivery_role_arn", "PROD_EMERGENCY_AWS_ROLE_ARN"},
 		{"github_dev_candidate_reader_role_arn", "DEV_CANDIDATE_READER_ROLE_ARN"},
 	}
-	fmt.Fprintln(o.Output, "GitHub Environment values resolved from Terraform:")
+	fmt.Fprintln(o.Output, "GitHub Actions variables resolved from Terraform:")
 	for _, item := range outputs {
 		value, err := o.FoundationTF.Output(ctx, item.name)
 		if err != nil {

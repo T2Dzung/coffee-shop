@@ -358,7 +358,7 @@ func (o *RealOperations) Verify(ctx context.Context, action Action) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(o.Output, "GitHub ci-build secret CI_AWS_ROLE_ARN=%s\n", strings.TrimSpace(buildRole))
+	fmt.Fprintf(o.Output, "GitHub Actions variable CI_AWS_ROLE_ARN=%s\n", strings.TrimSpace(buildRole))
 	fmt.Fprintf(o.Output, "GitHub ci-build variable CI_AWS_REGION=%s\n", o.Config.Region)
 	host, err := o.Terraform.Output(ctx, "public_ip")
 	if err != nil {
