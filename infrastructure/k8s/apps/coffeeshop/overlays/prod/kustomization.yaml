@@ -4,50 +4,50 @@ kind: Kustomization
 namespace: coffeeshop
 
 resources:
-  - ../../base
-  - database-bootstrap-job.yaml
-  - migration-job.yaml
-  - configmap.yaml
-  - ingress.yaml
+- ../../base
+- database-bootstrap-job.yaml
+- migration-job.yaml
+- configmap.yaml
+- ingress.yaml
 
 # Pinned immutable ECR digests for PROD CoffeeShop release set
 # Updated automatically by GitHub Actions workflows
 images:
-  - name: go-coffeeshop-web
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
-    digest: sha256:f5323978458215ec915aa21857568c88d7bdc04a6b66a4d83e5f4c8429420a16
-  - name: go-coffeeshop-proxy
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
-    digest: sha256:1f28e1145d235fdda3fbd949b4950c71effefb601116653c78e030816b031a04
-  - name: go-coffeeshop-product
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
-    digest: sha256:4df4baf126f29e89b4bda7b93b7509d62c8ab55c76a048f9bbff7383ede6e7d4
-  - name: go-coffeeshop-counter
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
-    digest: sha256:dfd54412149ae6aad35a481383c3b660477f75c252d05a670dd386836909aef5
-  - name: go-coffeeshop-barista
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
-    digest: sha256:888e5b0428e1f4975c781d6e62ffdc958019fe9fff7ea4747ebd999178c969aa
-  - name: go-coffeeshop-kitchen
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
-    digest: sha256:0644fc8ef0a179fb8844d1c5bc697cbc169eb68a1dff08cd8cef9bce993180d4
-  - name: go-coffeeshop-migrate
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate
-    digest: sha256:bbe20bc8d2776ec0d0cb97a7588d152c3c413372848f104953ed8bda73d9e658
+- digest: sha256:888e5b0428e1f4975c781d6e62ffdc958019fe9fff7ea4747ebd999178c969aa
+  name: go-coffeeshop-barista
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-barista
+- digest: sha256:dfd54412149ae6aad35a481383c3b660477f75c252d05a670dd386836909aef5
+  name: go-coffeeshop-counter
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-counter
+- digest: sha256:0644fc8ef0a179fb8844d1c5bc697cbc169eb68a1dff08cd8cef9bce993180d4
+  name: go-coffeeshop-kitchen
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
+- digest: sha256:bbe20bc8d2776ec0d0cb97a7588d152c3c413372848f104953ed8bda73d9e658
+  name: go-coffeeshop-migrate
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate
+- digest: sha256:4df4baf126f29e89b4bda7b93b7509d62c8ab55c76a048f9bbff7383ede6e7d4
+  name: go-coffeeshop-product
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
+- digest: sha256:1f28e1145d235fdda3fbd949b4950c71effefb601116653c78e030816b031a04
+  name: go-coffeeshop-proxy
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
+- digest: sha256:f0ea7d646e19b7728f0ffa9aa3a04567020a0fc22a0a94d3465324469f1775e6
+  name: go-coffeeshop-web
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-web
 
 patches:
-  - target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: (web|proxy|product|counter|barista|kitchen)
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
-            cpu: 500m
-            memory: 256Mi
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/resources
+      value:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+  target:
+    group: apps
+    kind: Deployment
+    name: (web|proxy|product|counter|barista|kitchen)
+    version: v1

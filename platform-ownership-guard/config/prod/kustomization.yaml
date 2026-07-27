@@ -4,28 +4,28 @@ kind: Kustomization
 # PROD reuses the controller/RBAC/CRD base but deliberately excludes DEV's
 # Prometheus/Grafana bundle. The audit observes both PROD Argo applications.
 resources:
-  - ../default
-  - ../samples
+- ../default
+- ../samples
 
 patches:
-  - target:
-      group: guard.platform.t2dzung.github.io
-      version: v1alpha1
-      kind: OwnershipAudit
-      name: coffeeshop-ownership
-    patch: |-
-      - op: replace
-        path: /metadata/namespace
-        value: coffeeshop
-      - op: replace
-        path: /spec/applicationRefs
-        value:
-          - namespace: argocd
-            name: coffeeshop-prod
-          - namespace: argocd
-            name: coffeeshop-prod-platform
+- patch: |-
+    - op: replace
+      path: /metadata/namespace
+      value: coffeeshop
+    - op: replace
+      path: /spec/applicationRefs
+      value:
+        - namespace: argocd
+          name: coffeeshop-prod
+        - namespace: argocd
+          name: coffeeshop-prod-platform
+  target:
+    group: guard.platform.t2dzung.github.io
+    kind: OwnershipAudit
+    name: coffeeshop-ownership
+    version: v1alpha1
 
 images:
-  - name: controller
-    newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard
-    digest: sha256:6d32c92c00680075b6195ae9a92b601d83951891c2842a0faa1f2f1cf853d327
+- digest: sha256:dafb1477c415abd562b353997dee8cfe8e7a0d2b345c6225bd60c1a949ef9a95
+  name: controller
+  newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard
