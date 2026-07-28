@@ -70,25 +70,24 @@ func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error 
 		return fmt.Errorf("PROD ALB hostname is unavailable")
 	}
 
-	var lbs loadBalancersDocument
-	if err := o.AWS.JSON(ctx, &lbs, "elbv2", "describe-load-balancers", "--output", "json"); err != nil {
-		return err
-	}
 	var lbARN string
 	var zones []string
-	for _, lb := range lbs.LoadBalancers {
-		if lb.DNS == hostname && lb.Type == "application" && lb.State.Code == "active" {
-			if lbARN != "" {
-				return fmt.Errorf("multiple active ALBs resolve to %s", hostname)
-			}
-			lbARN = lb.ARN
-			for _, zone := range lb.AvailabilityZones {
-				zones = append(zones, zone.Zone)
-			}
+	if err := o.wait(ctx, "application load balancer "+hostname+" to become active", func(ctx context.Context) (bool, error) {
+		var lbs loadBalancersDocument
+		if err := o.AWS.JSON(ctx, &lbs, "elbv2", "describe-load-balancers", "--output", "json"); err != nil {
+			return false, err
 		}
-	}
-	if lbARN == "" {
-		return fmt.Errorf("no active application load balancer resolves to %s", hostname)
+		arn, observedZones, ready, err := activeApplicationLoadBalancer(lbs, hostname)
+		if err != nil {
+			return false, err
+		}
+		if ready {
+			lbARN = arn
+			zones = observedZones
+		}
+		return ready, nil
+	}); err != nil {
+		return err
 	}
 	slices.Sort(zones)
 	zones = slices.Compact(zones)
@@ -196,6 +195,24 @@ func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error 
 	fmt.Fprintf(o.Output, "Runtime ingress passed: %d healthy target(s), %d ALB AZ(s), transaction probe succeeded.\n",
 		len(healthyIPs), len(zones))
 	return nil
+}
+
+func activeApplicationLoadBalancer(lbs loadBalancersDocument, hostname string) (string, []string, bool, error) {
+	var arn string
+	var zones []string
+	for _, lb := range lbs.LoadBalancers {
+		if lb.DNS != hostname || lb.Type != "application" || lb.State.Code != "active" {
+			continue
+		}
+		if arn != "" {
+			return "", nil, false, fmt.Errorf("multiple active ALBs resolve to %s", hostname)
+		}
+		arn = lb.ARN
+		for _, zone := range lb.AvailabilityZones {
+			zones = append(zones, zone.Zone)
+		}
+	}
+	return arn, zones, arn != "", nil
 }
 
 func (o *RealOperations) http(ctx context.Context, method, endpoint, body string) (string, error) {

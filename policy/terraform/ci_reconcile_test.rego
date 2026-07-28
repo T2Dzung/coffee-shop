@@ -38,6 +38,70 @@ test_deny_open_ingress if {
 	}
 }
 
+test_allow_reviewed_operator_ssh_cidr_rotation if {
+	result := deny with input as {
+		"resource_changes": [
+			{
+				"address": "aws_vpc_security_group_ingress_rule.ssh[\"42.112.49.72/32\"]",
+				"mode": "managed",
+				"type": "aws_vpc_security_group_ingress_rule",
+				"change": {
+					"actions": ["delete"],
+					"before": {
+						"security_group_id": "sg-ci-runner",
+						"description": "SSH from reviewed operator CIDR",
+						"ip_protocol": "tcp",
+						"from_port": 22,
+						"to_port": 22,
+						"cidr_ipv4": "42.112.49.72/32",
+					},
+					"after": null,
+				},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.ssh[\"58.187.66.5/32\"]",
+				"mode": "managed",
+				"type": "aws_vpc_security_group_ingress_rule",
+				"change": {
+					"actions": ["create"],
+					"before": null,
+					"after": {
+						"security_group_id": "sg-ci-runner",
+						"description": "SSH from reviewed operator CIDR",
+						"ip_protocol": "tcp",
+						"from_port": 22,
+						"to_port": 22,
+						"cidr_ipv4": "58.187.66.5/32",
+					},
+				},
+			},
+		],
+	}
+	count(result) == 0
+}
+
+test_deny_non_ssh_rule_disguised_as_cidr_rotation if {
+	deny["CI reconcile rejects delete or replacement action for aws_vpc_security_group_ingress_rule.ssh[\"42.112.49.72/32\"]"] with input as {
+		"resource_changes": [{
+			"address": "aws_vpc_security_group_ingress_rule.ssh[\"42.112.49.72/32\"]",
+			"mode": "managed",
+			"type": "aws_vpc_security_group_ingress_rule",
+			"change": {
+				"actions": ["delete"],
+				"before": {
+					"security_group_id": "sg-ci-runner",
+					"description": "SSH from reviewed operator CIDR",
+					"ip_protocol": "tcp",
+					"from_port": 443,
+					"to_port": 443,
+					"cidr_ipv4": "42.112.49.72/32",
+				},
+				"after": null,
+			},
+		}]
+	}
+}
+
 test_deny_prod_iam_permission if {
 	deny["CI IAM policy contains PROD delivery permission eks:UpdateClusterConfig in aws_iam_role_policy.build"] with input as {
 		"resource_changes": [{
