@@ -248,7 +248,7 @@ func runToolchain(args []string, stdout, stderr io.Writer) error {
 
 func runComponent(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl component <describe|list|select|resolve|candidate-repositories> [flags]")
+		return fmt.Errorf("usage: platformctl component <describe|list|select|validate-paths|resolve|candidate-repositories> [flags]")
 	}
 	flags := flag.NewFlagSet("component "+args[0], flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -286,6 +286,21 @@ func runComponent(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("read changed files: %w", err)
 		}
 		return writeJSON(stdout, catalog.FilterKind(catalog.Select(strings.Fields(string(data))), *kind))
+	case "validate-paths":
+		if *name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		if *changedFilesPath == "" {
+			return fmt.Errorf("--changed-files is required")
+		}
+		data, err := os.ReadFile(*changedFilesPath)
+		if err != nil {
+			return fmt.Errorf("read changed files: %w", err)
+		}
+		if err := catalog.ValidateChangedFiles(*name, strings.Fields(string(data))); err != nil {
+			return err
+		}
+		return writeJSON(stdout, map[string]string{"component": *name, "status": "valid"})
 	case "resolve":
 		resolved, err := catalog.Resolve(strings.Split(*names, ","), *allowMigration)
 		if err != nil {

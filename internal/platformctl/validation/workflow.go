@@ -12,15 +12,16 @@ import (
 var fullActionSHA = regexp.MustCompile(`^[^@\s]+@[0-9a-fA-F]{40}$`)
 
 type workflowPolicyInput struct {
-	UsesSecretsInherit                bool     `json:"uses_secrets_inherit"`
-	UnpinnedActions                   []string `json:"unpinned_actions"`
-	PullRequestSelfHosted             bool     `json:"pull_request_self_hosted"`
-	CandidateBuildWithoutECRPreflight bool     `json:"candidate_build_without_ecr_preflight"`
-	CandidatePreflightNotHosted       bool     `json:"candidate_preflight_not_hosted"`
-	CandidateBuildMissingToolchain    bool     `json:"candidate_build_missing_toolchain"`
-	ARCBuildUsesAWSCLI                bool     `json:"arc_build_uses_aws_cli"`
-	ProdStandardMissingAtomicFanIn    bool     `json:"prod_standard_missing_atomic_fan_in"`
-	PinnedActions                     []string `json:"pinned_actions"`
+	UsesSecretsInherit                 bool     `json:"uses_secrets_inherit"`
+	UnpinnedActions                    []string `json:"unpinned_actions"`
+	PullRequestSelfHosted              bool     `json:"pull_request_self_hosted"`
+	CandidateBuildWithoutECRPreflight  bool     `json:"candidate_build_without_ecr_preflight"`
+	CandidatePreflightNotHosted        bool     `json:"candidate_preflight_not_hosted"`
+	CandidateBuildMissingToolchain     bool     `json:"candidate_build_missing_toolchain"`
+	ARCBuildUsesAWSCLI                 bool     `json:"arc_build_uses_aws_cli"`
+	ProdStandardMissingAtomicFanIn     bool     `json:"prod_standard_missing_atomic_fan_in"`
+	ProdStatusMissingDefaultBranchGate bool     `json:"prod_status_missing_default_branch_gate"`
+	PinnedActions                      []string `json:"pinned_actions"`
 }
 
 func normalizeWorkflow(path string) (workflowPolicyInput, error) {
@@ -54,11 +55,16 @@ func normalizeCandidateContracts(document map[string]any, result *workflowPolicy
 	if name, _ := document["name"].(string); name == "PROD — Promote QA-Approved Digest" {
 		copyJob := asMap(jobs["copy-standard"])
 		submitJob := asMap(jobs["submit-standard"])
+		statusJob := asMap(jobs["promotion-status"])
 		copyMatrix := asMap(asMap(copyJob["strategy"])["matrix"])
 		result.ProdStandardMissingAtomicFanIn = len(copyMatrix) == 0 ||
 			!containsString(submitJob["needs"], "copy-standard") ||
 			containsUsesReference(copyJob, "./.github/actions/submit-gitops-pr") ||
 			!containsUsesReference(submitJob, "./.github/actions/submit-gitops-pr")
+		statusCondition, _ := statusJob["if"].(string)
+		result.ProdStatusMissingDefaultBranchGate =
+			!strings.Contains(statusCondition, "github.event_name == 'workflow_dispatch'") ||
+				!strings.Contains(statusCondition, "github.event.repository.default_branch")
 	}
 }
 

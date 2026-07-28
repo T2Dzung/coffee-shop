@@ -34,3 +34,7 @@ deny contains "ARC build action calls AWS CLI; cloud API checks belong to the ho
 deny contains "standard PROD release set must fan in to one protected desired-state PR" if {
 	input.prod_standard_missing_atomic_fan_in
 }
+
+deny contains "PROD status job must ignore non-default push branches" if {
+	input.prod_status_missing_default_branch_gate
+}

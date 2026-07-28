@@ -58,15 +58,15 @@ jobs:
             echo "Reusable exceptional delivery accepts emergency or rollback only." >&2
             exit 1
           }
-          if [[ "${LANE}" == "emergency" && "${kind}" != "service" ]]; then
-            echo "Emergency build lane accepts application services only; ${COMPONENT} is ${kind}." >&2
+          if [[ "${LANE}" == "emergency" && "${kind}" != "service" && "${kind}" != "operator" ]]; then
+            echo "Emergency build lane accepts application services and operators; ${COMPONENT} is ${kind}." >&2
             exit 1
           fi
           if [[ "${kind}" == "migration" ]]; then
             echo "Migration promotion requires its dedicated backup/maintenance/rollback workflow." >&2
             exit 1
           fi
-          for field in image_repository prod_overlay kustomize_image; do
+          for field in kind build module_root package binary context dockerfile image_repository prod_overlay kustomize_image; do
             echo "${field}=$(jq -er --arg field "${field}" '.[$field]' "${RUNNER_TEMP}/component.json")" \
               >>"${GITHUB_OUTPUT}"
           done
@@ -114,8 +114,11 @@ jobs:
           git cat-file -e "${SOURCE_COMMIT}^{commit}"
           git cat-file -e "${BASELINE_COMMIT}^{commit}"
           git merge-base --is-ancestor "${BASELINE_COMMIT}" "${SOURCE_COMMIT}"
-          git diff --binary "${BASELINE_COMMIT}" "${SOURCE_COMMIT}" -- \
-            "cmd/${COMPONENT}" "internal/${COMPONENT}" internal/pkg pkg \
+          git diff --name-only "${BASELINE_COMMIT}" "${SOURCE_COMMIT}" \
+            >"${RUNNER_TEMP}/emergency-changed-files.txt"
+          "${RUNNER_TEMP}/platformctl" component validate-paths --name "${COMPONENT}" \
+            --changed-files "${RUNNER_TEMP}/emergency-changed-files.txt"
+          git diff --binary "${BASELINE_COMMIT}" "${SOURCE_COMMIT}" \
             >"${RUNNER_TEMP}/emergency-reconcile.patch"
           [[ -s "${RUNNER_TEMP}/emergency-reconcile.patch" ]]
           git apply --check "${RUNNER_TEMP}/emergency-reconcile.patch"
@@ -126,6 +129,14 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
           path: emergency-source
+
+      - name: Set up emergency component Go toolchain
+        if: inputs.lane == 'emergency'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: emergency-source/${{ steps.component.outputs.module_root }}/go.mod
+          cache: true
+          cache-dependency-path: emergency-source/${{ steps.component.outputs.module_root }}/go.sum
 
       - name: Configure lane-scoped PROD identity
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -149,12 +160,22 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           REGISTRY: ${{ steps.prod-ecr.outputs.registry }}
           REPOSITORY: ${{ steps.component.outputs.image_repository }}
+          MODULE_ROOT: ${{ steps.component.outputs.module_root }}
+          PACKAGE: ${{ steps.component.outputs.package }}
+          BINARY: ${{ steps.component.outputs.binary }}
+          CONTEXT: ${{ steps.component.outputs.context }}
+          DOCKERFILE: ${{ steps.component.outputs.dockerfile }}
         run: |
           set -Eeuo pipefail
-          bash scripts/ci/build-go-service.sh "${COMPONENT}"
+          (
+            cd "${MODULE_ROOT}"
+            mkdir -p "$(dirname "${BINARY}")"
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+              go build -mod=readonly -trimpath -ldflags="-s -w" -o "${BINARY}" "${PACKAGE}"
+          )
           local_image="${REPOSITORY}:emergency-${SOURCE_COMMIT}"
           remote_image="${REGISTRY}/${REPOSITORY}:emergency-${SOURCE_COMMIT}"
-          docker build --file "docker/Dockerfile-${COMPONENT}" --tag "${local_image}" .
+          docker build --file "${DOCKERFILE}" --tag "${local_image}" "${CONTEXT}"
           docker tag "${local_image}" "${remote_image}"
           docker push "${remote_image}"
 
@@ -271,7 +292,7 @@ jobs:
           set -Eeuo pipefail
           git switch --detach "origin/${{ github.event.repository.default_branch }}"
           git apply "${RUNNER_TEMP}/emergency-reconcile.patch"
-          git add "cmd/${COMPONENT}" "internal/${COMPONENT}" internal/pkg pkg
+          git add --all --pathspec-from-file="${RUNNER_TEMP}/emergency-changed-files.txt"
           git commit -m "fix(${COMPONENT}): reconcile emergency ${SOURCE_COMMIT::12}"
 
       - name: Open emergency source reconciliation PR
