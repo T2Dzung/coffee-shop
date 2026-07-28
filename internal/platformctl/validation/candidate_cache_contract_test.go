@@ -3,6 +3,7 @@ package validation
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,4 +35,20 @@ func TestCandidateCacheContractKeepsMatrixWritersIsolated(t *testing.T) {
 	require.Contains(t, string(runnerValues), "fsGroup: 1000")
 	require.Contains(t, string(runnerValues), "name: docker-storage\n        emptyDir:")
 	require.NotContains(t, string(runnerValues), "name: GOMODCACHE")
+}
+
+func TestEmergencySourceReconciliationSkipsDuplicateCandidateBuild(t *testing.T) {
+	t.Parallel()
+	root := filepath.Clean(filepath.Join("..", "..", ".."))
+
+	candidateWorkflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-candidate.yml"))
+	require.NoError(t, err)
+	deliveryWorkflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "_reusable-prod-delivery.yml"))
+	require.NoError(t, err)
+
+	// The marker is a textual cross-workflow contract: only the machine-generated
+	// emergency reconciliation PR emits it, and both candidate jobs that can report
+	// status must honor it. Normal source merges remain eligible for candidate builds.
+	require.Equal(t, 2, strings.Count(string(candidateWorkflow), "[skip candidate]"))
+	require.Contains(t, string(deliveryWorkflow), "reconcile emergency source [skip candidate]")
 }
