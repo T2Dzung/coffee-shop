@@ -324,6 +324,6 @@ jobs:
           token: ${{ secrets.GITOPS_PR_TOKEN }}
           base: ${{ github.event.repository.default_branch }}
           branch: automation/reconcile-emergency-${{ inputs.service }}-${{ github.run_id }}-${{ github.run_attempt }}
-          title: "fix(${{ inputs.service }}): reconcile emergency source"
+          title: "fix(${{ inputs.service }}): reconcile emergency source [skip candidate]"
           body: "Reconcile emergency commit ${{ inputs.source_commit }} back into protected main through normal branch protection."
           auto-merge: "true"
