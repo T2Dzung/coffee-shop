@@ -222,7 +222,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/"
-          identity+="prod-(hotfix|rollback)\\.yml@refs/heads/${{ github.event.repository.default_branch }}"
+          identity+="_reusable-prod-delivery\\.yml@refs/heads/${{ github.event.repository.default_branch }}"
           if ! cosign verify --certificate-identity-regexp "${identity}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${ARTIFACT}" >/dev/null 2>&1; then
