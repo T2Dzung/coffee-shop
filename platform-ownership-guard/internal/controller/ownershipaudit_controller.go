@@ -143,7 +143,8 @@ func (r *OwnershipAuditReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
-	// Status patch succeeded: publish transition Events and metrics
+	// Publish transition Events and metrics only after status is persisted so
+	// observers never receive a transition before its source-of-truth status.
 	r.publishEventsAndMetrics(audit, transitions)
 
 	// Determine telemetry outcome and resync requeue
