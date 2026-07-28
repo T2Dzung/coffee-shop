@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: Application component receiving the emergency fix
+        description: Application service or operator receiving the emergency fix
         required: true
         type: string
       source_commit:

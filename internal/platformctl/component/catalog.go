@@ -129,6 +129,31 @@ func (c Catalog) FilterKind(names []string, kind string) []string {
 	return result
 }
 
+// ValidateChangedFiles prevents an exceptional build from including unrelated
+// repository changes. Services may depend on shared application paths, while
+// an operator is limited to the paths explicitly owned by its catalog entry.
+func (c Catalog) ValidateChangedFiles(name string, files []string) error {
+	entry, err := c.Find(name)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("component %q has no changed files", name)
+	}
+
+	allowed := append([]string(nil), entry.Paths...)
+	if entry.Kind == "service" {
+		allowed = append(allowed, c.SharedPaths...)
+	}
+	for _, file := range files {
+		clean := path.Clean(strings.TrimSpace(file))
+		if clean == "." || !matchesAny([]string{clean}, allowed) {
+			return fmt.Errorf("component %q cannot include changed file %q", name, file)
+		}
+	}
+	return nil
+}
+
 func (c Catalog) Resolve(names []string, allowMigration bool) ([]string, error) {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(names))

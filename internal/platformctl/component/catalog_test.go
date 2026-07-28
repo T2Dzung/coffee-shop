@@ -100,3 +100,20 @@ func TestCandidateRepositoryNamesUseResolvedCatalogMetadata(t *testing.T) {
 		"coffeeshop-candidate-go-coffeeshop-web",
 	}, repositories)
 }
+
+func TestValidateChangedFilesUsesKindSpecificBoundaries(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog{
+		SharedPaths: []string{"go.mod", "internal/pkg/**"},
+		Components: []Component{
+			{Name: "web", Kind: "service", Paths: []string{"cmd/web/**", "internal/web/**"}},
+			{Name: "guard", Kind: "operator", Paths: []string{"guard/cmd/**", "guard/internal/**"}},
+		},
+	}
+
+	require.NoError(t, catalog.ValidateChangedFiles("web", []string{"cmd/web/main.go", "internal/pkg/log.go"}))
+	require.NoError(t, catalog.ValidateChangedFiles("guard", []string{"guard/internal/controller/reconcile.go"}))
+	require.ErrorContains(t, catalog.ValidateChangedFiles("guard", []string{"internal/pkg/log.go"}), "cannot include")
+	require.ErrorContains(t, catalog.ValidateChangedFiles("web", []string{".github/workflows/ci.yml"}), "cannot include")
+	require.ErrorContains(t, catalog.ValidateChangedFiles("web", nil), "no changed files")
+}
