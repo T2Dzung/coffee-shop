@@ -149,11 +149,33 @@ jobs:
         id: prod-ecr
         uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
 
+      - name: Resolve existing emergency artifact
+        if: inputs.lane == 'emergency'
+        id: emergency-artifact
+        env:
+          REPOSITORY: ${{ steps.component.outputs.image_repository }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          tag="emergency-${SOURCE_COMMIT}"
+          aws ecr describe-images --repository-name "${REPOSITORY}" \
+            --output json >"${RUNNER_TEMP}/emergency-images.json"
+          digest="$(jq -r --arg tag "${tag}" \
+            '[.imageDetails[] | select((.imageTags // []) | index($tag)) | .imageDigest][0] // ""' \
+            "${RUNNER_TEMP}/emergency-images.json")"
+          if [[ -z "${digest}" ]]; then
+            echo "exists=false" >>"${GITHUB_OUTPUT}"
+          else
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "exists=true" >>"${GITHUB_OUTPUT}"
+            echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+          fi
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
 
       - name: Build exact emergency artifact
-        if: inputs.lane == 'emergency'
+        if: inputs.lane == 'emergency' && steps.emergency-artifact.outputs.exists != 'true'
         working-directory: emergency-source
         env:
           COMPONENT: ${{ inputs.service }}
