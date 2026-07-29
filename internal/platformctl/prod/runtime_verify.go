@@ -29,9 +29,10 @@ type loadBalancersDocument struct {
 
 type targetGroupsDocument struct {
 	TargetGroups []struct {
-		ARN        string `json:"TargetGroupArn"`
-		TargetType string `json:"TargetType"`
-		Port       int    `json:"Port"`
+		ARN             string `json:"TargetGroupArn"`
+		TargetType      string `json:"TargetType"`
+		Port            int    `json:"Port"`
+		HealthCheckPath string `json:"HealthCheckPath"`
 	} `json:"TargetGroups"`
 }
 
@@ -63,7 +64,7 @@ type podListDocument struct {
 	} `json:"items"`
 }
 
-func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error {
+func (o *RealOperations) verifyIngress(ctx context.Context, verifyWrite bool) error {
 	hostname, err := o.Kube.Kubectl(ctx, nil, "get", "ingress", "coffeeshop-prod-alb-ingress",
 		"-n", "coffeeshop", "-o", "jsonpath={.status.loadBalancer.ingress[0].hostname}")
 	if err != nil || hostname == "" {
@@ -95,31 +96,10 @@ func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error 
 		return fmt.Errorf("ALB spans only %d Availability Zone(s)", len(zones))
 	}
 
-	servicePortText, err := o.Kube.Kubectl(ctx, nil, "get", "service", "web", "-n", "coffeeshop",
-		"-o", "jsonpath={.spec.ports[0].port}")
-	if err != nil {
-		return err
-	}
-	servicePort, err := strconv.Atoi(servicePortText)
-	if err != nil {
-		return fmt.Errorf("invalid web Service port %q", servicePortText)
-	}
 	var groups targetGroupsDocument
 	if err := o.AWS.JSON(ctx, &groups, "elbv2", "describe-target-groups",
 		"--load-balancer-arn", lbARN, "--output", "json"); err != nil {
 		return err
-	}
-	var targetGroupARN string
-	for _, group := range groups.TargetGroups {
-		if group.TargetType == "ip" && group.Port == servicePort {
-			if targetGroupARN != "" {
-				return fmt.Errorf("multiple IP target groups use web Service port %d", servicePort)
-			}
-			targetGroupARN = group.ARN
-		}
-	}
-	if targetGroupARN == "" {
-		return fmt.Errorf("no IP target group uses web Service port %d", servicePort)
 	}
 
 	var listeners struct {
@@ -142,37 +122,96 @@ func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error 
 		return fmt.Errorf("expected exactly one HTTP:80 listener, found %d", httpListeners)
 	}
 
-	var health targetHealthDocument
-	if err := o.AWS.JSON(ctx, &health, "elbv2", "describe-target-health",
-		"--target-group-arn", targetGroupARN, "--output", "json"); err != nil {
-		return err
-	}
-	var healthyIPs []string
-	for _, target := range health.Descriptions {
-		if target.Health.State == "healthy" {
-			healthyIPs = append(healthyIPs, target.Target.ID)
+	totalHealthy := 0
+	for _, backend := range []struct {
+		name, healthPath string
+	}{{"web", "/"}, {"proxy", "/healthz"}} {
+		servicePortText, err := o.Kube.Kubectl(ctx, nil, "get", "service", backend.name, "-n", "coffeeshop",
+			"-o", "jsonpath={.spec.ports[0].port}")
+		if err != nil {
+			return fmt.Errorf("read %s Service port: %w", backend.name, err)
 		}
-	}
-	if len(healthyIPs) == 0 {
-		return fmt.Errorf("ALB target group has no healthy target")
-	}
-	readyPods, err := o.webPods(ctx)
-	if err != nil {
-		return err
-	}
-	var readyIPs []string
-	for _, pod := range readyPods.Items {
-		if podReady(pod.Status.Conditions) {
-			readyIPs = append(readyIPs, pod.Status.PodIP)
+		servicePort, err := strconv.Atoi(servicePortText)
+		if err != nil {
+			return fmt.Errorf("invalid %s Service port %q", backend.name, servicePortText)
 		}
-	}
-	slices.Sort(healthyIPs)
-	slices.Sort(readyIPs)
-	if !slices.Equal(healthyIPs, readyIPs) {
-		return fmt.Errorf("healthy ALB target IPs %v do not match Ready web Pod IPs %v", healthyIPs, readyIPs)
+		targetGroupARN, healthPath, err := targetGroupForService(groups, backend.name, servicePort)
+		if err != nil {
+			return err
+		}
+		if healthPath != backend.healthPath {
+			return fmt.Errorf("%s ALB target group health path is %q, want %q", backend.name, healthPath, backend.healthPath)
+		}
+
+		var health targetHealthDocument
+		if err := o.AWS.JSON(ctx, &health, "elbv2", "describe-target-health",
+			"--target-group-arn", targetGroupARN, "--output", "json"); err != nil {
+			return fmt.Errorf("describe %s target health: %w", backend.name, err)
+		}
+		healthyIPs := healthyTargetIPs(health)
+		if len(healthyIPs) == 0 {
+			return fmt.Errorf("%s ALB target group has no healthy target", backend.name)
+		}
+		readyPods, err := o.pods(ctx, backend.name)
+		if err != nil {
+			return err
+		}
+		var readyIPs []string
+		for _, pod := range readyPods.Items {
+			if podReady(pod.Status.Conditions) {
+				readyIPs = append(readyIPs, pod.Status.PodIP)
+			}
+		}
+		slices.Sort(readyIPs)
+		if !slices.Equal(healthyIPs, readyIPs) {
+			return fmt.Errorf("healthy %s ALB target IPs %v do not match Ready Pod IPs %v", backend.name, healthyIPs, readyIPs)
+		}
+		totalHealthy += len(healthyIPs)
 	}
 
 	baseURL := "http://" + hostname
+	if err := o.verifyGoldenJourney(ctx, baseURL, verifyWrite); err != nil {
+		return err
+	}
+	verification := "read probe"
+	if verifyWrite {
+		verification = "read/write transaction probe"
+	}
+	fmt.Fprintf(o.Output, "Runtime ingress passed: web/proxy target groups healthy (%d target(s)), %d ALB AZ(s), %s succeeded.\n",
+		totalHealthy, len(zones), verification)
+	return nil
+}
+
+func targetGroupForService(groups targetGroupsDocument, service string, port int) (string, string, error) {
+	var arn, healthPath string
+	for _, group := range groups.TargetGroups {
+		if group.TargetType != "ip" || group.Port != port {
+			continue
+		}
+		if arn != "" {
+			return "", "", fmt.Errorf("multiple IP target groups use %s Service port %d", service, port)
+		}
+		arn = group.ARN
+		healthPath = group.HealthCheckPath
+	}
+	if arn == "" {
+		return "", "", fmt.Errorf("no IP target group uses %s Service port %d", service, port)
+	}
+	return arn, healthPath, nil
+}
+
+func healthyTargetIPs(health targetHealthDocument) []string {
+	var ips []string
+	for _, target := range health.Descriptions {
+		if target.Health.State == "healthy" {
+			ips = append(ips, target.Target.ID)
+		}
+	}
+	slices.Sort(ips)
+	return ips
+}
+
+func (o *RealOperations) verifyGoldenJourney(ctx context.Context, baseURL string, verifyWrite bool) error {
 	items, err := o.http(ctx, "GET", baseURL+"/api/v1/api/item-types", "")
 	if err != nil {
 		return fmt.Errorf("load item types through ALB: %w", err)
@@ -183,6 +222,9 @@ func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error 
 	if json.Unmarshal([]byte(items), &itemTypes) != nil || len(itemTypes.Items) == 0 {
 		return fmt.Errorf("item-types probe returned no usable product data")
 	}
+	if !verifyWrite {
+		return nil
+	}
 	orderBody := `{"loyaltyMemberId":"01234567-89ab-cdef-0123-456789abcdef","timestamp":"2026-07-25T00:00:00Z","baristaItems":[{"itemType":0}]}`
 	order, err := o.http(ctx, "POST", baseURL+"/api/v1/api/orders", orderBody)
 	if err != nil {
@@ -192,8 +234,6 @@ func (o *RealOperations) verifyIngressAndTransaction(ctx context.Context) error 
 	if json.Unmarshal([]byte(order), &orderObject) != nil || orderObject == nil {
 		return fmt.Errorf("order probe returned a non-object response")
 	}
-	fmt.Fprintf(o.Output, "Runtime ingress passed: %d healthy target(s), %d ALB AZ(s), transaction probe succeeded.\n",
-		len(healthyIPs), len(zones))
 	return nil
 }
 
@@ -228,14 +268,14 @@ func (o *RealOperations) http(ctx context.Context, method, endpoint, body string
 	return result.Stdout, err
 }
 
-func (o *RealOperations) webPods(ctx context.Context) (podListDocument, error) {
-	data, err := o.Kube.Kubectl(ctx, nil, "get", "pods", "-n", "coffeeshop", "-l", "app=web", "-o", "json")
+func (o *RealOperations) pods(ctx context.Context, app string) (podListDocument, error) {
+	data, err := o.Kube.Kubectl(ctx, nil, "get", "pods", "-n", "coffeeshop", "-l", "app="+app, "-o", "json")
 	if err != nil {
 		return podListDocument{}, err
 	}
 	var pods podListDocument
 	if err := json.Unmarshal([]byte(data), &pods); err != nil {
-		return podListDocument{}, fmt.Errorf("decode web Pods: %w", err)
+		return podListDocument{}, fmt.Errorf("decode %s Pods: %w", app, err)
 	}
 	return pods, nil
 }

@@ -81,6 +81,18 @@ func withLogger(h http.Handler) http.Handler {
 	})
 }
 
+func newHTTPHandler(gateway http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.Handle("/api/", http.StripPrefix("/api", gateway))
+	mux.Handle("/", gateway)
+	return mux
+}
+
 func main() {
 	logger.SetDefault(logger.Config{Service: "proxy", Environment: logger.Environment(), Level: os.Getenv("LOG_LEVEL")})
 
@@ -113,20 +125,15 @@ func main() {
 		}
 	}()
 
-	mux := http.NewServeMux()
-
 	gw, err := newGateway(ctx, cfg, nil)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create a new gateway", "error", err)
 		return
 	}
 
-	mux.Handle("/api/", http.StripPrefix("/api", gw))
-	mux.Handle("/", gw)
-
 	s := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler: otelhttp.NewHandler(allowCORS(withLogger(mux)), "HTTP /"),
+		Handler: otelhttp.NewHandler(allowCORS(withLogger(newHTTPHandler(gw))), "HTTP /"),
 	}
 
 	go func() {

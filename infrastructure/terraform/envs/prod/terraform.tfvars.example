@@ -25,3 +25,11 @@ rds_allocated_storage                   = 20
 rds_skip_final_snapshot                 = true
 ebs_csi_addon_version                   = "v1.62.0-eksbuild.1"
 cloudwatch_observability_addon_version  = "v6.4.0-eksbuild.1"
+
+# O2 is intentionally bounded and disabled by default. Enable only for a reviewed
+# evidence window, then set false and apply the cleanup plan.
+slo_runtime_enabled            = false
+slo_minimum_item_types         = 1
+slo_canary_schedule_expression = "rate(5 minutes)"
+slo_artifact_retention_days    = 7
+synthetics_runtime_version     = "syn-nodejs-5.2"

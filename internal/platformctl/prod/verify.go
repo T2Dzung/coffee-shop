@@ -84,7 +84,7 @@ func (o *RealOperations) Verify(ctx context.Context, action Action) error {
 	if allowed {
 		return fmt.Errorf("Guard service account can mutate target Deployments")
 	}
-	if err := o.verifyIngressAndTransaction(ctx); err != nil {
+	if err := o.verifyIngress(ctx, transactionProbeRequired(action)); err != nil {
 		return err
 	}
 	if err := o.verifyRuntimeDigest(ctx); err != nil {
@@ -94,6 +94,10 @@ func (o *RealOperations) Verify(ctx context.Context, action Action) error {
 		return o.verifyArgoSelfHeal(ctx)
 	}
 	return nil
+}
+
+func transactionProbeRequired(action Action) bool {
+	return action == ActionSetup || action == ActionReconcile
 }
 
 func (o *RealOperations) waitArgo(ctx context.Context, name string) error {
@@ -126,7 +130,7 @@ func (o *RealOperations) verifyRuntimeDigest(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("web digest is absent from PROD ECR: %w", err)
 	}
-	pods, err := o.webPods(ctx)
+	pods, err := o.pods(ctx, "web")
 	if err != nil {
 		return err
 	}

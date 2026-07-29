@@ -23,6 +23,17 @@ test_deny_retained if {
 	}
 }
 
+test_allow_bounded_slo_runtime_cleanup if {
+	result := deny with input as {
+		"resource_changes": [
+			{"address": "aws_synthetics_canary.golden_journey[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_cloudwatch_dashboard.golden_journey[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_iam_role_policy.synthetics_canary[0]", "change": {"actions": ["delete"]}},
+		],
+	}
+	count(result) == 0
+}
+
 test_deny_retained_github_delivery_role if {
 	deny["teardown attempts to delete retained resource aws_iam_role.github_delivery_role"] with input as {
 		"resource_changes": [

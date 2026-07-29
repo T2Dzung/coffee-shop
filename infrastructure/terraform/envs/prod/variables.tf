@@ -223,6 +223,56 @@ variable "cw_log_retention_days" {
   default     = 7
 }
 
+variable "slo_runtime_enabled" {
+  description = "Create and schedule the bounded O2 Synthetics canary, alarm, and dashboard"
+  type        = bool
+  default     = false
+}
+
+variable "slo_canary_schedule_expression" {
+  description = "CloudWatch Synthetics schedule for the O2 golden journey"
+  type        = string
+  default     = "rate(5 minutes)"
+
+  validation {
+    condition     = var.slo_canary_schedule_expression == "rate(5 minutes)"
+    error_message = "O2 currently supports only the approved five-minute SLO cadence."
+  }
+}
+
+variable "slo_minimum_item_types" {
+  description = "Minimum itemTypes count required by the canary; raise temporarily for the controlled negative"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.slo_minimum_item_types >= 1 && var.slo_minimum_item_types <= 10000 && floor(var.slo_minimum_item_types) == var.slo_minimum_item_types
+    error_message = "slo_minimum_item_types must be an integer between 1 and 10000."
+  }
+}
+
+variable "slo_artifact_retention_days" {
+  description = "Retention period for Synthetics run artifacts and noncurrent object versions"
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.slo_artifact_retention_days >= 1 && var.slo_artifact_retention_days <= 30
+    error_message = "slo_artifact_retention_days must be between 1 and 30 days."
+  }
+}
+
+variable "synthetics_runtime_version" {
+  description = "Pinned CloudWatch Synthetics Node.js runtime verified in the target Region"
+  type        = string
+  default     = "syn-nodejs-5.2"
+
+  validation {
+    condition     = can(regex("^syn-nodejs-[0-9]+\\.[0-9]+$", var.synthetics_runtime_version))
+    error_message = "synthetics_runtime_version must be a non-browser syn-nodejs runtime."
+  }
+}
+
 variable "ebs_csi_addon_version" {
   description = "Reviewed EBS CSI add-on version compatible with the selected EKS version"
   type        = string

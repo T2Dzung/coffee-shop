@@ -265,6 +265,48 @@ func TestAllowCORSPreservesPreflightBehavior(t *testing.T) {
 	}
 }
 
+func TestHealthzIsShallowAndDoesNotReachGateway(t *testing.T) {
+	t.Parallel()
+	gatewayCalled := false
+	handler := newHTTPHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		gatewayCalled = true
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if response.Body.String() != "ok\n" {
+		t.Fatalf("body = %q, want %q", response.Body.String(), "ok\n")
+	}
+	if gatewayCalled {
+		t.Fatal("health check unexpectedly reached the gRPC gateway")
+	}
+}
+
+func TestHTTPHandlerPreservesGatewayRouting(t *testing.T) {
+	t.Parallel()
+	var observedPath string
+	handler := newHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observedPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/api/item-types", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", response.Code)
+	}
+	if observedPath != "/v1/api/item-types" {
+		t.Fatalf("gateway path = %q, want %q", observedPath, "/v1/api/item-types")
+	}
+}
+
 func assertLinearTrace(t *testing.T, spans []sdktrace.ReadOnlySpan, wantKinds []trace.SpanKind) {
 	t.Helper()
 	if len(spans) != len(wantKinds) {

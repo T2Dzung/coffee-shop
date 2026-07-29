@@ -67,8 +67,12 @@ HTTPS listener is declared in the active PROD Ingress.
   generated Kubernetes Secrets. Application Pods never read Secrets Manager directly.
 - Argo CD runs a bootstrap Job with the RDS master credential, then a migration Job with
   the least-privilege application credential before rolling out the six services.
-- CloudWatch Container Insights, logs and alarms are the PROD observability boundary;
-  the DEV Prometheus/Grafana/Loki/Tempo stack is not copied into PROD.
+- CloudWatch Container Insights, logs and alarms are the PROD observability boundary.
+  Terraform defines an on-demand bounded Synthetics canary for the public read-only
+  `item-types` journey and links its alarm to the
+  [golden-journey runbook](runbooks/prod-golden-journey.md). Its recurring runtime is
+  disabled by default; the DEV Prometheus/Grafana/Loki/Tempo stack is not copied into
+  PROD.
 - Three Argo CD Applications independently own the platform dependencies, CoffeeShop
   workload overlay and PlatformOwnershipGuard.
 
