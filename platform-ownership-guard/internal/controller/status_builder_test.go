@@ -78,6 +78,19 @@ func TestStatusBuilderNeverTreatsUnknownOrNilInventoryAsHealthy(t *testing.T) {
 	}
 }
 
+func TestStatusBuilderTreatsArgoNotRequiredAsHealthy(t *testing.T) {
+	builder := NewStatusBuilder(func() time.Time { return time.Now() })
+	status := builder.BuildStatus(nil, 1, &inventory.NormalizedSnapshot{
+		ArgoDiscoveryState: inventory.DiscoveryNotRequired,
+	}, nil, 10*time.Minute, "", "")
+
+	for _, condition := range status.Conditions {
+		if condition.Status != metav1.ConditionTrue || condition.Reason != "InventoryCollected" {
+			t.Fatalf("stale-only inventory must be healthy without Argo: %+v", condition)
+		}
+	}
+}
+
 func TestStatusBuilderMapsEvidenceFailures(t *testing.T) {
 	builder := NewStatusBuilder(time.Now)
 	cases := []struct {

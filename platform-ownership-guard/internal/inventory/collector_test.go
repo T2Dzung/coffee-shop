@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	guardplatformv1alpha1 "github.com/T2Dzung/coffee-shop/platform-ownership-guard/api/v1alpha1"
+	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/detectors"
 	"github.com/T2Dzung/coffee-shop/platform-ownership-guard/internal/inventory"
 )
 
@@ -218,6 +219,7 @@ func TestCollectorArgoCDCRDAbsent(t *testing.T) {
 	collector := inventory.NewCollector(fakeReader, fakeDyn, discHelper)
 
 	spec := &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors: []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorArgoPruneRisk},
 		ApplicationRefs: []guardplatformv1alpha1.ApplicationReference{
 			{Namespace: "argocd", Name: "app-1"},
 		},
@@ -268,6 +270,10 @@ func TestCollectorArgoCDForbidden(t *testing.T) {
 	collector := inventory.NewCollector(fakeReader, fakeDyn, discHelper)
 
 	spec := &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors: []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorArgoPruneRisk},
+		ApplicationRefs: []guardplatformv1alpha1.ApplicationReference{
+			{Namespace: "argocd", Name: "app-1"},
+		},
 		TargetRules: []guardplatformv1alpha1.TargetRule{
 			{APIGroup: "apps", Version: "v1", Kind: "Deployment"},
 		},
@@ -365,6 +371,7 @@ func TestCollectorCollectsNormalizedEvidence(t *testing.T) {
 	collector := inventory.NewCollector(fakeReader, fakeDyn, discHelper)
 
 	spec := &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors: []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorArgoPruneRisk},
 		ApplicationRefs: []guardplatformv1alpha1.ApplicationReference{
 			{Namespace: "argocd", Name: "coffeeshop-rabbitmq"},
 		},
@@ -446,6 +453,7 @@ func TestCollectorClassifiesForbiddenOwnerLookup(t *testing.T) {
 	collector := inventory.NewCollector(reader, dynamicfake.NewSimpleDynamicClient(scheme), inventory.NewDiscoveryHelper(disc, mapper))
 
 	snapshot, err := collector.Collect(context.Background(), "coffeeshop", &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors:   []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorStaleOwnerReference},
 		TargetRules: []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "ReplicaSet"}},
 	})
 	if err != nil {
@@ -516,7 +524,7 @@ func TestCollectorBoundsCallsRejectsSecretAndMarksStale(t *testing.T) {
 	for i := range refs {
 		refs[i] = guardplatformv1alpha1.ApplicationReference{Namespace: "argocd", Name: fmt.Sprintf("app-%02d", i)}
 	}
-	spec := &guardplatformv1alpha1.OwnershipAuditSpec{ApplicationRefs: refs, TargetRules: []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "Deployment"}}, ResyncInterval: metav1.Duration{Duration: 10 * time.Minute}}
+	spec := &guardplatformv1alpha1.OwnershipAuditSpec{Detectors: []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorArgoPruneRisk}, ApplicationRefs: refs, TargetRules: []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "Deployment"}}, ResyncInterval: metav1.Duration{Duration: 10 * time.Minute}}
 	if _, err := collector.Collect(context.Background(), "default", spec); err != nil {
 		t.Fatalf("not-found refs are normalized domain evidence: %v", err)
 	}
@@ -548,6 +556,7 @@ func TestCollectorNormalizesStaleConditionsWithoutRawData(t *testing.T) {
 	collector := inventory.NewCollector(fake.NewClientBuilder().WithScheme(scheme).Build(), dynamicfake.NewSimpleDynamicClient(scheme, app), inventory.NewDiscoveryHelper(disc, mapper))
 	collector.Now = func() time.Time { return time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC) }
 	spec := &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors:       []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorArgoPruneRisk},
 		ApplicationRefs: []guardplatformv1alpha1.ApplicationReference{{Namespace: "argocd", Name: "stale-app"}},
 		TargetRules:     []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "Deployment"}},
 		ResyncInterval:  metav1.Duration{Duration: 10 * time.Minute},
@@ -574,11 +583,141 @@ func TestDiscoveryTransientIsUnknownAndReturned(t *testing.T) {
 		return nil, apierrors.NewTimeoutError("temporary discovery failure", 1)
 	}}}
 	collector := inventory.NewCollector(fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(), dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), inventory.NewDiscoveryHelper(disc, mapper))
-	spec := &guardplatformv1alpha1.OwnershipAuditSpec{TargetRules: []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "Deployment"}}}
+	spec := &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors:       []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorArgoPruneRisk},
+		ApplicationRefs: []guardplatformv1alpha1.ApplicationReference{{Namespace: "argocd", Name: "app-1"}},
+		TargetRules:     []guardplatformv1alpha1.TargetRule{{APIGroup: "apps", Version: "v1", Kind: "Deployment"}},
+	}
 	snapshot, err := collector.Collect(context.Background(), "default", spec)
 	invErr, ok := err.(*inventory.InventoryError)
 	if !ok || invErr.DTO.Class != inventory.ErrTransientReadFailure || snapshot.ArgoDiscoveryState != inventory.DiscoveryUnknown {
 		t.Fatalf("transient discovery must remain Unknown and retryable: state=%s error=%#v", snapshot.ArgoDiscoveryState, err)
+	}
+}
+
+func TestCollectorStaleOnlySkipsArgoDependency(t *testing.T) {
+	scheme := runtime.NewScheme()
+	externalSecret := &unstructured.Unstructured{}
+	externalSecret.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret",
+	})
+	externalSecret.SetName("coffeeshop-secret")
+	externalSecret.SetNamespace("coffeeshop")
+
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(externalSecret).Build()
+	collector := inventory.NewCollector(reader, nil, nil)
+
+	snapshot, err := collector.Collect(context.Background(), "coffeeshop", &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors: []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorStaleOwnerReference},
+		TargetRules: []guardplatformv1alpha1.TargetRule{{
+			APIGroup: "external-secrets.io", Version: "v1", Kind: "ExternalSecret",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("stale-only collection must not require Argo dependencies: %v", err)
+	}
+	if snapshot.ArgoDiscoveryState != inventory.DiscoveryNotRequired {
+		t.Fatalf("expected DiscoveryNotRequired, got %s", snapshot.ArgoDiscoveryState)
+	}
+	if len(snapshot.Applications) != 0 || len(snapshot.Protections) != 1 {
+		t.Fatalf("unexpected stale-only evidence: applications=%d protections=%d", len(snapshot.Applications), len(snapshot.Protections))
+	}
+}
+
+func TestCollectorResolvesCertManagerOwnerGraphGenerically(t *testing.T) {
+	scheme := runtime.NewScheme()
+	certificate := &unstructured.Unstructured{}
+	certificate.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "cert-manager.io", Version: "v1", Kind: "Certificate",
+	})
+	certificate.SetName("rabbitmq-server")
+	certificate.SetNamespace("rabbitmq-system")
+	certificate.SetUID("certificate-uid")
+
+	request := &unstructured.Unstructured{}
+	request.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "cert-manager.io", Version: "v1", Kind: "CertificateRequest",
+	})
+	request.SetName("rabbitmq-server-1")
+	request.SetNamespace("rabbitmq-system")
+	request.SetUID("request-uid")
+	request.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "cert-manager.io/v1",
+		Kind:       "Certificate",
+		Name:       certificate.GetName(),
+		UID:        certificate.GetUID(),
+	}})
+
+	recreatedOwnerRequest := request.DeepCopy()
+	recreatedOwnerRequest.SetName("rabbitmq-server-recreated")
+	recreatedOwnerRequest.SetUID("recreated-request-uid")
+	recreatedOwnerRequest.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "cert-manager.io/v1",
+		Kind:       "Certificate",
+		Name:       certificate.GetName(),
+		UID:        "previous-certificate-uid",
+	}})
+
+	missingOwnerRequest := request.DeepCopy()
+	missingOwnerRequest.SetName("rabbitmq-server-missing")
+	missingOwnerRequest.SetUID("missing-request-uid")
+	missingOwnerRequest.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "cert-manager.io/v1",
+		Kind:       "Certificate",
+		Name:       "deleted-certificate",
+		UID:        "deleted-certificate-uid",
+	}})
+
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(
+		certificate, request, recreatedOwnerRequest, missingOwnerRequest,
+	).Build()
+	collector := inventory.NewCollector(reader, nil, nil, inventory.WithAuthoritativeOwnerReader(reader))
+	snapshot, err := collector.Collect(context.Background(), "rabbitmq-system", &guardplatformv1alpha1.OwnershipAuditSpec{
+		Detectors: []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorStaleOwnerReference},
+		TargetRules: []guardplatformv1alpha1.TargetRule{{
+			APIGroup: "cert-manager.io", Version: "v1", Kind: "CertificateRequest",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("collect cert-manager owner graph: %v", err)
+	}
+	if snapshot.ArgoDiscoveryState != inventory.DiscoveryNotRequired {
+		t.Fatalf("expected DiscoveryNotRequired, got %s", snapshot.ArgoDiscoveryState)
+	}
+	if len(snapshot.Owners) != 3 {
+		t.Fatalf("expected three owner evidences, got %d", len(snapshot.Owners))
+	}
+
+	ownersByDependent := make(map[string]inventory.OwnerEvidence, len(snapshot.Owners))
+	for _, owner := range snapshot.Owners {
+		ownersByDependent[owner.DependentIdentity.Name] = owner
+		if owner.DependentIdentity.Kind != "CertificateRequest" || owner.OwnerRefGVK.Kind != "Certificate" {
+			t.Fatalf("unexpected generic cert-manager owner evidence: %#v", owner)
+		}
+	}
+	if owner := ownersByDependent[request.GetName()]; owner.LookupResult != inventory.OwnerResolved ||
+		owner.ObservedOwnerUID != certificate.GetUID() {
+		t.Fatalf("expected matching Certificate owner, got %#v", owner)
+	}
+	if owner := ownersByDependent[recreatedOwnerRequest.GetName()]; owner.LookupResult != inventory.OwnerResolved ||
+		owner.OwnerUID == owner.ObservedOwnerUID {
+		t.Fatalf("expected resolved owner with UID mismatch, got %#v", owner)
+	}
+	if owner := ownersByDependent[missingOwnerRequest.GetName()]; owner.LookupResult != inventory.OwnerNotFound {
+		t.Fatalf("expected authoritatively missing Certificate owner, got %#v", owner)
+	}
+
+	findings := detectors.NewEvaluator().Evaluate(snapshot, []guardplatformv1alpha1.DetectorType{
+		guardplatformv1alpha1.DetectorStaleOwnerReference,
+	})
+	if len(findings) != 2 {
+		t.Fatalf("expected deterministic findings for missing and UID-mismatched owners, got %#v", findings)
+	}
+	for _, finding := range findings {
+		if finding.Detector != guardplatformv1alpha1.DetectorStaleOwnerReference ||
+			finding.Confidence != guardplatformv1alpha1.ConfidenceConfirmed {
+			t.Fatalf("unexpected external owner finding: %#v", finding)
+		}
 	}
 }
 

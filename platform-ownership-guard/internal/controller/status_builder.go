@@ -107,7 +107,7 @@ func snapshotFailure(snapshot *inventory.NormalizedSnapshot) (string, string) {
 		return errorReason(snapshot.ArgoDiscoveryError, inventory.ErrEvidenceForbidden, "Argo Application API discovery is forbidden")
 	case inventory.DiscoveryUnknown:
 		return errorReason(snapshot.ArgoDiscoveryError, inventory.ErrTransientReadFailure, "Argo Application API discovery state is unknown")
-	case inventory.DiscoveryAvailable:
+	case inventory.DiscoveryAvailable, inventory.DiscoveryNotRequired:
 	default:
 		return string(inventory.ErrTransientReadFailure), "Argo Application discovery state is empty or invalid"
 	}
