@@ -287,6 +287,28 @@ func TestHealthzIsShallowAndDoesNotReachGateway(t *testing.T) {
 	}
 }
 
+func TestHealthzRejectsMutationMethodsWithoutReachingGateway(t *testing.T) {
+	t.Parallel()
+	gatewayCalled := false
+	handler := newHTTPHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		gatewayCalled = true
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", response.Code)
+	}
+	if response.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("Allow = %q, want %q", response.Header().Get("Allow"), "GET, HEAD")
+	}
+	if gatewayCalled {
+		t.Fatal("mutation request to health check unexpectedly reached the gRPC gateway")
+	}
+}
+
 func TestHTTPHandlerPreservesGatewayRouting(t *testing.T) {
 	t.Parallel()
 	var observedPath string
