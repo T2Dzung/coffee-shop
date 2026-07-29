@@ -24,6 +24,7 @@ const (
 type DiscoveryState string
 
 const (
+	DiscoveryNotRequired DiscoveryState = "NotRequired"
 	DiscoveryAvailable   DiscoveryState = "Available"
 	DiscoveryUnavailable DiscoveryState = "Unavailable"
 	DiscoveryForbidden   DiscoveryState = "Forbidden"

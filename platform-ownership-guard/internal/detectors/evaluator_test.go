@@ -206,3 +206,40 @@ func TestStableFindingIDExcludesTimestampsAndResourceVersions(t *testing.T) {
 		t.Errorf("expected sha256: prefix in stable ID, got %s", id1)
 	}
 }
+
+func TestStaleOwnerDetectorUsesSameRuleAcrossResourceFamilies(t *testing.T) {
+	evaluator := detectors.NewEvaluator()
+	findingFor := func(dependentGroup, dependentKind, ownerGroup, ownerKind string) guardplatformv1alpha1.OwnershipFinding {
+		findings := evaluator.Evaluate(&inventory.NormalizedSnapshot{
+			ArgoDiscoveryState: inventory.DiscoveryNotRequired,
+			Owners: []inventory.OwnerEvidence{{
+				DependentIdentity: inventory.ResourceIdentity{
+					APIGroup: dependentGroup, Version: "v1", Kind: dependentKind,
+					Namespace: "test", Name: "dependent",
+				},
+				OwnerRefGVK: schema.GroupVersionKind{
+					Group: ownerGroup, Version: "v1", Kind: ownerKind,
+				},
+				OwnerName:        "owner",
+				OwnerUID:         "expected-uid",
+				LookupResult:     inventory.OwnerResolved,
+				ObservedOwnerUID: "replacement-uid",
+			}},
+		}, []guardplatformv1alpha1.DetectorType{guardplatformv1alpha1.DetectorStaleOwnerReference})
+		if len(findings) != 1 {
+			t.Fatalf("expected one finding for %s -> %s, got %d", dependentKind, ownerKind, len(findings))
+		}
+		return findings[0]
+	}
+
+	kubernetesFinding := findingFor("apps", "ReplicaSet", "apps", "Deployment")
+	certManagerFinding := findingFor("cert-manager.io", "CertificateRequest", "cert-manager.io", "Certificate")
+
+	if kubernetesFinding.Detector != certManagerFinding.Detector ||
+		kubernetesFinding.Confidence != certManagerFinding.Confidence ||
+		kubernetesFinding.Severity != certManagerFinding.Severity ||
+		kubernetesFinding.Remediation != certManagerFinding.Remediation ||
+		!reflect.DeepEqual(kubernetesFinding.MissingEvidence, certManagerFinding.MissingEvidence) {
+		t.Fatalf("resource families must share one stale-owner rule: apps=%#v cert-manager=%#v", kubernetesFinding, certManagerFinding)
+	}
+}

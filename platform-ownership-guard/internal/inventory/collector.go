@@ -23,8 +23,26 @@ type registryEntry struct {
 }
 
 var supportedRegistry = map[schema.GroupVersionKind]registryEntry{
-	{Group: "apps", Version: "v1", Kind: "Deployment"}: {ObjectGVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, ListGVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "DeploymentList"}},
-	{Group: "apps", Version: "v1", Kind: "ReplicaSet"}: {ObjectGVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "ReplicaSet"}, ListGVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "ReplicaSetList"}},
+	{Group: "apps", Version: "v1", Kind: "Deployment"}: {
+		ObjectGVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
+		ListGVK:   schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "DeploymentList"},
+	},
+	{Group: "apps", Version: "v1", Kind: "ReplicaSet"}: {
+		ObjectGVK: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "ReplicaSet"},
+		ListGVK:   schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "ReplicaSetList"},
+	},
+	{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret"}: {
+		ObjectGVK: schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret"},
+		ListGVK:   schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecretList"},
+	},
+	{Group: "cert-manager.io", Version: "v1", Kind: "CertificateRequest"}: {
+		ObjectGVK: schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "CertificateRequest"},
+		ListGVK:   schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "CertificateRequestList"},
+	},
+	{Group: "cert-manager.io", Version: "v1", Kind: "Certificate"}: {
+		ObjectGVK: schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "Certificate"},
+		ListGVK:   schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "CertificateList"},
+	},
 }
 
 // CollectorOption configures an explicit read capability.
@@ -71,8 +89,13 @@ func NewCollector(reader client.Reader, dyn dynamic.Interface, disc *DiscoveryHe
 // Collect reads dynamic Argo resources and target resources from the cluster and normalizes them.
 func (c *Collector) Collect(ctx context.Context, targetNamespace string, spec *guardplatformv1alpha1.OwnershipAuditSpec) (*NormalizedSnapshot, error) {
 	snapshot := &NormalizedSnapshot{
-		ObservedAt:      c.Now(),
-		TargetNamespace: targetNamespace,
+		ObservedAt:         c.Now(),
+		TargetNamespace:    targetNamespace,
+		ArgoDiscoveryState: DiscoveryNotRequired,
+	}
+	if spec == nil {
+		message := "ownership audit spec is required"
+		return nil, &InventoryError{DTO: ErrorDTO{Class: ErrInvalidInventoryScope, Message: message}}
 	}
 
 	// 1. Enforce GVK supported registry validation
@@ -83,72 +106,87 @@ func (c *Collector) Collect(ctx context.Context, targetNamespace string, spec *g
 		}
 	}
 
-	// 2. Discover Argo CD installation state
-	argoState, errDTO := c.DiscoveryHelper.IsArgoInstalled(ctx)
-	snapshot.ArgoDiscoveryState = argoState
-	if errDTO != nil {
-		snapshot.ArgoDiscoveryError = errDTO
-		if errDTO.Class == ErrTransientReadFailure {
+	var transientErr error
+
+	// 2. Discover and read Argo only when an enabled detector consumes that evidence.
+	if detectorEnabled(spec.Detectors, guardplatformv1alpha1.DetectorArgoPruneRisk) {
+		if len(spec.ApplicationRefs) == 0 {
+			message := "applicationRefs must contain at least one Application when ArgoPruneRisk is enabled"
+			return nil, &InventoryError{DTO: ErrorDTO{Class: ErrInvalidInventoryScope, Message: message}}
+		}
+		if c.DiscoveryHelper == nil || c.DynamicClient == nil {
+			message := "Argo discovery and dynamic clients are required when ArgoPruneRisk is enabled"
+			errDTO := c.newErrorDTO(ErrTransientReadFailure, message)
+			snapshot.ArgoDiscoveryState = DiscoveryUnknown
+			snapshot.ArgoDiscoveryError = errDTO
 			return snapshot, &InventoryError{DTO: *errDTO}
 		}
-		return snapshot, nil
-	}
 
-	// 3. Read Argo Application evidence (bounded at max 20)
-	appCount := len(spec.ApplicationRefs)
-	if appCount > 20 {
-		appCount = 20
-	}
-
-	gvr := schema.GroupVersionResource{
-		Group:    "argoproj.io",
-		Version:  "v1alpha1",
-		Resource: "applications",
-	}
-
-	var transientErr error
-	for i := 0; i < appCount; i++ {
-		ref := spec.ApplicationRefs[i]
-		metadata := ObservationMetadata{ObservedAt: c.Now(), Freshness: FreshnessUnknown}
-
-		unstr, err := c.DynamicClient.Resource(gvr).Namespace(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-		if err != nil {
-			errDTO := c.classifyError(err)
-			metadata.SourceError = errDTO
-			if errDTO.Class == ErrTransientReadFailure && transientErr == nil {
-				transientErr = &InventoryError{DTO: *errDTO}
+		argoState, errDTO := c.DiscoveryHelper.IsArgoInstalled(ctx)
+		snapshot.ArgoDiscoveryState = argoState
+		if errDTO != nil {
+			snapshot.ArgoDiscoveryError = errDTO
+			if errDTO.Class == ErrTransientReadFailure {
+				return snapshot, &InventoryError{DTO: *errDTO}
 			}
-			snapshot.Applications = append(snapshot.Applications, ApplicationEvidence{
-				ApplicationRef: ResourceIdentity{
-					APIGroup: "argoproj.io", Version: "v1alpha1", Kind: "Application",
-					Namespace: ref.Namespace,
-					Name:      ref.Name,
-				},
-				Metadata: metadata,
-			})
-			continue
+			return snapshot, nil
 		}
 
-		metadata.SourceResourceVersion = unstr.GetResourceVersion()
-
-		appEvidence, err := c.Parser.ParseApplication(unstr)
-		if err != nil {
-			metadata.SourceError = c.newErrorDTO(ErrMalformedEvidence, fmt.Sprintf("application evidence malformed: %v", err))
-			snapshot.Applications = append(snapshot.Applications, ApplicationEvidence{
-				ApplicationRef: ResourceIdentity{
-					APIGroup: "argoproj.io", Version: "v1alpha1", Kind: "Application",
-					Namespace: ref.Namespace,
-					Name:      ref.Name,
-				},
-				Metadata: metadata,
-			})
-			continue
+		// 3. Read Argo Application evidence (bounded at max 20)
+		appCount := len(spec.ApplicationRefs)
+		if appCount > 20 {
+			appCount = 20
 		}
 
-		metadata.SourceObservedAt = appEvidence.Metadata.SourceObservedAt
-		metadata.Freshness = c.freshnessFor(metadata.SourceObservedAt, spec.ResyncInterval.Duration)
-		appEvidence.Metadata = metadata
-		snapshot.Applications = append(snapshot.Applications, *appEvidence)
+		gvr := schema.GroupVersionResource{
+			Group:    "argoproj.io",
+			Version:  "v1alpha1",
+			Resource: "applications",
+		}
+
+		for i := 0; i < appCount; i++ {
+			ref := spec.ApplicationRefs[i]
+			metadata := ObservationMetadata{ObservedAt: c.Now(), Freshness: FreshnessUnknown}
+
+			unstr, err := c.DynamicClient.Resource(gvr).Namespace(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+			if err != nil {
+				errDTO := c.classifyError(err)
+				metadata.SourceError = errDTO
+				if errDTO.Class == ErrTransientReadFailure && transientErr == nil {
+					transientErr = &InventoryError{DTO: *errDTO}
+				}
+				snapshot.Applications = append(snapshot.Applications, ApplicationEvidence{
+					ApplicationRef: ResourceIdentity{
+						APIGroup: "argoproj.io", Version: "v1alpha1", Kind: "Application",
+						Namespace: ref.Namespace,
+						Name:      ref.Name,
+					},
+					Metadata: metadata,
+				})
+				continue
+			}
+
+			metadata.SourceResourceVersion = unstr.GetResourceVersion()
+
+			appEvidence, err := c.Parser.ParseApplication(unstr)
+			if err != nil {
+				metadata.SourceError = c.newErrorDTO(ErrMalformedEvidence, fmt.Sprintf("application evidence malformed: %v", err))
+				snapshot.Applications = append(snapshot.Applications, ApplicationEvidence{
+					ApplicationRef: ResourceIdentity{
+						APIGroup: "argoproj.io", Version: "v1alpha1", Kind: "Application",
+						Namespace: ref.Namespace,
+						Name:      ref.Name,
+					},
+					Metadata: metadata,
+				})
+				continue
+			}
+
+			metadata.SourceObservedAt = appEvidence.Metadata.SourceObservedAt
+			metadata.Freshness = c.freshnessFor(metadata.SourceObservedAt, spec.ResyncInterval.Duration)
+			appEvidence.Metadata = metadata
+			snapshot.Applications = append(snapshot.Applications, *appEvidence)
+		}
 	}
 
 	// 4. Collect target protections and owner evidences in targetNamespace
@@ -272,6 +310,15 @@ func (c *Collector) Collect(ctx context.Context, targetNamespace string, spec *g
 func (c *Collector) isGVKSupported(group, version, kind string) bool {
 	_, ok := supportedRegistry[schema.GroupVersionKind{Group: group, Version: version, Kind: kind}]
 	return ok
+}
+
+func detectorEnabled(enabled []guardplatformv1alpha1.DetectorType, target guardplatformv1alpha1.DetectorType) bool {
+	for _, detector := range enabled {
+		if detector == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) freshnessFor(sourceObservedAt *time.Time, threshold time.Duration) FreshnessState {
