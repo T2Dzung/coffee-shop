@@ -51,4 +51,9 @@ func TestEmergencySourceReconciliationSkipsDuplicateCandidateBuild(t *testing.T)
 	// status must honor it. Normal source merges remain eligible for candidate builds.
 	require.Equal(t, 2, strings.Count(string(candidateWorkflow), "[skip candidate]"))
 	require.Contains(t, string(deliveryWorkflow), "reconcile emergency source [skip candidate]")
+	require.Contains(t, string(deliveryWorkflow), "scripts/ci/validate-emergency-lineage.sh")
+	require.Equal(t, 2, strings.Count(
+		string(deliveryWorkflow),
+		"steps.lineage.outputs.source_reconciled != 'true'",
+	))
 }
