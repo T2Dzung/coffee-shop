@@ -28,7 +28,7 @@ images:
 - digest: sha256:4df4baf126f29e89b4bda7b93b7509d62c8ab55c76a048f9bbff7383ede6e7d4
   name: go-coffeeshop-product
   newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-product
-- digest: sha256:1f28e1145d235fdda3fbd949b4950c71effefb601116653c78e030816b031a04
+- digest: sha256:20618817bdd16bf3d2e41f422bc23d85d3761cc76e7d2796b18886705baf9937
   name: go-coffeeshop-proxy
   newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy
 - digest: sha256:581e209ef5971ebee143650eb5c92da90f4ab13bd25ff3bb8ecf71c7d46cd209
@@ -42,9 +42,9 @@ patches:
       value:
         alb.ingress.kubernetes.io/healthcheck-path: /healthz
   target:
-    version: v1
     kind: Service
     name: proxy
+    version: v1
 - patch: |-
     - op: add
       path: /spec/template/spec/containers/0/resources

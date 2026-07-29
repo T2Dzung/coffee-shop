@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "lane": "emergency",
+  "service": "proxy",
+  "source_commit": "c65c1cd7cf66f8867acd6935bf297e7e25f76051",
+  "prod_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-proxy",
+  "prod_digest": "sha256:20618817bdd16bf3d2e41f422bc23d85d3761cc76e7d2796b18886705baf9937",
+  "baseline": "11dcb74569f8a0d769b539378b96ceaffd47fe99",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30471018583",
+  "recorded_at": "2026-07-29T16:32:07Z"
+}
