@@ -14,7 +14,7 @@ require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/kyleconroy/sqlc v1.16.0
 	github.com/labstack/echo/v4 v4.9.0
-	github.com/lib/pq v1.10.7
+	github.com/lib/pq v1.12.3
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.12.0
 	github.com/samber/lo v1.53.0
