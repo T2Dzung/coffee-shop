@@ -1,4 +1,4 @@
-include .env
+-include .env
 export
 
 all: build test
@@ -81,5 +81,3 @@ linter-golangci: ### check by golangci linter
 
 clean:
 	go clean
-
-// test CI
