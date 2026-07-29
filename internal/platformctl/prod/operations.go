@@ -503,6 +503,11 @@ func randomHex(bytesCount int) (string, error) {
 }
 
 var teardownTargets = []string{
+	"aws_synthetics_canary.golden_journey",
+	"aws_cloudwatch_dashboard.golden_journey",
+	"aws_cloudwatch_metric_alarm.golden_journey",
+	"aws_iam_role_policy.synthetics_canary",
+	"aws_iam_role.synthetics_canary",
 	"aws_db_instance.postgres",
 	"aws_db_subnet_group.rds",
 	"aws_security_group.rds",

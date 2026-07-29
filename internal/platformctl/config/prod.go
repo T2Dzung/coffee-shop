@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	accountPattern  = regexp.MustCompile(`^[0-9]{12}$`)
-	repoPattern     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	revisionPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+	accountPattern    = regexp.MustCompile(`^[0-9]{12}$`)
+	repoPattern       = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	revisionPattern   = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+	syntheticsPattern = regexp.MustCompile(`^syn-nodejs-[0-9]+\.[0-9]+$`)
 )
 
 // Prod contains operator inputs only. Runtime-derived values remain outputs of
@@ -42,6 +43,8 @@ type Prod struct {
 	ClusterVersion     string
 	EBSAddonVersion    string
 	CloudWatchVersion  string
+	SLOEnabled         bool
+	SyntheticsRuntime  string
 	StateBucket        string
 	BackendRoleARN     string
 	BootstrapStateKey  string
@@ -112,6 +115,8 @@ func (l Loader) LoadProd(projectRoot, varFile string) (Prod, error) {
 		ClusterVersion:     stringValue(attrs, "cluster_version", "1.35"),
 		EBSAddonVersion:    stringValue(attrs, "ebs_csi_addon_version", "v1.62.0-eksbuild.1"),
 		CloudWatchVersion:  stringValue(attrs, "cloudwatch_observability_addon_version", "v6.4.0-eksbuild.1"),
+		SLOEnabled:         boolValue(attrs, "slo_runtime_enabled", false),
+		SyntheticsRuntime:  stringValue(attrs, "synthetics_runtime_version", "syn-nodejs-5.2"),
 		BootstrapStateKey:  "prod/bootstrap.tfstate",
 		FoundationStateKey: "prod/foundation.tfstate",
 		PollAttempts:       60,
@@ -178,6 +183,9 @@ func (c Prod) Validate() error {
 	if len(c.NodeInstanceTypes) == 0 || c.NodeDesiredSize < 1 || c.NodeDiskGiB < 1 {
 		problems = append(problems, "node instance type, desired size and disk size must be positive")
 	}
+	if c.SLOEnabled && !syntheticsPattern.MatchString(c.SyntheticsRuntime) {
+		problems = append(problems, "enabled SLO requires a non-browser syn-nodejs runtime")
+	}
 	if c.PollAttempts < 1 || c.ReleaseAttempts < 1 {
 		problems = append(problems, "poll attempts must be positive")
 	}
@@ -227,6 +235,18 @@ func intValue(attrs map[string]*hcl.Attribute, name string, fallback int) int {
 		return fallback
 	}
 	var value int
+	if diagnostics := gohcl.DecodeExpression(attr.Expr, nil, &value); diagnostics.HasErrors() {
+		return fallback
+	}
+	return value
+}
+
+func boolValue(attrs map[string]*hcl.Attribute, name string, fallback bool) bool {
+	attr, ok := attrs[name]
+	if !ok {
+		return fallback
+	}
+	var value bool
 	if diagnostics := gohcl.DecodeExpression(attr.Expr, nil, &value); diagnostics.HasErrors() {
 		return fallback
 	}

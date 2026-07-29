@@ -38,6 +38,15 @@ images:
 patches:
 - patch: |-
     - op: add
+      path: /metadata/annotations
+      value:
+        alb.ingress.kubernetes.io/healthcheck-path: /healthz
+  target:
+    version: v1
+    kind: Service
+    name: proxy
+- patch: |-
+    - op: add
       path: /spec/template/spec/containers/0/resources
       value:
         requests:

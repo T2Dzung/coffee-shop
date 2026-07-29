@@ -13,6 +13,7 @@ ownership.
 | [Application](application.md) | Upstream service flow, local development and screenshots |
 | [Kubernetes layout](../infrastructure/k8s/README.md) | GitOps source-of-truth and environment ownership |
 | [PlatformOwnershipGuard](../platform-ownership-guard/README.md) | Read-only Kubernetes ownership auditing |
+| [PROD golden-journey runbook](runbooks/prod-golden-journey.md) | Synthetic alert diagnosis, source-managed recovery and bounded cleanup |
 
 ## Diagram sources
 

@@ -19,3 +19,24 @@ test_deny_delete if {
 		],
 	}
 }
+
+test_allow_bounded_slo_cleanup if {
+	result := deny with input as {
+		"resource_changes": [
+			{"address": "aws_synthetics_canary.golden_journey[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_cloudwatch_metric_alarm.golden_journey[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_cloudwatch_dashboard.golden_journey[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_iam_role_policy.synthetics_canary[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_iam_role.synthetics_canary[0]", "change": {"actions": ["delete"]}},
+		],
+	}
+	count(result) == 0
+}
+
+test_deny_similarly_named_delete_outside_exact_o2_owner if {
+	deny["reconcile rejects delete or replacement action for aws_synthetics_canary.golden_journey_other"] with input as {
+		"resource_changes": [
+			{"address": "aws_synthetics_canary.golden_journey_other", "change": {"actions": ["delete"]}},
+		],
+	}
+}

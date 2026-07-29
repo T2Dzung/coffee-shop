@@ -139,6 +139,21 @@ func (o *RealOperations) verifyManagedServiceAvailability(ctx context.Context) e
 				addon.name, addon.version, o.Config.ClusterVersion)
 		}
 	}
+	if o.Config.SLOEnabled {
+		runtime, err := o.AWS.Text(ctx,
+			"synthetics", "describe-runtime-versions",
+			"--query", "RuntimeVersions[?VersionName=='"+o.Config.SyntheticsRuntime+"'].VersionName | [0]",
+			"--output", "text",
+		)
+		if err != nil {
+			return fmt.Errorf("query CloudWatch Synthetics runtime: %w", err)
+		}
+		if runtime != o.Config.SyntheticsRuntime {
+			return fmt.Errorf("CloudWatch Synthetics runtime %s is unavailable in %s",
+				o.Config.SyntheticsRuntime, o.Config.Region)
+		}
+		fmt.Fprintf(o.Output, "Synthetics runtime preflight passed: %s.\n", o.Config.SyntheticsRuntime)
+	}
 	fmt.Fprintf(o.Output, "Managed service preflight passed: PostgreSQL %s, EBS CSI %s, CloudWatch %s.\n",
 		o.Config.RDSEngineVersion, o.Config.EBSAddonVersion, o.Config.CloudWatchVersion)
 	return nil

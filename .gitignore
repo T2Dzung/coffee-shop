@@ -35,6 +35,7 @@ go.work
 **/terraform.tfvars.json
 *.tfplan
 **/tfplan
+/infrastructure/terraform/envs/prod/canary/*.zip
 
 
 # IDE settings

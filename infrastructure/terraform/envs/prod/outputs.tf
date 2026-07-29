@@ -112,3 +112,18 @@ output "ebs_csi_role_arn" {
   description = "The IAM role ARN for AWS EBS CSI Driver Pod Identity"
   value       = aws_iam_role.ebs_csi_role.arn
 }
+
+output "synthetics_artifact_bucket" {
+  description = "Retained encrypted artifact bucket for the O2 Synthetics canary"
+  value       = aws_s3_bucket.synthetics_artifacts.id
+}
+
+output "slo_canary_name" {
+  description = "O2 golden-journey canary name when the bounded runtime is enabled"
+  value       = try(aws_synthetics_canary.golden_journey[0].name, null)
+}
+
+output "slo_dashboard_name" {
+  description = "O2 golden-journey dashboard name when the bounded runtime is enabled"
+  value       = try(aws_cloudwatch_dashboard.golden_journey[0].dashboard_name, null)
+}
