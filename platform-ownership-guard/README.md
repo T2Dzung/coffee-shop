@@ -56,6 +56,11 @@ leader election, reads the resources selected by an `OwnershipAudit`, and writes
 the audit status, Events and Prometheus metrics. It reports ownership risks; it is not
 an admission controller and does not repair or delete audited resources.
 
+Because audits run periodically, the operator can miss a short-lived prune candidate
+if Argo CD creates and deletes the resource between two scans. It is an evidence
+auditor, not a synchronous prevention control; use Argo protection, policy/admission
+controls, and source-of-truth repair when prevention is required.
+
 ## Quick start
 
 ```bash
@@ -65,6 +70,9 @@ make test
 
 # Run the disposable no-Argo deployment/RBAC test (requires Docker and Kind)
 bash test/e2e/kind_no_argo.sh
+
+# Run the positive ExternalSecret + Argo prune-risk transition test
+bash test/e2e/kind_argo_eso.sh
 
 # Build the operator binary
 go build -o bin/manager cmd/main.go
