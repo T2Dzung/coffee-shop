@@ -107,6 +107,22 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		Expect(stored.Generation).To(Equal(int64(1)))
 	})
 
+	It("accepts stale-only audit without applicationRefs", func() {
+		const name = "valid-stale-only"
+		defer deleteIfPresent(name)
+
+		audit := validAudit(name)
+		audit.Spec.Detectors = []guardplatformv1alpha1.DetectorType{
+			guardplatformv1alpha1.DetectorStaleOwnerReference,
+		}
+		audit.Spec.ApplicationRefs = nil
+		Expect(k8sClient.Create(ctx, audit)).To(Succeed())
+
+		stored := &guardplatformv1alpha1.OwnershipAudit{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, stored)).To(Succeed())
+		Expect(stored.Spec.ApplicationRefs).To(BeEmpty())
+	})
+
 	DescribeTable("rejects invalid specs at admission",
 		func(name string, mutate func(*guardplatformv1alpha1.OwnershipAudit)) {
 			audit := validAudit(name)
@@ -221,6 +237,39 @@ var _ = Describe("OwnershipAudit API and read-only controller", func() {
 		Expect(inventoryReadyCond).NotTo(BeNil())
 		Expect(inventoryReadyCond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(inventoryReadyCond.Reason).To(Equal("DependencyUnavailable"))
+	})
+
+	It("reconciles stale-only audit as Ready without Argo clients", func() {
+		const name = "reconcile-stale-only-no-argo"
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+		defer deleteIfPresent(name)
+
+		audit := validAudit(name)
+		audit.Spec.Detectors = []guardplatformv1alpha1.DetectorType{
+			guardplatformv1alpha1.DetectorStaleOwnerReference,
+		}
+		audit.Spec.ApplicationRefs = nil
+		Expect(k8sClient.Create(ctx, audit)).To(Succeed())
+
+		reconciler := &OwnershipAuditReconciler{
+			Reader:       k8sClient,
+			StatusWriter: k8sClient.Status(),
+			Collector:    inventory.NewCollector(k8sClient, nil, nil),
+			Evaluator:    detectors.NewEvaluator(),
+			Jitter:       IdentityJitter,
+			Scheme:       k8sClient.Scheme(),
+		}
+
+		res, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(Equal(10 * time.Minute))
+
+		stored := &guardplatformv1alpha1.OwnershipAudit{}
+		Expect(k8sClient.Get(ctx, key, stored)).To(Succeed())
+		readyCond := meta.FindStatusCondition(stored.Status.Conditions, "Ready")
+		Expect(readyCond).NotTo(BeNil())
+		Expect(readyCond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(readyCond.Reason).To(Equal("InventoryCollected"))
 	})
 
 	It("reconciles audit policy with terminal InvalidInventoryScope for unsupported GVK", func() {

@@ -103,15 +103,17 @@ type TargetRule struct {
 }
 
 // OwnershipAuditSpec defines the desired audit scope and cadence.
+// +kubebuilder:validation:XValidation:rule="!self.detectors.exists(d, d == 'ArgoPruneRisk') || (has(self.applicationRefs) && size(self.applicationRefs) > 0)",message="applicationRefs must contain at least one Application when ArgoPruneRisk is enabled"
 type OwnershipAuditSpec struct {
 	// ApplicationRefs are explicit Argo CD Applications used as ownership evidence.
-	// +required
+	// They are required only when ArgoPruneRisk is enabled.
+	// +optional
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
 	// +listType=map
 	// +listMapKey=namespace
 	// +listMapKey=name
-	ApplicationRefs []ApplicationReference `json:"applicationRefs"`
+	ApplicationRefs []ApplicationReference `json:"applicationRefs,omitempty"`
 
 	// Detectors enables only rules compiled into this guard version.
 	// +required

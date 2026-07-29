@@ -20,6 +20,15 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - certificaterequests
+  - certificates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - events.k8s.io
   resources:
   - events
@@ -27,6 +36,14 @@ rules:
   - create
   - patch
   - update
+- apiGroups:
+  - external-secrets.io
+  resources:
+  - externalsecrets
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - guard.platform.t2dzung.github.io
   resources:
