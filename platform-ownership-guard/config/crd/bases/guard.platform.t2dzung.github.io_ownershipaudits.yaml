@@ -50,8 +50,9 @@ spec:
             description: OwnershipAuditSpec defines the desired audit scope and cadence.
             properties:
               applicationRefs:
-                description: ApplicationRefs are explicit Argo CD Applications used
-                  as ownership evidence.
+                description: |-
+                  ApplicationRefs are explicit Argo CD Applications used as ownership evidence.
+                  They are required only when ArgoPruneRisk is enabled.
                 items:
                   description: ApplicationReference identifies one explicitly selected
                     Argo CD Application.
@@ -140,10 +141,14 @@ spec:
                 - kind
                 x-kubernetes-list-type: map
             required:
-            - applicationRefs
             - detectors
             - targetRules
             type: object
+            x-kubernetes-validations:
+            - message: applicationRefs must contain at least one Application when
+                ArgoPruneRisk is enabled
+              rule: '!self.detectors.exists(d, d == ''ArgoPruneRisk'') || (has(self.applicationRefs)
+                && size(self.applicationRefs) > 0)'
           status:
             description: OwnershipAuditStatus defines the current bounded observation
               reported by the guard.

@@ -21,8 +21,23 @@ Kubernetes API  ──read──▶  Collector  ──▶  Pure Detectors  ─�
 
 - **ArgoPruneRisk detector** — flags resources marked for pruning that lack `Prune=false` protection, with confidence levels based on available evidence.
 - **StaleOwnerReference detector** — identifies resources pointing to owners that no longer exist or whose UIDs have changed.
+- **Capability-based collection** — the same detector pipeline handles built-in Kubernetes resources and explicitly registered CRDs; detector code does not branch on ESO or cert-manager.
 - **Status-first signal pipeline** — persisted-status diff prevents Event/metric storms on process restarts.
 - **Bounded observability** — four Prometheus metric families with strictly enum labels; no object-name or UID cardinality risk.
+
+## Supported evidence
+
+| API resource | Used as | Required detector dependency |
+|---|---|---|
+| `apps/v1` `Deployment`, `ReplicaSet` | Audited targets and owner identity | Selected detector only |
+| `external-secrets.io/v1` `ExternalSecret` | Audited target for Argo prune correlation | `ArgoPruneRisk` |
+| `cert-manager.io/v1` `CertificateRequest` | Audited dependent with owner references | `StaleOwnerReference` |
+| `cert-manager.io/v1` `Certificate` | Owner identity and UID resolution | `StaleOwnerReference` |
+| `argoproj.io/v1alpha1` `Application` | Explicitly selected GitOps evidence | `ArgoPruneRisk` only |
+
+An audit that enables only `StaleOwnerReference` does not discover or read Argo CD and
+does not require `spec.applicationRefs`. The registry and generated RBAC remain explicit:
+there are no wildcard resource permissions and the operator never receives Secret access.
 
 ## Key design decisions
 
@@ -47,6 +62,9 @@ an admission controller and does not repair or delete audited resources.
 # Run unit and integration tests (requires envtest binaries)
 cd platform-ownership-guard
 make test
+
+# Run the disposable no-Argo deployment/RBAC test (requires Docker and Kind)
+bash test/e2e/kind_no_argo.sh
 
 # Build the operator binary
 go build -o bin/manager cmd/main.go

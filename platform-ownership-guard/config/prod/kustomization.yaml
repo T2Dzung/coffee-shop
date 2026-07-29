@@ -6,6 +6,7 @@ kind: Kustomization
 resources:
 - ../default
 - ../samples
+- rabbitmq-certificate-ownership.yaml
 
 patches:
 - patch: |-
@@ -19,6 +20,15 @@ patches:
           name: coffeeshop-prod
         - namespace: argocd
           name: coffeeshop-prod-platform
+    - op: replace
+      path: /spec/targetRules
+      value:
+        - apiGroup: apps
+          version: v1
+          kind: ReplicaSet
+        - apiGroup: external-secrets.io
+          version: v1
+          kind: ExternalSecret
   target:
     group: guard.platform.t2dzung.github.io
     kind: OwnershipAudit

@@ -33,6 +33,9 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatusAndEvents(t *testing.T) {
 	foundStatusWrite := false
 	foundApplicationRead := false
 	foundTargetRead := false
+	foundExternalSecretRead := false
+	foundCertificateRead := false
+	foundCertificateRequestRead := false
 	foundEventWrite := false
 
 	for _, rule := range role.Rules {
@@ -56,6 +59,27 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatusAndEvents(t *testing.T) {
 				assertOnlyVerbs(t, rule.Verbs, "get")
 			case "deployments", "replicasets":
 				foundTargetRead = true
+				if !slices.Contains(rule.APIGroups, "apps") {
+					t.Fatalf("workload targets must belong to apps group, got %#v", rule.APIGroups)
+				}
+				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch")
+			case "externalsecrets":
+				foundExternalSecretRead = true
+				if !slices.Contains(rule.APIGroups, "external-secrets.io") {
+					t.Fatalf("ExternalSecret must belong to external-secrets.io group, got %#v", rule.APIGroups)
+				}
+				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch")
+			case "certificates":
+				foundCertificateRead = true
+				if !slices.Contains(rule.APIGroups, "cert-manager.io") {
+					t.Fatalf("Certificate must belong to cert-manager.io group, got %#v", rule.APIGroups)
+				}
+				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch")
+			case "certificaterequests":
+				foundCertificateRequestRead = true
+				if !slices.Contains(rule.APIGroups, "cert-manager.io") {
+					t.Fatalf("CertificateRequest must belong to cert-manager.io group, got %#v", rule.APIGroups)
+				}
 				assertOnlyVerbs(t, rule.Verbs, "get", "list", "watch")
 			case "events":
 				foundEventWrite = true
@@ -73,8 +97,9 @@ func TestManagerRoleIsReadOnlyOutsideAuditStatusAndEvents(t *testing.T) {
 		}
 	}
 
-	if !foundAuditRead || !foundStatusWrite || !foundApplicationRead || !foundTargetRead || !foundEventWrite {
-		t.Fatalf("expected audit read, status write, and events write rules, got %#v", role.Rules)
+	if !foundAuditRead || !foundStatusWrite || !foundApplicationRead || !foundTargetRead ||
+		!foundExternalSecretRead || !foundCertificateRead || !foundCertificateRequestRead || !foundEventWrite {
+		t.Fatalf("expected bounded audit, Argo, workload, ESO, cert-manager, and event rules, got %#v", role.Rules)
 	}
 }
 

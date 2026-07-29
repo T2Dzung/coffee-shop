@@ -1,0 +1,13 @@
+apiVersion: guard.platform.t2dzung.github.io/v1alpha1
+kind: OwnershipAudit
+metadata:
+  name: native-only-ownership
+  namespace: rabbitmq-system
+spec:
+  detectors:
+    - StaleOwnerReference
+  targetRules:
+    - apiGroup: cert-manager.io
+      version: v1
+      kind: CertificateRequest
+  resyncInterval: 5m
