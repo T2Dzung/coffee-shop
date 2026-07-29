@@ -83,10 +83,17 @@ func withLogger(h http.Handler) http.Handler {
 
 func newHTTPHandler(gateway http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte("ok\n"))
+		}
 	})
 	mux.Handle("/api/", http.StripPrefix("/api", gateway))
 	mux.Handle("/", gateway)
