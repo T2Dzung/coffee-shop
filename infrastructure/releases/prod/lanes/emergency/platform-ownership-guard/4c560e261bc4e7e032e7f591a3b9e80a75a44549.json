@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "lane": "emergency",
+  "service": "platform-ownership-guard",
+  "source_commit": "4c560e261bc4e7e032e7f591a3b9e80a75a44549",
+  "prod_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/platform-ownership-guard",
+  "prod_digest": "sha256:f25888fa8d715affddd7bfff662bb1856bd1bb4d48ac24f05746a3965b8ca604",
+  "baseline": "2132feb1623e2d289a1179f2d5765d2bee3811ec",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30423228772",
+  "recorded_at": "2026-07-29T04:49:47Z"
+}
