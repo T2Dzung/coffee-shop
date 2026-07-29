@@ -1,12 +1,12 @@
 # PlatformOwnershipGuard
 
-A read-only Kubernetes operator that continuously audits resource ownership across GitOps-managed clusters. It detects unprotected Argo CD prune candidates and stale owner references, then surfaces findings through status conditions, Kubernetes Events and bounded Prometheus metrics — without ever modifying the resources it inspects.
+A read-only Kubernetes operator that continuously audits resource ownership across GitOps-managed clusters. It detects unprotected Argo CD prune candidates and stale owner references, then surfaces findings through status conditions, Kubernetes Events and bounded Prometheus metrics — without modifying the resources it inspects.
 
 ## Why this exists
 
-In a GitOps-managed cluster with multiple resource sources (Argo CD, Ansible, Helm, manual apply), resources can silently become prune candidates or lose their intended owners. A single misconfigured annotation or a recreated Secret can lead to data loss on the next Argo CD sync. PlatformOwnershipGuard provides an automated, continuous safety net that catches these issues before they cause outages.
+In a GitOps-managed cluster with multiple resource sources (Argo CD, Ansible, Helm, manual apply), resources can silently become prune candidates or lose their intended owners. A misconfigured tracking annotation or a recreated owner can make a later lifecycle operation unsafe. PlatformOwnershipGuard records bounded signals so an operator can review the ownership problem and repair the source of truth.
 
-**Origin story:** This project was born from a real incident where a RabbitMQ connection Secret — created outside Git but tracked by Argo CD — was marked `requiresPruning=true` and nearly deleted during a routine sync, which would have taken down the entire message queue layer.
+**Origin story:** This project followed an incident in which a RabbitMQ connection Secret created outside Git was tracked by Argo CD and appeared as a prune candidate. The detector focuses on the observable ownership risk; it does not claim to prevent every unsafe sync.
 
 ## What it does
 
@@ -16,8 +16,7 @@ Kubernetes API  ──read──▶  Collector  ──▶  Pure Detectors  ─�
                                               │                    Kubernetes Events
                                               │                    Prometheus metrics
                                               ▼
-                                    Zero writes to target
-                                    Deployments / Secrets / Apps
+                                    Zero writes to audited targets
 ```
 
 - **ArgoPruneRisk detector** — flags resources marked for pruning that lack `Prune=false` protection, with confidence levels based on available evidence.
@@ -35,17 +34,12 @@ Kubernetes API  ──read──▶  Collector  ──▶  Pure Detectors  ─�
 | **Immutable supply chain** | Release images are Trivy-scanned, SBOM-generated, and Cosign-signed by digest. GitOps deployment pins the exact digest — the scanned artifact is the running artifact. |
 | **Git-only lifecycle** | All rollouts, rollbacks and disable/recovery go through Git commits. No `kubectl rollout undo` or manual live patches. |
 
-## Current state (v0.1 DEV release candidate)
+## Deployment model
 
-Verified on a self-managed EC2/K3s HA cluster with Argo CD, Prometheus and Grafana. Evidence includes:
-
-- ~16h40m shadow observation (191 scans, zero errors/restarts/transitions)
-- Pod-level leader failover in 20 seconds (SLO ≤ 30s)
-- Exact-digest upgrade/rollback compatibility (N-1 → N → N-1)
-- Negative RBAC verification on live cluster (target writes denied)
-- Target workload fingerprint unchanged across failover
-
-**Not yet proven:** node-loss failover, AWS EKS deployment, full CRD uninstall/reinstall under load, multi-cluster operation, auto-remediation.
+The operator ships with DEV and PROD Kustomize overlays. It runs two replicas with
+leader election, reads the resources selected by an `OwnershipAudit`, and writes only
+the audit status, Events and Prometheus metrics. It reports ownership risks; it is not
+an admission controller and does not repair or delete audited resources.
 
 ## Quick start
 
@@ -61,7 +55,9 @@ go build -o bin/manager cmd/main.go
 bash scripts/validate-infra.sh
 ```
 
-For GitOps deployment, the release workflow handles image build, scanning, signing and digest pinning automatically on push to the tracked branch.
+After a change reaches the protected default branch, the standard release workflow can
+build, scan and sign the operator image and pin its digest through the same DEV/QA/PROD
+delivery path as the application services.
 
 ## Project structure
 
@@ -81,6 +77,7 @@ platform-ownership-guard/
 │   ├── manager/           # Deployment, PDB
 │   ├── observability/     # Service, ServiceMonitor, alerts, dashboard
 │   ├── dev/               # DEV overlay with pinned digest
+│   ├── prod/              # PROD overlay with pinned digest
 │   └── samples/           # OwnershipAudit example
 └── scripts/
     └── rehearsal/          # Failover, upgrade/rollback, removal helpers
@@ -88,4 +85,4 @@ platform-ownership-guard/
 
 ## License
 
-Copyright 2026. Licensed under the Apache License, Version 2.0. See the repository root LICENSE file for full terms.
+See the repository root [MIT license](../LICENSE). This README does not replace or alter the copyright notices in the source files.

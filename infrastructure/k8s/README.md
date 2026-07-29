@@ -1,38 +1,52 @@
 # Kubernetes source-of-truth layout
 
-Thư mục này phân loại theo ownership, env
+This directory separates portable workloads from environment-owned platform resources.
 
 ```text
 apps/
 └── coffeeshop/
-    ├── base/          Portable workload bundle dùng chung cho DEV và PROD
+    ├── base/          Portable CoffeeShop Deployments and Services
     └── overlays/
-        ├── dev/       DEV ECR tags và DEV-specific patches
-        └── prod/      PROD ECR digest, config và ALB Ingress
+        ├── dev/       DEV image digests, HPA, config and K3s-specific resources
+        └── prod/      PROD image digests, jobs, config and ALB Ingress
+
+ci/
+└── arc/               Trusted-build runner controller and runner image
 
 environments/
 ├── dev/
-│   ├── bootstrap/     DEV Argo CD root Application
-│   ├── gitops/        DEV applications, add-ons và stateful charts
-│   ├── network/       DEV Cilium/Gateway resources
-│   └── policies/      DEV workload network policies
+│   ├── bootstrap/     Add-on and runtime Argo CD root Applications
+│   ├── gitops/
+│   │   ├── applications/          Cluster add-on Applications
+│   │   ├── runtime-applications/  CoffeeShop and ownership-guard Applications
+│   │   ├── addons/                Helm values and platform resources
+│   │   └── apps/                  CloudNativePG and RabbitMQ application charts
+│   ├── network/       Cilium Gateway API resources
+│   └── policies/      Default-deny and workload allow policies
 └── prod/
-    ├── bootstrap/     Bounded PROD AppProject/Application
-    └── platform/      PROD Argo CD và AWS Load Balancer Controller values
+    ├── bootstrap/     Bounded AppProject and three PROD Applications
+    └── platform/      Storage, External Secrets, RabbitMQ and controller values
 ```
 
 ## Ownership rules
 
-- Repository default branch là Git source of truth duy nhất cho cả hai environment.
-  Git-backed Argo sources dùng `HEAD`; chart source vẫn pin version cụ thể.
-- PR validation không publish release artifact. Sau merge, workflow build source SHA tối
-  đa một lần, pin DEV bằng digest và chỉ PROD-promote candidate có QA evidence khớp.
-- `apps/coffeeshop/base` không được chứa AWS account ID, registry của một
-  môi trường hoặc bootstrap của cluster.
-- Environment-owned image identity chỉ nằm trong `overlays/dev` hoặc `overlays/prod`.
-- DEV root Application chỉ recurse `environments/dev/gitops/applications`.
-- PROD bootstrap chỉ target `apps/coffeeshop/overlays/prod`; nó không recurse DEV.
-- Tài nguyên phase cũ, probe tạm và manifest test không được giữ trong active tree.
-  Evidence lịch sử nằm trong tài liệu phase và Git history.
-- Layout contract được enforce bởi typed validation entrypoint
-  `bash scripts/validate-infra.sh` (Kubernetes scope/profile tương ứng).
+- In normal operation, the repository default branch is the Git source of truth for both
+  environments. Git-backed Argo CD sources track `HEAD`; third-party Helm sources pin
+  chart versions. PROD also accepts an explicit revision override for controlled
+  recovery or testing.
+- PR validation never publishes a release artifact. After merge, the trusted candidate
+  workflow builds a source revision once, pins DEV by digest and permits PROD promotion
+  only when matching QA evidence exists.
+- `apps/coffeeshop/base` cannot contain an AWS account ID, an environment registry or
+  cluster bootstrap resources.
+- Environment-owned image identity belongs only in `overlays/dev` or `overlays/prod`.
+- DEV uses separate root Applications for cluster add-ons and runtime workloads. Data
+  dependencies become ready before the runtime root Application is created.
+- PROD separates platform dependencies, application workloads and ownership auditing
+  into bounded Argo CD Applications. It never recurses into DEV source.
+- Generated dependants belong to their controller: for example, RabbitMQ Operator owns
+  its StatefulSet and External Secrets Operator owns generated Kubernetes Secrets.
+- Temporary probes, test manifests and superseded phase resources do not belong in the
+  active tree. Historical evidence stays in phase documentation and Git history.
+- The typed validation entrypoint enforces the layout contract through
+  `bash scripts/validate-infra.sh` with the relevant Kubernetes profile.
