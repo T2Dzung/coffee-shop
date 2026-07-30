@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "status": "built",
+  "service": "migrate",
+  "source_commit": "8c3323f20914e936344486bc68ee20ea74e4e9d8",
+  "source_image": "694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/coffeeshop-candidate-go-coffeeshop-migrate",
+  "source_digest": "sha256:63d24b00f838adadb51f6b814fe1725fe7e737c5dcbccd609d133d6fe6247203",
+  "runner_class": "trusted-build",
+  "runner_name": "trusted-build-ctq79-runner-829ld",
+  "runner_os": "Linux",
+  "runner_arch": "X64",
+  "workflow_run": "https://github.com/T2Dzung/coffee-shop/actions/runs/30548263966",
+  "created_at": "2026-07-30T13:48:12Z"
+}
