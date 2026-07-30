@@ -31,4 +31,17 @@ func TestProdMaintenancePromotionAcknowledgesMigrationBoundary(t *testing.T) {
 	require.Contains(t, resolveScript, `if [[ "${LANE}" == "maintenance" ]]; then`)
 	require.Contains(t, resolveScript, "allow_migration=true")
 	require.Contains(t, resolveScript, `--allow-migration="${allow_migration}"`)
+
+	submitJob := asMap(asMap(workflow["jobs"])["submit-reviewed"])
+	var autoMerge any
+	steps, _ = submitJob["steps"].([]any)
+	for _, raw := range steps {
+		step := asMap(raw)
+		if step["uses"] == "./.github/actions/submit-gitops-pr" {
+			autoMerge = asMap(step["with"])["auto-merge"]
+			break
+		}
+	}
+	require.Equal(t, "true", autoMerge,
+		"manual workflow dispatch is the maintenance decision; the protected PR should auto-merge after required checks")
 }

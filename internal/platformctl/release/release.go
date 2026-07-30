@@ -121,7 +121,7 @@ func ValidateStandard(service, sourceCommit, candidatePath, qaPath string) (Arti
 	return candidateArtifact, nil
 }
 
-// ValidateMaintenance validates an immutable candidate for a manually approved
+// ValidateMaintenance validates an immutable candidate for an operator-dispatched
 // stateful maintenance promotion. Component-kind authorization remains owned by
 // the platformctl CLI/catalog boundary.
 func ValidateMaintenance(service, sourceCommit, candidatePath string) (Artifact, error) {

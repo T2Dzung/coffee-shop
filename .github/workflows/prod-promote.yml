@@ -363,7 +363,7 @@ jobs:
           body: >-
             Promotes every reviewed ${{ needs.resolve.outputs.lane }} component from protected
             commit ${{ needs.resolve.outputs.source_commit }} without rebuilding.
-          auto-merge: ${{ needs.resolve.outputs.lane == 'standard' && 'true' || 'false' }}
+          auto-merge: "true"
 
   promotion-status:
     name: PROD Promotion Status

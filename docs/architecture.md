@@ -112,7 +112,7 @@ queried through Grafana data sources rather than exposed as public services.
 | DEV delivery | `dev-deliver.yml` copies the exact candidate into DEV ECR and edits the DEV Kustomize overlay | GitHub-hosted with environment-scoped OIDC | One desired-state PR auto-merges after required checks |
 | DEV reconcile | DEV Argo CD tracks `HEAD`, renders the overlay and self-heals the exact digest | In-cluster Argo CD; not a GitHub runner job | Automatic GitOps reconciliation; runtime health is checked separately |
 | QA | An operator runs `release-qa.yml` for an exact source and release set | Human dispatch; GitHub-hosted validation and evidence write | Manual approve/reject decision; evidence PR auto-merges after checks |
-| PROD promotion | `prod-promote.yml` re-verifies, re-scans and copies the reviewed digest, then edits the PROD overlay | GitHub-hosted with environment-scoped OIDC | Standard release sets auto-merge after required checks; stateful maintenance opens a manual-review PR |
+| PROD promotion | `prod-promote.yml` re-verifies, re-scans and copies the reviewed digest, then edits the PROD overlay | GitHub-hosted with environment-scoped OIDC | Standard release sets and manually dispatched stateful maintenance auto-merge after required checks |
 | PROD reconcile | PROD Argo CD applies the platform dependencies and application overlay | In-cluster Argo CD; not a GitHub runner job | Automatic GitOps reconciliation |
 
 The GitHub Environment objects are identity and secret boundaries, not a substitute for
