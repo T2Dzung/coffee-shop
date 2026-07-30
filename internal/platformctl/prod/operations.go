@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,6 +44,8 @@ type RealOperations struct {
 	albARN  string
 	cluster string
 	vpcID   string
+
+	setupPlanCreated bool
 }
 
 func NewRealOperations(cfg config.Prod, runner command.Runner, approver Approver, output io.Writer) *RealOperations {
@@ -92,6 +95,21 @@ func (o *RealOperations) Plan(ctx context.Context, action Action) (Plan, error) 
 	if err := o.initRemote(ctx, o.FoundationTF, o.Config.FoundationStateKey); err != nil {
 		return Plan{}, err
 	}
+	client := o.FoundationTF
+	if action == ActionSetup && !o.setupPlanCreated {
+		o.setupPlanCreated = true
+		if o.Config.SLOEnabled {
+			available, err := o.sloTargetAvailable(ctx)
+			if err != nil {
+				return Plan{}, err
+			}
+			if !available {
+				client.BooleanVariables = copyBooleanVariables(client.BooleanVariables)
+				client.BooleanVariables["slo_runtime_enabled"] = false
+				fmt.Fprintln(o.Output, "PROD ALB is not available yet; deferring Synthetics runtime to the post-GitOps convergence plan.")
+			}
+		}
+	}
 	destroy := action == ActionTeardown
 	targets := []string(nil)
 	policyName := "reconcile"
@@ -99,7 +117,7 @@ func (o *RealOperations) Plan(ctx context.Context, action Action) (Plan, error) 
 		targets = teardownTargets
 		policyName = "teardown"
 	}
-	artifact, err := o.FoundationTF.CreatePlan(ctx, "", "prod-"+string(action), destroy, targets)
+	artifact, err := client.CreatePlan(ctx, "", "prod-"+string(action), destroy, targets)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -251,7 +269,21 @@ func (o *RealOperations) Configure(ctx context.Context) error {
 	if err := o.applyBootstrapManifest(ctx, "coffeeshop-prod-ownership-guard-app.yaml", nil); err != nil {
 		return err
 	}
-	return o.waitArgo(ctx, "coffeeshop-prod-ownership-guard")
+	if err := o.waitArgo(ctx, "coffeeshop-prod-ownership-guard"); err != nil {
+		return err
+	}
+	if o.Config.SLOEnabled {
+		return o.waitForSLOTarget(ctx)
+	}
+	return nil
+}
+
+func copyBooleanVariables(source map[string]bool) map[string]bool {
+	target := make(map[string]bool, len(source)+1)
+	for key, value := range source {
+		target[key] = value
+	}
+	return target
 }
 
 func (o *RealOperations) loadRuntimeOutputs(ctx context.Context) error {

@@ -14,7 +14,7 @@ var (
 	digestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	componentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	ecrImagePattern  = regexp.MustCompile(`^[0-9]{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?/[a-z0-9][a-z0-9._/-]*$`)
-	validLanes       = map[string]struct{}{"standard": {}, "emergency": {}, "rollback": {}}
+	validLanes       = map[string]struct{}{"standard": {}, "emergency": {}, "rollback": {}, "maintenance": {}}
 )
 
 type Candidate struct {
@@ -119,6 +119,16 @@ func ValidateStandard(service, sourceCommit, candidatePath, qaPath string) (Arti
 		return Artifact{}, errors.New("QA evidence does not approve the exact candidate digest verified in DEV")
 	}
 	return candidateArtifact, nil
+}
+
+// ValidateMaintenance validates an immutable candidate for a manually approved
+// stateful maintenance promotion. Component-kind authorization remains owned by
+// the platformctl CLI/catalog boundary.
+func ValidateMaintenance(service, sourceCommit, candidatePath string) (Artifact, error) {
+	if err := ValidateIdentity("maintenance", service, sourceCommit); err != nil {
+		return Artifact{}, err
+	}
+	return ValidateCandidate(service, sourceCommit, candidatePath)
 }
 
 func ValidateDevRelease(service, sourceCommit, candidatePath, devReleasePath string) (DevRelease, error) {

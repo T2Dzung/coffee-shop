@@ -36,6 +36,19 @@ func TestValidateStandard(t *testing.T) {
 	require.Equal(t, testDigest, artifact.Digest)
 }
 
+func TestValidateMaintenanceUsesExactImmutableCandidate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	candidate := filepath.Join(dir, "candidate.json")
+	require.NoError(t, os.WriteFile(candidate, []byte(`{
+        "schema_version":2,"status":"built","service":"migrate",
+        "source_commit":"`+testCommit+`","source_image":"`+testImage+`","source_digest":"`+testDigest+`"
+    }`), 0o600))
+	artifact, err := ValidateMaintenance("migrate", testCommit, candidate)
+	require.NoError(t, err)
+	require.Equal(t, testDigest, artifact.Digest)
+}
+
 func TestValidateStandardRejectsDigestMismatch(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

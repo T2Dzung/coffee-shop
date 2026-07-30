@@ -129,7 +129,7 @@ func TestNormalizeWorkflowRequiresAtomicProdReleaseSetFanIn(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "workflow.yml")
 	require.NoError(t, os.WriteFile(path, []byte(`
-name: PROD — Promote QA-Approved Digest
+name: PROD — Promote Reviewed Digest
 jobs:
   standard:
     strategy:
@@ -146,14 +146,14 @@ func TestNormalizeWorkflowAllowsAtomicProdReleaseSetFanIn(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "workflow.yml")
 	require.NoError(t, os.WriteFile(path, []byte(`
-name: PROD — Promote QA-Approved Digest
+name: PROD — Promote Reviewed Digest
 jobs:
-  copy-standard:
+  copy-reviewed:
     strategy:
       matrix:
         component: [web, proxy]
-  submit-standard:
-    needs: [copy-standard]
+  submit-reviewed:
+    needs: [copy-reviewed]
     steps:
       - uses: ./.github/actions/submit-gitops-pr
   promotion-status:
@@ -172,14 +172,14 @@ func TestNormalizeWorkflowRejectsUngatedProdStatusJob(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "workflow.yml")
 	require.NoError(t, os.WriteFile(path, []byte(`
-name: PROD — Promote QA-Approved Digest
+name: PROD — Promote Reviewed Digest
 jobs:
-  copy-standard:
+  copy-reviewed:
     strategy:
       matrix:
         component: [web]
-  submit-standard:
-    needs: [copy-standard]
+  submit-reviewed:
+    needs: [copy-reviewed]
     steps:
       - uses: ./.github/actions/submit-gitops-pr
   promotion-status:

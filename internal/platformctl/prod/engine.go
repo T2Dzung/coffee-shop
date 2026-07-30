@@ -88,7 +88,7 @@ func (e Engine) Run(ctx context.Context, action Action) (err error) {
 			return e.Operations.Verify(ctx, action)
 		})
 	case ActionTeardown:
-		if err = e.mutate(ctx, recorder, action); err != nil {
+		if err = e.mutate(ctx, recorder, action, ""); err != nil {
 			return err
 		}
 		return e.step(ctx, recorder, "verify", func() error {
@@ -108,7 +108,7 @@ func (a Action) Valid() bool {
 }
 
 func (e Engine) mutateAndVerify(ctx context.Context, recorder *evidence.Recorder, action Action, configure bool) error {
-	if err := e.mutate(ctx, recorder, action); err != nil {
+	if err := e.mutate(ctx, recorder, action, ""); err != nil {
 		return err
 	}
 	if configure {
@@ -117,15 +117,22 @@ func (e Engine) mutateAndVerify(ctx context.Context, recorder *evidence.Recorder
 		}); err != nil {
 			return err
 		}
+		// Some runtime resources depend on endpoints created by Kubernetes
+		// controllers during Configure (for example, the ALB-backed Synthetics
+		// canary). Re-plan after GitOps convergence so setup reaches the complete
+		// Terraform desired state in one command.
+		if err := e.mutate(ctx, recorder, action, "converge-"); err != nil {
+			return err
+		}
 	}
 	return e.step(ctx, recorder, "verify", func() error {
 		return e.Operations.Verify(ctx, action)
 	})
 }
 
-func (e Engine) mutate(ctx context.Context, recorder *evidence.Recorder, action Action) error {
+func (e Engine) mutate(ctx context.Context, recorder *evidence.Recorder, action Action, stepPrefix string) error {
 	var plan Plan
-	if err := e.step(ctx, recorder, "plan", func() error {
+	if err := e.step(ctx, recorder, stepPrefix+"plan", func() error {
 		var err error
 		plan, err = e.Operations.Plan(ctx, action)
 		return err
@@ -134,7 +141,7 @@ func (e Engine) mutate(ctx context.Context, recorder *evidence.Recorder, action 
 	}
 	defer plan.Artifact.Cleanup()
 	recorder.Record(evidence.Event{
-		Phase: "prod", Step: "plan-artifact", Status: "recorded",
+		Phase: "prod", Step: stepPrefix + "plan-artifact", Status: "recorded",
 		Details: map[string]any{
 			"sha256":  plan.Artifact.Fingerprint,
 			"create":  plan.Artifact.Summary.Create,
@@ -145,24 +152,24 @@ func (e Engine) mutate(ctx context.Context, recorder *evidence.Recorder, action 
 	})
 	if plan.Empty() {
 		recorder.Record(evidence.Event{
-			Phase: "prod", Step: "apply", Status: "skipped-empty-plan",
+			Phase: "prod", Step: stepPrefix + "apply", Status: "skipped-empty-plan",
 		})
 		return nil
 	}
 	if e.Approver == nil {
 		return fmt.Errorf("approval boundary is required for %s", action)
 	}
-	if err := e.step(ctx, recorder, "approve", func() error {
+	if err := e.step(ctx, recorder, stepPrefix+"approve", func() error {
 		return e.Approver.Approve(ctx, action, plan)
 	}); err != nil {
 		return err
 	}
-	if err := e.step(ctx, recorder, "before-apply", func() error {
+	if err := e.step(ctx, recorder, stepPrefix+"before-apply", func() error {
 		return e.Operations.BeforeApply(ctx, action)
 	}); err != nil {
 		return err
 	}
-	return e.step(ctx, recorder, "apply", func() error {
+	return e.step(ctx, recorder, stepPrefix+"apply", func() error {
 		return e.Operations.Apply(ctx, plan)
 	})
 }

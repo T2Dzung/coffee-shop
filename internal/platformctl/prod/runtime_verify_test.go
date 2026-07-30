@@ -2,11 +2,31 @@ package prod
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	platformaws "github.com/thangchung/go-coffeeshop/internal/platformctl/aws"
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/command"
 )
+
+type staticAWSJSONRunner struct {
+	resourceCount int
+}
+
+func (r staticAWSJSONRunner) Run(_ context.Context, request command.Request) (command.Result, error) {
+	if request.Name != "aws" {
+		return command.Result{}, fmt.Errorf("unexpected command %s", request.Name)
+	}
+	resources := ""
+	for index := 0; index < r.resourceCount; index++ {
+		if resources != "" {
+			resources += ","
+		}
+		resources += fmt.Sprintf(`{"ResourceARN":"arn:aws:elasticloadbalancing:region:account:loadbalancer/app/prod/%d"}`, index)
+	}
+	return command.Result{Stdout: `{"ResourceTagMappingList":[` + resources + `]}`}, nil
+}
 
 type probeRunner struct {
 	requests []command.Request
@@ -65,6 +85,35 @@ func TestActiveApplicationLoadBalancerWaitsForAWSActiveState(t *testing.T) {
 	require.True(t, ready)
 	require.Equal(t, "arn:alb", arn)
 	require.ElementsMatch(t, []string{"ap-southeast-1a", "ap-southeast-1b"}, zones)
+}
+
+func TestSLOTargetAvailabilityRequiresAtMostOneTaggedALB(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		count     int
+		available bool
+		wantError string
+	}{
+		{name: "bootstrap without ALB", count: 0},
+		{name: "one ALB", count: 1, available: true},
+		{name: "ambiguous ALBs", count: 2, wantError: "expected at most one tagged ALB"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			operations := &RealOperations{AWS: platformaws.Client{Runner: staticAWSJSONRunner{resourceCount: test.count}}}
+
+			available, err := operations.sloTargetAvailable(context.Background())
+
+			require.Equal(t, test.available, available)
+			if test.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, test.wantError)
+			}
+		})
+	}
 }
 
 func TestTransactionProbeRequiredOnlyForMutatingLifecycleActions(t *testing.T) {
