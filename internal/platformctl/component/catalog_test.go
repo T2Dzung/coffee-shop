@@ -18,6 +18,8 @@ components:
     name: web
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/web]
     moduleRoot: .
     package: ./cmd/web
     binary: bin/web
@@ -32,6 +34,64 @@ components:
 `), 0o600))
 	_, err := Load(path)
 	require.ErrorContains(t, err, "duplicated")
+}
+
+func TestDecodeRejectsInvalidTestContract(t *testing.T) {
+	t.Parallel()
+	_, err := Decode([]byte(`
+schemaVersion: 1
+components:
+  - name: guard
+    kind: operator
+    build: operator
+    testProfile: go
+    testPackages: [./...]
+    moduleRoot: guard
+    package: ./cmd/main.go
+    binary: bin/manager
+    dockerfile: guard/Dockerfile
+    imageRepository: guard
+    kustomizeImage: controller
+    context: guard
+    devOverlay: guard/dev
+    prodOverlay: guard/prod
+    paths: [guard/**]
+`))
+	require.ErrorContains(t, err, "must use operator-envtest")
+}
+
+func TestDecodeAcceptsLegacyCatalogWithoutTestMetadata(t *testing.T) {
+	t.Parallel()
+	catalog, err := Decode([]byte(`
+schemaVersion: 1
+components:
+  - name: guard
+    kind: operator
+    build: operator
+    moduleRoot: guard
+    package: ./cmd/main.go
+    binary: bin/manager
+    dockerfile: guard/Dockerfile
+    imageRepository: guard
+    kustomizeImage: controller
+    context: guard
+    devOverlay: guard/dev
+    prodOverlay: guard/prod
+    paths: [guard/**]
+`))
+	require.NoError(t, err)
+	require.Empty(t, catalog.Components[0].TestProfile)
+	require.Empty(t, catalog.Components[0].TestPackages)
+}
+
+func TestRepositoryCatalogDefinesCompleteTestContracts(t *testing.T) {
+	t.Parallel()
+	catalogPath := filepath.Join("..", "..", "..", "platform", "components.yaml")
+	catalog, err := Load(catalogPath)
+	require.NoError(t, err)
+	for _, component := range catalog.Components {
+		require.NoError(t, component.validateTestContract(), component.Name)
+	}
 }
 
 func TestSelectUsesCatalogPathsAndExcludesMigration(t *testing.T) {

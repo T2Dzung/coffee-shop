@@ -508,6 +508,7 @@ var teardownTargets = []string{
 	"aws_cloudwatch_metric_alarm.golden_journey",
 	"aws_iam_role_policy.synthetics_canary",
 	"aws_iam_role.synthetics_canary",
+	"aws_s3_object.golden_journey_code",
 	"aws_db_instance.postgres",
 	"aws_db_subnet_group.rds",
 	"aws_security_group.rds",

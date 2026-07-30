@@ -110,6 +110,23 @@ resource "aws_s3_bucket_policy" "synthetics_artifacts" {
   })
 }
 
+resource "aws_s3_object" "golden_journey_code" {
+  count = var.slo_runtime_enabled ? 1 : 0
+
+  bucket       = aws_s3_bucket.synthetics_artifacts.id
+  key          = "canary/code/coffeeshop-golden-journey.zip"
+  source       = data.archive_file.golden_journey.output_path
+  source_hash  = data.archive_file.golden_journey.output_base64sha256
+  content_type = "application/zip"
+
+  depends_on = [
+    aws_s3_bucket_server_side_encryption_configuration.synthetics_artifacts,
+    aws_s3_bucket_versioning.synthetics_artifacts,
+  ]
+
+  tags = local.slo_tags
+}
+
 resource "aws_iam_role" "synthetics_canary" {
   count = var.slo_runtime_enabled ? 1 : 0
   name  = "${var.project_name}-${var.environment}-synthetics-canary"
@@ -184,7 +201,9 @@ resource "aws_synthetics_canary" "golden_journey" {
   execution_role_arn   = aws_iam_role.synthetics_canary[0].arn
   handler              = "index.handler"
   runtime_version      = var.synthetics_runtime_version
-  zip_file             = data.archive_file.golden_journey.output_path
+  s3_bucket            = aws_s3_bucket.synthetics_artifacts.id
+  s3_key               = aws_s3_object.golden_journey_code[0].key
+  s3_version           = aws_s3_object.golden_journey_code[0].version_id
   start_canary         = true
 
   delete_lambda            = true

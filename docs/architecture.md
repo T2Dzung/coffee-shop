@@ -68,11 +68,13 @@ HTTPS listener is declared in the active PROD Ingress.
 - Argo CD runs a bootstrap Job with the RDS master credential, then a migration Job with
   the least-privilege application credential before rolling out the six services.
 - CloudWatch Container Insights, logs and alarms are the PROD observability boundary.
-  Terraform defines an on-demand bounded Synthetics canary for the public read-only
+  Terraform defines a lifecycle-bound Synthetics canary for the public read-only
   `item-types` journey and links its alarm to the
-  [golden-journey runbook](runbooks/prod-golden-journey.md). Its recurring runtime is
-  disabled by default; the DEV Prometheus/Grafana/Loki/Tempo stack is not copied into
-  PROD.
+  [golden-journey runbook](runbooks/prod-golden-journey.md). The current environment
+  enables it while PROD is online; `prod teardown` removes its recurring runtime and the
+  next `prod setup` recreates it. The public tfvars example remains opt-in to avoid
+  surprising a new user with recurring cost. The DEV Prometheus/Grafana/Loki/Tempo stack
+  is not copied into PROD.
 - Three Argo CD Applications independently own the platform dependencies, CoffeeShop
   workload overlay and PlatformOwnershipGuard.
 
@@ -105,8 +107,8 @@ queried through Grafana data sources rather than exposed as public services.
 
 | Stage | Owner and trigger | Execution boundary | Merge behavior |
 | --- | --- | --- | --- |
-| Feature PR | Developer opens a PR; `ci-app.yml` and `ci-platform.yml` run | GitHub-hosted; untrusted source receives no persistent self-hosted runner access | Human review and protected-branch merge |
-| Candidate build | `release-candidate.yml` runs after the protected source merge | GitHub-hosted component detection and ECR preflight; self-hosted ARC `trusted-build` for build, scan, SBOM and signing | Candidate evidence PR is submitted from GitHub-hosted capacity and auto-merges only after required checks |
+| Feature PR | Developer opens a PR; `ci-app.yml` and `ci-platform.yml` run | GitHub-hosted; catalog-scoped unit tests run without exposing a persistent self-hosted runner to untrusted source | Human review and protected-branch merge |
+| Candidate build | `release-candidate.yml` runs after the protected source merge | GitHub-hosted component detection and ECR preflight; self-hosted ARC `trusted-build` runs the shared component test gate before build, scan, SBOM and signing | Candidate evidence PR is submitted from GitHub-hosted capacity and auto-merges only after required checks |
 | DEV delivery | `dev-deliver.yml` copies the exact candidate into DEV ECR and edits the DEV Kustomize overlay | GitHub-hosted with environment-scoped OIDC | One desired-state PR auto-merges after required checks |
 | DEV reconcile | DEV Argo CD tracks `HEAD`, renders the overlay and self-heals the exact digest | In-cluster Argo CD; not a GitHub runner job | Automatic GitOps reconciliation; runtime health is checked separately |
 | QA | An operator runs `release-qa.yml` for an exact source and release set | Human dispatch; GitHub-hosted validation and evidence write | Manual approve/reject decision; evidence PR auto-merges after checks |
@@ -115,7 +117,10 @@ queried through Grafana data sources rather than exposed as public services.
 
 The GitHub Environment objects are identity and secret boundaries, not a substitute for
 the manual QA decision. Emergency and rollback workflows are separately dispatched,
-bounded paths; they do not redefine the standard promotion contract.
+bounded paths; they do not redefine the standard promotion contract. Emergency tests
+the exact patch with the same catalog-owned action before artifact creation. Rollback
+does not rebuild or rerun source tests: it verifies and selects a previously reviewed,
+immutable PROD digest.
 
 The CI execution plane is managed independently with `platformctl ci
 setup/status/teardown`. Automatic post-merge candidate builds require the

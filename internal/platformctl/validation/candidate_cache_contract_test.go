@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestCandidateCacheContractKeepsMatrixWritersIsolated(t *testing.T) {
@@ -56,4 +57,44 @@ func TestEmergencySourceReconciliationSkipsDuplicateCandidateBuild(t *testing.T)
 		string(deliveryWorkflow),
 		"steps.lineage.outputs.source_reconciled != 'true'",
 	))
+}
+
+func TestArtifactCreationUsesSharedComponentTestGate(t *testing.T) {
+	t.Parallel()
+	root := filepath.Clean(filepath.Join("..", "..", ".."))
+	testAction := "./.github/actions/test-component"
+
+	ci := decodeYAMLMap(t, filepath.Join(root, ".github", "workflows", "ci-app.yml"))
+	require.True(t, containsUsesReference(asMap(asMap(ci["jobs"])["build-and-scan"]), testAction))
+
+	candidate := decodeYAMLMap(t, filepath.Join(root, ".github", "workflows", "release-candidate.yml"))
+	require.True(t, containsUsesReference(asMap(asMap(candidate["jobs"])["build-candidate"]), testAction))
+
+	delivery := decodeYAMLMap(t, filepath.Join(root, ".github", "workflows", "_reusable-prod-delivery.yml"))
+	deliver := asMap(asMap(delivery["jobs"])["deliver"])
+	require.True(t, hasUsesStepWithCondition(deliver, testAction, "inputs.lane == 'emergency'"))
+	require.False(t, hasUsesStepWithCondition(deliver, testAction, "inputs.lane == 'rollback'"))
+
+	action := decodeYAMLMap(t, filepath.Join(root, ".github", "actions", "test-component", "action.yml"))
+	require.Equal(t, "composite", asMap(action["runs"])["using"])
+}
+
+func decodeYAMLMap(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var document map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &document))
+	return document
+}
+
+func hasUsesStepWithCondition(job map[string]any, uses, condition string) bool {
+	steps, _ := job["steps"].([]any)
+	for _, raw := range steps {
+		step := asMap(raw)
+		if step["uses"] == uses && step["if"] == condition {
+			return true
+		}
+	}
+	return false
 }

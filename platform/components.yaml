@@ -18,6 +18,8 @@ components:
   - name: web
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/web, ./pkg/..., ./internal/pkg/...]
     moduleRoot: .
     package: ./cmd/web
     binary: bin/web
@@ -33,6 +35,8 @@ components:
   - name: proxy
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/proxy, ./pkg/..., ./internal/pkg/...]
     moduleRoot: .
     package: ./cmd/proxy
     binary: bin/proxy
@@ -48,6 +52,8 @@ components:
   - name: product
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/product, ./internal/product/..., ./pkg/..., ./internal/pkg/...]
     moduleRoot: .
     package: ./cmd/product
     binary: bin/product
@@ -63,6 +69,8 @@ components:
   - name: counter
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/counter, ./internal/counter/..., ./pkg/..., ./internal/pkg/...]
     moduleRoot: .
     package: ./cmd/counter
     binary: bin/counter
@@ -78,6 +86,8 @@ components:
   - name: barista
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/barista, ./internal/barista/..., ./pkg/..., ./internal/pkg/...]
     moduleRoot: .
     package: ./cmd/barista
     binary: bin/barista
@@ -93,6 +103,8 @@ components:
   - name: kitchen
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/kitchen, ./internal/kitchen/..., ./pkg/..., ./internal/pkg/...]
     moduleRoot: .
     package: ./cmd/kitchen
     binary: bin/kitchen
@@ -108,6 +120,8 @@ components:
   - name: migrate
     kind: migration
     build: go-migrate
+    testProfile: go
+    testPackages: [./cmd/migrate]
     moduleRoot: .
     package: ./cmd/migrate
     binary: bin/migrate
@@ -123,6 +137,8 @@ components:
   - name: platform-ownership-guard
     kind: operator
     build: operator
+    testProfile: operator-envtest
+    testPackages: [./...]
     moduleRoot: platform-ownership-guard
     package: ./cmd/main.go
     binary: bin/manager

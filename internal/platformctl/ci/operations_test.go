@@ -61,6 +61,8 @@ components:
   - name: web
     kind: service
     build: go
+    testProfile: go
+    testPackages: [./cmd/web]
     moduleRoot: .
     package: ./cmd/web
     binary: bin/web
@@ -75,6 +77,8 @@ components:
   - name: guard
     kind: operator
     build: operator
+    testProfile: operator-envtest
+    testPackages: [./...]
     moduleRoot: guard
     package: ./cmd/main.go
     binary: bin/manager

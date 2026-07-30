@@ -21,6 +21,8 @@ type Component struct {
 	Name            string   `yaml:"name" json:"name"`
 	Kind            string   `yaml:"kind" json:"kind"`
 	Build           string   `yaml:"build" json:"build"`
+	TestProfile     string   `yaml:"testProfile" json:"test_profile"`
+	TestPackages    []string `yaml:"testPackages" json:"test_packages"`
 	ModuleRoot      string   `yaml:"moduleRoot" json:"module_root"`
 	Package         string   `yaml:"package" json:"package"`
 	Binary          string   `yaml:"binary" json:"binary"`
@@ -71,10 +73,35 @@ func (c Catalog) Validate() error {
 		if component.Kind == "migration" && component.Automatic {
 			return fmt.Errorf("migration component %q cannot be selected automatically", component.Name)
 		}
+		// Test metadata was added after the release catalog was already consumed
+		// from protected remote revisions. Accept a legacy catalog with both fields
+		// absent so a newer platformctl can still bootstrap that revision. Once
+		// either field is present, validate the complete test contract strictly.
+		if component.TestProfile != "" || len(component.TestPackages) > 0 {
+			if err := component.validateTestContract(); err != nil {
+				return err
+			}
+		}
 		if _, exists := seen[component.Name]; exists {
 			return fmt.Errorf("component %q is duplicated", component.Name)
 		}
 		seen[component.Name] = struct{}{}
+	}
+	return nil
+}
+
+func (c Component) validateTestContract() error {
+	if c.TestProfile == "" || len(c.TestPackages) == 0 {
+		return fmt.Errorf("component %q has incomplete test metadata", c.Name)
+	}
+	if c.TestProfile != "go" && c.TestProfile != "operator-envtest" {
+		return fmt.Errorf("component %q has unsupported testProfile %q", c.Name, c.TestProfile)
+	}
+	if c.Kind == "operator" && c.TestProfile != "operator-envtest" {
+		return fmt.Errorf("operator component %q must use operator-envtest", c.Name)
+	}
+	if c.Kind != "operator" && c.TestProfile != "go" {
+		return fmt.Errorf("component %q must use go tests", c.Name)
 	}
 	return nil
 }

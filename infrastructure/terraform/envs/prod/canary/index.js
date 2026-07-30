@@ -1,6 +1,15 @@
 'use strict';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const CANARY_USER_AGENT = 'CoffeeShop-O2-Synthetic/1.0';
+
+function loadSynthetics(syntheticsModule = require('@aws/synthetics-core')) {
+  const client = syntheticsModule && syntheticsModule.synthetics;
+  if (!client || typeof client.executeHttpStep !== 'function') {
+    throw new Error('@aws/synthetics-core must expose synthetics.executeHttpStep');
+  }
+  return client;
+}
 
 function parseMinimumItemTypes(value) {
   if (!/^[1-9][0-9]*$/.test(value)) {
@@ -51,7 +60,7 @@ async function readResponse(response) {
 }
 
 async function runCanary({
-  synthetics = require('@aws/synthetics-core'),
+  synthetics = loadSynthetics(),
   targetURL = process.env.TARGET_URL,
   minimumText = process.env.MIN_ITEM_TYPES || '1',
 } = {}) {
@@ -67,7 +76,7 @@ async function runCanary({
     path: `${target.pathname}${target.search}`,
     method: 'GET',
     headers: {
-      'User-Agent': synthetics.getCanaryUserAgentString(),
+      'User-Agent': CANARY_USER_AGENT,
       Accept: 'application/json',
     },
   };
@@ -86,6 +95,7 @@ async function runCanary({
 }
 
 exports.handler = async () => runCanary();
+exports.loadSynthetics = loadSynthetics;
 exports.parseMinimumItemTypes = parseMinimumItemTypes;
 exports.validateItemTypes = validateItemTypes;
 exports.runCanary = runCanary;

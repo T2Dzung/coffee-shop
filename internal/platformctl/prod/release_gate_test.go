@@ -13,6 +13,9 @@ func TestPromotedGuardArtifactRequiresSevenAppsAndCatalogGuard(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	apps := strings.Repeat("digest: "+digest+"\n", 7)
 	guard := "digest: " + digest
+	// Protected main can still contain the pre-test-metadata catalog while a
+	// newer local platformctl runs setup. The release gate must remain readable
+	// across that rollout boundary.
 	catalog := `
 schemaVersion: 1
 components:

@@ -75,3 +75,11 @@ is_allowed(address) if {
 	some prefix in allowed_prefixes
 	startswith(address, prefix)
 }
+
+is_allowed(address) if {
+	address == "aws_s3_object.golden_journey_code"
+}
+
+is_allowed(address) if {
+	startswith(address, "aws_s3_object.golden_journey_code[")
+}

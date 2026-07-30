@@ -4,10 +4,20 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { EventEmitter } = require('node:events');
 const {
+  loadSynthetics,
   parseMinimumItemTypes,
   runCanary,
   validateItemTypes,
 } = require('./index');
+
+test('loadSynthetics resolves the named runtime export and rejects the flat module shape', () => {
+  const client = { executeHttpStep: async () => {} };
+  assert.equal(loadSynthetics({ synthetics: client }), client);
+  assert.throws(
+    () => loadSynthetics({ executeHttpStep: async () => {} }),
+    /must expose synthetics\.executeHttpStep/,
+  );
+});
 
 test('validateItemTypes accepts a non-empty successful document', () => {
   assert.equal(validateItemTypes(200, '{"itemTypes":[{"type":0}]}', 1), 1);
@@ -29,7 +39,6 @@ test('parseMinimumItemTypes rejects unsafe controlled-negative inputs', () => {
 test('runCanary configures one GET step and validates the response body', async () => {
   let observed;
   const synthetics = {
-    getCanaryUserAgentString: () => 'coffeeshop-o2-canary',
     executeHttpStep: async (name, options, callback, config) => {
       observed = { name, options, config };
       const response = new EventEmitter();
@@ -51,12 +60,12 @@ test('runCanary configures one GET step and validates the response body', async 
   assert.equal(observed.options.method, 'GET');
   assert.equal(observed.options.hostname, 'example.test');
   assert.equal(observed.options.path, '/api/v1/api/item-types');
+  assert.equal(observed.options.headers['User-Agent'], 'CoffeeShop-O2-Synthetic/1.0');
   assert.equal(observed.config.includeResponseBody, false);
 });
 
 test('runCanary propagates transport and timeout failures', async () => {
   const synthetics = {
-    getCanaryUserAgentString: () => 'coffeeshop-o2-canary',
     executeHttpStep: async () => {
       throw new Error('request timed out');
     },

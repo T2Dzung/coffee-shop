@@ -126,10 +126,17 @@ Record what failed, the source revision that repaired it, the alarm transition a
 unverified dependency. A short O2 evidence window proves the mechanism and transition;
 it does not prove 24-hour SLO compliance.
 
-## 7. End the bounded evidence window
+## 7. Follow the PROD lifecycle
 
-Set `slo_runtime_enabled = false` in the ignored PROD tfvars, review the saved cleanup
-plan and run `platformctl prod reconcile`. Confirm that no canary remains scheduled and
-that the canary alarm, dashboard, execution role and generated Lambda resources are
-gone. The encrypted, public-blocked artifact bucket is retained and its objects expire
-through lifecycle policy.
+Keep `slo_runtime_enabled = true` while PROD is operating. `platformctl prod teardown`
+removes the canary, alarm, dashboard, execution role/policy, generated Lambda and the
+versioned code object together with the other ephemeral PROD resources. The encrypted,
+versioned, public-blocked artifact bucket is retained and run artifacts expire through
+its lifecycle policy. The next `platformctl prod setup` recreates the SLO runtime from
+Terraform source.
+
+To stop only the SLO runtime while leaving PROD online, set `slo_runtime_enabled = false`,
+review the `platformctl prod reconcile` saved plan and require exactly the six O2 runtime
+deletes with no replacement or unrelated change. Do not leave a stopped canary behind a
+missing-data-breaching alarm; the bounded reconcile removes the alarm and dashboard with
+the canary.

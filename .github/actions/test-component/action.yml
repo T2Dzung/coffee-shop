@@ -1,0 +1,66 @@
+name: Test catalog component
+description: Run the catalog-owned test gate before an immutable artifact is built
+
+inputs:
+  component:
+    required: true
+    description: Component catalog name
+  platformctl:
+    required: true
+    description: Absolute platformctl path
+  source-root:
+    required: false
+    default: "."
+    description: Checkout root containing the component source
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve component test contract
+      id: metadata
+      shell: bash
+      env:
+        PLATFORMCTL: ${{ inputs.platformctl }}
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -Eeuo pipefail
+        "${PLATFORMCTL}" component describe --name "${COMPONENT}" >"${RUNNER_TEMP}/test-component.json"
+        echo "module_root=$(jq -er .module_root "${RUNNER_TEMP}/test-component.json")" >>"${GITHUB_OUTPUT}"
+        echo "test_profile=$(jq -er .test_profile "${RUNNER_TEMP}/test-component.json")" >>"${GITHUB_OUTPUT}"
+        echo "test_packages=$(jq -cer .test_packages "${RUNNER_TEMP}/test-component.json")" >>"${GITHUB_OUTPUT}"
+
+    - name: Run Go unit tests
+      if: steps.metadata.outputs.test_profile == 'go'
+      shell: bash
+      env:
+        MODULE_ROOT: ${{ steps.metadata.outputs.module_root }}
+        SOURCE_ROOT: ${{ inputs.source-root }}
+        TEST_PACKAGES: ${{ steps.metadata.outputs.test_packages }}
+      run: |
+        set -Eeuo pipefail
+        mapfile -t packages < <(jq -er '.[]' <<<"${TEST_PACKAGES}")
+        [[ "${#packages[@]}" -gt 0 ]]
+        (
+          cd "${SOURCE_ROOT}/${MODULE_ROOT}"
+          go test -mod=readonly "${packages[@]}"
+        )
+
+    - name: Run operator unit and API-server tests
+      if: steps.metadata.outputs.test_profile == 'operator-envtest'
+      shell: bash
+      env:
+        MODULE_ROOT: ${{ steps.metadata.outputs.module_root }}
+        SOURCE_ROOT: ${{ inputs.source-root }}
+      run: |
+        set -Eeuo pipefail
+        make -C "${SOURCE_ROOT}/${MODULE_ROOT}" test
+        git -C "${SOURCE_ROOT}" diff --exit-code -- "${MODULE_ROOT}"
+
+    - name: Reject unsupported test profile
+      if: steps.metadata.outputs.test_profile != 'go' && steps.metadata.outputs.test_profile != 'operator-envtest'
+      shell: bash
+      env:
+        TEST_PROFILE: ${{ steps.metadata.outputs.test_profile }}
+      run: |
+        echo "Unsupported component test profile: ${TEST_PROFILE}" >&2
+        exit 2

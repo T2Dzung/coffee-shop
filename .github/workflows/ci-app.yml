@@ -93,6 +93,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up typed component test policy
+        id: platformctl
+        uses: ./.github/actions/setup-platformctl
+        with:
+          setup-go: "false"
+
+      - name: Run component unit tests
+        uses: ./.github/actions/test-component
+        with:
+          component: ${{ matrix.component }}
+          platformctl: ${{ steps.platformctl.outputs.path }}
+
       - name: Build component binary
         run: bash scripts/ci/build-go-service.sh "${{ matrix.component }}"
 

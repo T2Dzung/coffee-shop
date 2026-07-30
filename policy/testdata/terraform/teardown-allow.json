@@ -1,1 +1,1 @@
-{"resource_changes":[{"address":"module.eks_nodes.aws_eks_node_group.this","change":{"actions":["delete"]}}]}
+{"resource_changes":[{"address":"module.eks_nodes.aws_eks_node_group.this","change":{"actions":["delete"]}},{"address":"aws_s3_object.golden_journey_code[0]","change":{"actions":["delete"]}}]}

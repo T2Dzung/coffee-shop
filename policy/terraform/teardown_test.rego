@@ -29,9 +29,18 @@ test_allow_bounded_slo_runtime_cleanup if {
 			{"address": "aws_synthetics_canary.golden_journey[0]", "change": {"actions": ["delete"]}},
 			{"address": "aws_cloudwatch_dashboard.golden_journey[0]", "change": {"actions": ["delete"]}},
 			{"address": "aws_iam_role_policy.synthetics_canary[0]", "change": {"actions": ["delete"]}},
+			{"address": "aws_s3_object.golden_journey_code[0]", "change": {"actions": ["delete"]}},
 		],
 	}
 	count(result) == 0
+}
+
+test_deny_similarly_named_slo_code_object if {
+	deny["teardown delete is outside the ephemeral allowlist: aws_s3_object.golden_journey_code_backup"] with input as {
+		"resource_changes": [
+			{"address": "aws_s3_object.golden_journey_code_backup", "change": {"actions": ["delete"]}},
+		],
+	}
 }
 
 test_deny_retained_github_delivery_role if {
