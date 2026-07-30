@@ -91,8 +91,14 @@ jobs:
           [[ "${LANE}" == "standard" || "${LANE}" == "maintenance" ]]
           [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD
+          allow_migration=false
+          if [[ "${LANE}" == "maintenance" ]]; then
+            allow_migration=true
+          fi
           components="$(
-            "${RUNNER_TEMP}/platformctl" component resolve --names "${COMPONENTS}" |
+            "${RUNNER_TEMP}/platformctl" component resolve \
+              --names "${COMPONENTS}" \
+              --allow-migration="${allow_migration}" |
               jq -c .
           )"
           jq -e 'length > 0' <<<"${components}" >/dev/null
