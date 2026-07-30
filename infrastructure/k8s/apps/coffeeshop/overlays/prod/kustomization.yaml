@@ -22,7 +22,7 @@ images:
 - digest: sha256:0644fc8ef0a179fb8844d1c5bc697cbc169eb68a1dff08cd8cef9bce993180d4
   name: go-coffeeshop-kitchen
   newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-kitchen
-- digest: sha256:bbe20bc8d2776ec0d0cb97a7588d152c3c413372848f104953ed8bda73d9e658
+- digest: sha256:63d24b00f838adadb51f6b814fe1725fe7e737c5dcbccd609d133d6fe6247203
   name: go-coffeeshop-migrate
   newName: 694637278772.dkr.ecr.ap-southeast-1.amazonaws.com/go-coffeeshop-migrate
 - digest: sha256:4df4baf126f29e89b4bda7b93b7509d62c8ab55c76a048f9bbff7383ede6e7d4
