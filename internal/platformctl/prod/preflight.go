@@ -55,6 +55,15 @@ func (o *RealOperations) Preflight(ctx context.Context, action Action) error {
 		if os.Getenv("PROD_CONFIRM_TEARDOWN") != o.Config.AccountID {
 			return fmt.Errorf("set PROD_CONFIRM_TEARDOWN=%s for account-scoped teardown", o.Config.AccountID)
 		}
+		restoreTargets, err := o.AWS.FindTaggedRDSResources(ctx, map[string]string{
+			"Project": o.Config.ProjectName, "Environment": o.Config.Environment, "Purpose": "restore-drill",
+		})
+		if err != nil {
+			return fmt.Errorf("restore drill inventory before teardown: %w", err)
+		}
+		if len(restoreTargets) != 0 {
+			return fmt.Errorf("cleanup restore drill target before PROD teardown: %s", restoreTargets[0].ARN)
+		}
 	case ActionResilience:
 		if os.Getenv("PROD_CONFIRM_RESILIENCE") != o.Config.AccountID {
 			return fmt.Errorf("set PROD_CONFIRM_RESILIENCE=%s for controlled failure fixtures", o.Config.AccountID)

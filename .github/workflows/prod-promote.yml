@@ -1,4 +1,4 @@
-name: PROD — Promote QA-Approved Digest
+name: PROD — Promote Reviewed Digest
 
 on:
   push:
@@ -6,12 +6,20 @@ on:
       - infrastructure/release-candidates/*/qa/*.json
   workflow_dispatch:
     inputs:
+      promotion_lane:
+        description: Standard QA-approved release or manually reviewed stateful maintenance
+        required: true
+        default: standard
+        type: choice
+        options:
+          - standard
+          - maintenance
       components:
-        description: Comma-separated QA-approved component names from one release set
+        description: Comma-separated reviewed component names from one release set
         required: true
         type: string
       source_commit:
-        description: Full 40-character commit of the QA-approved candidate
+        description: Full 40-character commit of the reviewed candidate
         required: true
 
 permissions:
@@ -25,7 +33,7 @@ concurrency:
 
 jobs:
   resolve:
-    name: Resolve QA-Approved Release Set
+    name: Resolve Reviewed Release Set
     if: github.event_name == 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -33,6 +41,8 @@ jobs:
     outputs:
       components: ${{ steps.resolve.outputs.components }}
       source_commit: ${{ steps.resolve.outputs.source_commit }}
+      lane: ${{ steps.resolve.outputs.lane }}
+      destination_tag_prefix: ${{ steps.resolve.outputs.destination_tag_prefix }}
     steps:
       - name: Checkout protected desired state
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -49,11 +59,13 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
+          INPUT_LANE: ${{ inputs.promotion_lane }}
           INPUT_COMPONENTS: ${{ inputs.components }}
           INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -Eeuo pipefail
           if [[ "${EVENT_NAME}" == "push" ]]; then
+            LANE="standard"
             [[ "${BEFORE_SHA}" =~ ^[0-9a-f]{40}$ && "${AFTER_SHA}" =~ ^[0-9a-f]{40}$ ]]
             mapfile -t qa_files < <(
               git diff --diff-filter=AM --name-only "${BEFORE_SHA}" "${AFTER_SHA}" -- \
@@ -72,9 +84,11 @@ jobs:
             SOURCE_COMMIT="$(jq -er '.[0]' <<<"${source_commits}")"
             COMPONENTS="$(jq -er 'join(",")' <<<"${components_json}")"
           else
+            LANE="${INPUT_LANE}"
             SOURCE_COMMIT="${INPUT_SOURCE_COMMIT}"
             COMPONENTS="${INPUT_COMPONENTS}"
           fi
+          [[ "${LANE}" == "standard" || "${LANE}" == "maintenance" ]]
           [[ "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "${SOURCE_COMMIT}" HEAD
           components="$(
@@ -82,10 +96,20 @@ jobs:
               jq -c .
           )"
           jq -e 'length > 0' <<<"${components}" >/dev/null
-          echo "components=${components}" >>"${GITHUB_OUTPUT}"
-          echo "source_commit=${SOURCE_COMMIT}" >>"${GITHUB_OUTPUT}"
+          if [[ "${LANE}" == "maintenance" ]]; then
+            jq -e 'length == 1' <<<"${components}" >/dev/null
+            destination_tag_prefix="maintenance"
+          else
+            destination_tag_prefix="release"
+          fi
+          {
+            echo "components=${components}"
+            echo "source_commit=${SOURCE_COMMIT}"
+            echo "lane=${LANE}"
+            echo "destination_tag_prefix=${destination_tag_prefix}"
+          } >>"${GITHUB_OUTPUT}"
 
-  copy-standard:
+  copy-reviewed:
     name: Copy ${{ matrix.component }} to PROD
     needs: [resolve]
     runs-on: ubuntu-latest
@@ -108,25 +132,28 @@ jobs:
         id: platformctl
         uses: ./.github/actions/setup-platformctl
 
-      - name: Resolve QA-approved candidate
+      - name: Resolve reviewed candidate
         id: artifact
         env:
           COMPONENT: ${{ matrix.component }}
           SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+          LANE: ${{ needs.resolve.outputs.lane }}
         run: |
           set -Eeuo pipefail
           "${RUNNER_TEMP}/platformctl" component describe --name "${COMPONENT}" \
             >"${RUNNER_TEMP}/component.json"
-          kind="$(jq -er .kind "${RUNNER_TEMP}/component.json")"
-          [[ "${kind}" != "migration" ]] || {
-            echo "Migration promotion requires its dedicated stateful workflow." >&2
-            exit 1
-          }
-          "${RUNNER_TEMP}/platformctl" release standard \
-            --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
-            --candidate "infrastructure/release-candidates/${COMPONENT}/${SOURCE_COMMIT}.json" \
-            --qa "infrastructure/release-candidates/${COMPONENT}/qa/${SOURCE_COMMIT}.json" \
-            >"${RUNNER_TEMP}/artifact.json"
+          candidate="infrastructure/release-candidates/${COMPONENT}/${SOURCE_COMMIT}.json"
+          if [[ "${LANE}" == "maintenance" ]]; then
+            "${RUNNER_TEMP}/platformctl" release maintenance \
+              --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+              --candidate "${candidate}" >"${RUNNER_TEMP}/artifact.json"
+          else
+            "${RUNNER_TEMP}/platformctl" release standard \
+              --service "${COMPONENT}" --source-commit "${SOURCE_COMMIT}" \
+              --candidate "${candidate}" \
+              --qa "infrastructure/release-candidates/${COMPONENT}/qa/${SOURCE_COMMIT}.json" \
+              >"${RUNNER_TEMP}/artifact.json"
+          fi
           {
             echo "source_image=$(jq -er .image "${RUNNER_TEMP}/artifact.json")"
             echo "source_digest=$(jq -er .digest "${RUNNER_TEMP}/artifact.json")"
@@ -145,7 +172,7 @@ jobs:
             exit 1
           }
 
-      - name: Configure standard PROD identity
+      - name: Configure PROD promotion identity
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
@@ -170,7 +197,7 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${ARTIFACT}"
 
-      - name: Re-scan exact QA-approved candidate
+      - name: Re-scan exact reviewed candidate
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           version: v0.72.0
@@ -182,14 +209,14 @@ jobs:
           severity: CRITICAL
           cache: "true"
 
-      - name: Copy exact standard candidate without rebuild
+      - name: Copy exact reviewed candidate without rebuild
         id: prod-copy
         uses: ./.github/actions/copy-immutable-artifact
         with:
           source-image: ${{ steps.artifact.outputs.source_image }}
           source-digest: ${{ steps.artifact.outputs.source_digest }}
           destination-image: ${{ steps.prod-ecr.outputs.registry }}/${{ steps.artifact.outputs.repository }}
-          destination-tag: release-${{ needs.resolve.outputs.source_commit }}
+          destination-tag: ${{ needs.resolve.outputs.destination_tag_prefix }}-${{ needs.resolve.outputs.source_commit }}
 
       - name: Sign and verify PROD repository identity
         env:
@@ -213,6 +240,7 @@ jobs:
         env:
           COMPONENT: ${{ matrix.component }}
           SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+          LANE: ${{ needs.resolve.outputs.lane }}
           PROD_IMAGE: ${{ steps.prod-copy.outputs.image }}
           PROD_DIGEST: ${{ steps.prod-copy.outputs.digest }}
         run: |
@@ -221,10 +249,11 @@ jobs:
           jq -n \
             --arg service "${COMPONENT}" \
             --arg source_commit "${SOURCE_COMMIT}" \
+            --arg lane "${LANE}" \
             --arg prod_image "${PROD_IMAGE}" \
             --arg prod_digest "${PROD_DIGEST}" \
             --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{schema_version: 1, lane: "standard", service: $service,
+            '{schema_version: 1, lane: $lane, service: $service,
               source_commit: $source_commit, prod_image: $prod_image,
               prod_digest: $prod_digest, workflow_run: $workflow_run}' \
             >"${RUNNER_TEMP}/prod-artifact/${COMPONENT}.json"
@@ -232,13 +261,13 @@ jobs:
       - name: Upload immutable PROD artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: prod-standard-${{ matrix.component }}
+          name: prod-${{ needs.resolve.outputs.lane }}-${{ matrix.component }}
           path: ${{ runner.temp }}/prod-artifact/${{ matrix.component }}.json
           retention-days: 3
 
-  submit-standard:
-    name: Submit Atomic PROD Release Set
-    needs: [resolve, copy-standard]
+  submit-reviewed:
+    name: Submit Reviewed PROD Release Set
+    needs: [resolve, copy-reviewed]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -260,24 +289,26 @@ jobs:
       - name: Download immutable PROD artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: prod-standard-*
-          path: ${{ runner.temp }}/prod-standard
+          pattern: prod-${{ needs.resolve.outputs.lane }}-*
+          path: ${{ runner.temp }}/prod-reviewed
           merge-multiple: true
 
       - name: Stage one reviewed PROD release set
         env:
           COMPONENTS: ${{ needs.resolve.outputs.components }}
           SOURCE_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+          LANE: ${{ needs.resolve.outputs.lane }}
         run: |
           set -Eeuo pipefail
           : >"${RUNNER_TEMP}/prod-overlays"
           while IFS= read -r component; do
-            metadata="${RUNNER_TEMP}/prod-standard/${component}.json"
+            metadata="${RUNNER_TEMP}/prod-reviewed/${component}.json"
             [[ -f "${metadata}" ]]
             jq -e \
               --arg service "${component}" \
               --arg source_commit "${SOURCE_COMMIT}" \
-              '.schema_version == 1 and .lane == "standard" and
+              --arg lane "${LANE}" \
+              '.schema_version == 1 and .lane == $lane and
                .service == $service and .source_commit == $source_commit and
                (.prod_image | length > 0) and
                (.prod_digest | test("^sha256:[0-9a-f]{64}$")) and
@@ -297,10 +328,10 @@ jobs:
             )
             printf '%s\n' "${overlay}" >>"${RUNNER_TEMP}/prod-overlays"
 
-            release_file="infrastructure/releases/prod/lanes/standard/${component}/${SOURCE_COMMIT}.json"
+            release_file="infrastructure/releases/prod/lanes/${LANE}/${component}/${SOURCE_COMMIT}.json"
             mkdir -p "$(dirname "${release_file}")"
             "${RUNNER_TEMP}/platformctl" release manifest \
-              --lane standard --service "${component}" --source-commit "${SOURCE_COMMIT}" \
+              --lane "${LANE}" --service "${component}" --source-commit "${SOURCE_COMMIT}" \
               --image "${image}" --digest "${digest}" --workflow-run "${workflow_run}" \
               >"${release_file}"
           done < <(jq -r '.[]' <<<"${COMPONENTS}")
@@ -313,24 +344,24 @@ jobs:
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add infrastructure/releases/prod/lanes/standard
-          git commit -m "chore(prod): standard release set ${SOURCE_COMMIT::12}"
+          git add "infrastructure/releases/prod/lanes/${LANE}"
+          git commit -m "chore(prod): ${LANE} release set ${SOURCE_COMMIT::12}"
 
       - name: Open one protected PROD desired-state PR
         uses: ./.github/actions/submit-gitops-pr
         with:
           token: ${{ secrets.GITOPS_PR_TOKEN }}
           base: ${{ github.event.repository.default_branch }}
-          branch: automation/prod-standard-set-${{ github.run_id }}-${{ github.run_attempt }}
-          title: "chore(prod): standard immutable release set"
+          branch: automation/prod-${{ needs.resolve.outputs.lane }}-set-${{ github.run_id }}-${{ github.run_attempt }}
+          title: "chore(prod): ${{ needs.resolve.outputs.lane }} immutable release set"
           body: >-
-            Atomically promotes every QA-approved component from protected commit
-            ${{ needs.resolve.outputs.source_commit }} without rebuilding.
-          auto-merge: "true"
+            Promotes every reviewed ${{ needs.resolve.outputs.lane }} component from protected
+            commit ${{ needs.resolve.outputs.source_commit }} without rebuilding.
+          auto-merge: ${{ needs.resolve.outputs.lane == 'standard' && 'true' || 'false' }}
 
   promotion-status:
     name: PROD Promotion Status
-    needs: [resolve, copy-standard, submit-standard]
+    needs: [resolve, copy-reviewed, submit-reviewed]
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -341,20 +372,20 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Notify failed PROD promotion submission
-        if: needs.submit-standard.result != 'success'
+        if: needs.submit-reviewed.result != 'success'
         uses: ./.github/actions/notify-telegram
         with:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           chat-id: ${{ secrets.TELEGRAM_TO }}
-          title: PROD standard promotion
+          title: PROD reviewed promotion
           status: FAILED
           details: Source commit ${{ needs.resolve.outputs.source_commit }}
 
       - name: Enforce PROD promotion result
         env:
           RESOLVE: ${{ needs.resolve.result }}
-          COPY: ${{ needs.copy-standard.result }}
-          SUBMIT: ${{ needs.submit-standard.result }}
+          COPY: ${{ needs.copy-reviewed.result }}
+          SUBMIT: ${{ needs.submit-reviewed.result }}
         run: |
           set -Eeuo pipefail
           [[ "${RESOLVE}" == "success" ]]

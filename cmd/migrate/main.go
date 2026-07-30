@@ -45,8 +45,12 @@ func main() {
 			glog.Fatalf("cmd/migrate: schema migration failed: %v", err)
 		}
 		glog.Infoln("cmd/migrate: database schema is ready")
+	case "restore-drill":
+		if err := runRestoreDrillFromEnvironment(); err != nil {
+			glog.Fatalf("cmd/migrate: restore drill action failed: %v", err)
+		}
 	default:
-		glog.Fatalf("cmd/migrate: MIGRATION_MODE must be bootstrap or migrate")
+		glog.Fatalf("cmd/migrate: MIGRATION_MODE must be bootstrap, migrate or restore-drill")
 	}
 }
 

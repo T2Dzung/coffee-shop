@@ -376,7 +376,10 @@ func runCI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 
 func runProd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl prod <setup|reconcile|status|resilience|teardown> [flags]")
+		return fmt.Errorf("usage: platformctl prod <setup|reconcile|status|resilience|teardown|restore-drill> [flags]")
+	}
+	if args[0] == "restore-drill" {
+		return runProdRestoreDrill(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
 	}
 	action := prod.Action(args[0])
 	if !action.Valid() {
@@ -425,6 +428,97 @@ func runProd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stdout, "Evidence:", *evidencePath)
 	}
 	return runErr
+}
+
+func runProdRestoreDrill(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, operatorConfig string) error {
+	if len(args) == 0 || (args[0] != "run" && args[0] != "status" && args[0] != "cleanup") {
+		return fmt.Errorf("usage: platformctl prod restore-drill <run|status|cleanup> [--state path] [--var-file path] [--evidence path]")
+	}
+	operation := args[0]
+	flags := flag.NewFlagSet("prod restore-drill "+operation, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	varFile := flags.String("var-file", "", "PROD Terraform tfvars file")
+	statePath := flags.String("state", "", "private restore drill state JSON path")
+	evidencePath := flags.String("evidence", "", "structured evidence JSON path")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected restore drill arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if *statePath == "" && operation != "run" {
+		return fmt.Errorf("--state is required for restore-drill %s", operation)
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	loader := config.NewLoader()
+	loader.OperatorConfigPath = operatorConfig
+	cfg, err := loader.LoadProd(root, *varFile)
+	if err != nil {
+		return err
+	}
+	if *statePath == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return fmt.Errorf("resolve default restore drill state directory: %w", homeErr)
+		}
+		*statePath = filepath.Join(home, "coffeeshop-evidence", "platformctl",
+			time.Now().UTC().Format("20060102T150405.000000000Z")+"-prod-restore-drill-state.json")
+	}
+	if *evidencePath == "" {
+		base := strings.TrimSuffix(*statePath, filepath.Ext(*statePath))
+		*evidencePath = base + "-" + operation + "-evidence.json"
+	}
+	runner := command.OSRunner{Stdout: stdout, Stderr: stderr}
+	approver := prod.ConsoleApprover{Input: stdin, Output: stdout}
+	base := prod.NewRealOperations(cfg, runner, approver, stdout)
+	recorder := evidence.New("prod-restore-drill-" + operation)
+	engine := prod.RestoreDrillEngine{
+		Operations: prod.NewRealRestoreDrillOperations(base), Approver: approver,
+		State: prod.FileRestoreDrillStateStore{Path: *statePath}, Evidence: recorder,
+	}
+	var runErr error
+	switch operation {
+	case "run":
+		var state prod.RestoreDrillState
+		state, runErr = engine.Run(ctx)
+		if state.DrillID != "" {
+			if err := writeJSON(stdout, state); err != nil && runErr == nil {
+				runErr = err
+			}
+		}
+	case "status":
+		var state prod.RestoreDrillState
+		var status prod.RestoreDrillStatus
+		state, status, runErr = engine.Status(ctx)
+		recorder.Finish(resultForEvidence(runErr))
+		if runErr == nil {
+			runErr = writeJSON(stdout, map[string]any{"state": state, "live": status})
+		}
+	case "cleanup":
+		var state prod.RestoreDrillState
+		state, runErr = engine.Cleanup(ctx)
+		if state.DrillID != "" {
+			if err := writeJSON(stdout, state); err != nil && runErr == nil {
+				runErr = err
+			}
+		}
+	}
+	if err := evidence.WriteAtomic(*evidencePath, recorder.Snapshot()); err != nil && runErr == nil {
+		runErr = err
+	}
+	fmt.Fprintln(stdout, "State:", *statePath)
+	fmt.Fprintln(stdout, "Evidence:", *evidencePath)
+	return runErr
+}
+
+func resultForEvidence(err error) string {
+	if err != nil {
+		return "failed"
+	}
+	return "passed"
 }
 
 func runValidate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -493,12 +587,12 @@ func policyEvaluator(runner command.Runner, root string) policy.Evaluator {
 
 func runRelease(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl release <identity|request|candidate|dev|standard|rollback|manifest> ...")
+		return fmt.Errorf("usage: platformctl release <identity|request|candidate|dev|standard|maintenance|rollback|manifest> ...")
 	}
 	switch args[0] {
 	case "identity":
 		flags := flag.NewFlagSet("release identity", flag.ContinueOnError)
-		lane := flags.String("lane", "", "standard, emergency or rollback")
+		lane := flags.String("lane", "", "standard, emergency, rollback or maintenance")
 		service := flags.String("service", "", "service name")
 		commit := flags.String("source-commit", "", "source commit")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -542,6 +636,22 @@ func runRelease(args []string, stdout io.Writer) error {
 			return err
 		}
 		artifact, err := releasepolicy.ValidateStandard(*service, *commit, *candidate, *qa)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, artifact)
+	case "maintenance":
+		flags := flag.NewFlagSet("release maintenance", flag.ContinueOnError)
+		service := flags.String("service", "", "stateful maintenance component name")
+		commit := flags.String("source-commit", "", "source commit")
+		candidate := flags.String("candidate", "", "candidate JSON")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := validateMigrationComponent(*service); err != nil {
+			return err
+		}
+		artifact, err := releasepolicy.ValidateMaintenance(*service, *commit, *candidate)
 		if err != nil {
 			return err
 		}
@@ -608,7 +718,11 @@ func runRelease(args []string, stdout io.Writer) error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		if err := validateReleaseComponent(*service); err != nil {
+		if *lane == "maintenance" {
+			if err := validateMigrationComponent(*service); err != nil {
+				return err
+			}
+		} else if err := validateReleaseComponent(*service); err != nil {
 			return err
 		}
 		manifest, err := releasepolicy.NewManifest(
@@ -633,7 +747,22 @@ func validateReleaseComponent(name string) error {
 		return err
 	}
 	if entry.Kind == "migration" {
-		return fmt.Errorf("migration component %q requires its dedicated stateful release flow", name)
+		return fmt.Errorf("migration component %q requires the stateful maintenance release lane", name)
+	}
+	return nil
+}
+
+func validateMigrationComponent(name string) error {
+	catalog, err := component.Load(filepath.Join("platform", "components.yaml"))
+	if err != nil {
+		return err
+	}
+	entry, err := catalog.Find(name)
+	if err != nil {
+		return err
+	}
+	if entry.Kind != "migration" {
+		return fmt.Errorf("maintenance component %q must have kind migration", name)
 	}
 	return nil
 }

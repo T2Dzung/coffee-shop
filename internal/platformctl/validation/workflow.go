@@ -52,13 +52,13 @@ func normalizeCandidateContracts(document map[string]any, result *workflowPolicy
 	if name, _ := document["name"].(string); name == "Build immutable component" {
 		result.ARCBuildUsesAWSCLI = containsRunText(document, "aws ")
 	}
-	if name, _ := document["name"].(string); name == "PROD — Promote QA-Approved Digest" {
-		copyJob := asMap(jobs["copy-standard"])
-		submitJob := asMap(jobs["submit-standard"])
+	if name, _ := document["name"].(string); name == "PROD — Promote Reviewed Digest" {
+		copyJob := asMap(jobs["copy-reviewed"])
+		submitJob := asMap(jobs["submit-reviewed"])
 		statusJob := asMap(jobs["promotion-status"])
 		copyMatrix := asMap(asMap(copyJob["strategy"])["matrix"])
 		result.ProdStandardMissingAtomicFanIn = len(copyMatrix) == 0 ||
-			!containsString(submitJob["needs"], "copy-standard") ||
+			!containsString(submitJob["needs"], "copy-reviewed") ||
 			containsUsesReference(copyJob, "./.github/actions/submit-gitops-pr") ||
 			!containsUsesReference(submitJob, "./.github/actions/submit-gitops-pr")
 		statusCondition, _ := statusJob["if"].(string)

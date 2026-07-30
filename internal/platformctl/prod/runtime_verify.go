@@ -27,6 +27,12 @@ type loadBalancersDocument struct {
 	} `json:"LoadBalancers"`
 }
 
+type taggedResourcesDocument struct {
+	Resources []struct {
+		ARN string `json:"ResourceARN"`
+	} `json:"ResourceTagMappingList"`
+}
+
 type targetGroupsDocument struct {
 	TargetGroups []struct {
 		ARN             string `json:"TargetGroupArn"`
@@ -180,6 +186,60 @@ func (o *RealOperations) verifyIngress(ctx context.Context, verifyWrite bool) er
 	fmt.Fprintf(o.Output, "Runtime ingress passed: web/proxy target groups healthy (%d target(s)), %d ALB AZ(s), %s succeeded.\n",
 		totalHealthy, len(zones), verification)
 	return nil
+}
+
+func (o *RealOperations) sloTargetAvailable(ctx context.Context) (bool, error) {
+	resources, err := o.prodALBTaggedResources(ctx)
+	if err != nil {
+		return false, fmt.Errorf("discover PROD ALB for Synthetics: %w", err)
+	}
+	switch len(resources.Resources) {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		return false, fmt.Errorf("discover PROD ALB for Synthetics: expected at most one tagged ALB, found %d", len(resources.Resources))
+	}
+}
+
+func (o *RealOperations) waitForSLOTarget(ctx context.Context) error {
+	return o.wait(ctx, "PROD ALB target for Synthetics", func(ctx context.Context) (bool, error) {
+		hostname, err := o.Kube.Kubectl(ctx, nil, "get", "ingress", "coffeeshop-prod-alb-ingress",
+			"-n", "coffeeshop", "-o", "jsonpath={.status.loadBalancer.ingress[0].hostname}")
+		if err != nil || hostname == "" {
+			return false, nil
+		}
+
+		var lbs loadBalancersDocument
+		if err := o.AWS.JSON(ctx, &lbs, "elbv2", "describe-load-balancers", "--output", "json"); err != nil {
+			return false, err
+		}
+		arn, _, active, err := activeApplicationLoadBalancer(lbs, hostname)
+		if err != nil || !active {
+			return false, err
+		}
+
+		resources, err := o.prodALBTaggedResources(ctx)
+		if err != nil {
+			return false, err
+		}
+		if len(resources.Resources) > 1 {
+			return false, fmt.Errorf("expected exactly one tagged PROD ALB, found %d", len(resources.Resources))
+		}
+		return len(resources.Resources) == 1 && resources.Resources[0].ARN == arn, nil
+	})
+}
+
+func (o *RealOperations) prodALBTaggedResources(ctx context.Context) (taggedResourcesDocument, error) {
+	var resources taggedResourcesDocument
+	err := o.AWS.JSON(ctx, &resources,
+		"resourcegroupstaggingapi", "get-resources",
+		"--resource-type-filters", "elasticloadbalancing:loadbalancer",
+		"--tag-filters", "Key=ingress.k8s.aws/stack,Values=coffeeshop/coffeeshop-prod-alb-ingress",
+		"--output", "json",
+	)
+	return resources, err
 }
 
 func targetGroupForService(groups targetGroupsDocument, service string, port int) (string, string, error) {

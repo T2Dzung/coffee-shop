@@ -10,9 +10,10 @@ import (
 )
 
 type fakeOperations struct {
-	calls       []string
-	failAt      string
-	planSummary platformterraform.Summary
+	calls         []string
+	failAt        string
+	planSummary   platformterraform.Summary
+	planSummaries []platformterraform.Summary
 }
 
 func (f *fakeOperations) call(name string) error {
@@ -25,7 +26,12 @@ func (f *fakeOperations) call(name string) error {
 func (f *fakeOperations) Preflight(context.Context, Action) error { return f.call("preflight") }
 func (f *fakeOperations) Bootstrap(context.Context) error         { return f.call("bootstrap") }
 func (f *fakeOperations) Plan(context.Context, Action) (Plan, error) {
-	return Plan{Artifact: platformterraform.Plan{Summary: f.planSummary}}, f.call("plan")
+	summary := f.planSummary
+	if len(f.planSummaries) > 0 {
+		summary = f.planSummaries[0]
+		f.planSummaries = f.planSummaries[1:]
+	}
+	return Plan{Artifact: platformterraform.Plan{Summary: summary}}, f.call("plan")
 }
 func (f *fakeOperations) BeforeApply(context.Context, Action) error {
 	return f.call("before-apply")
@@ -44,8 +50,8 @@ func TestSetupStateMachine(t *testing.T) {
 	approver := &fakeApprover{}
 	err := (Engine{Operations: operations, Approver: approver}).Run(context.Background(), ActionSetup)
 	require.NoError(t, err)
-	require.Equal(t, []string{"preflight", "bootstrap", "plan", "before-apply", "apply", "configure", "verify"}, operations.calls)
-	require.Equal(t, 1, approver.calls)
+	require.Equal(t, []string{"preflight", "bootstrap", "plan", "before-apply", "apply", "configure", "plan", "before-apply", "apply", "verify"}, operations.calls)
+	require.Equal(t, 2, approver.calls)
 }
 
 func TestSetupStopsAtFailure(t *testing.T) {
@@ -54,6 +60,18 @@ func TestSetupStopsAtFailure(t *testing.T) {
 	err := (Engine{Operations: operations, Approver: &fakeApprover{}}).Run(context.Background(), ActionSetup)
 	require.ErrorContains(t, err, "apply")
 	require.Equal(t, []string{"preflight", "bootstrap", "plan", "before-apply", "apply"}, operations.calls)
+}
+
+func TestSetupSkipsApprovalAndApplyForEmptyConvergencePlan(t *testing.T) {
+	t.Parallel()
+	operations := &fakeOperations{planSummaries: []platformterraform.Summary{{Create: 1}, {}}}
+	approver := &fakeApprover{}
+
+	err := (Engine{Operations: operations, Approver: approver}).Run(context.Background(), ActionSetup)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"preflight", "bootstrap", "plan", "before-apply", "apply", "configure", "plan", "verify"}, operations.calls)
+	require.Equal(t, 1, approver.calls)
 }
 
 func TestTeardownHasNoConfigureOrRuntimeVerify(t *testing.T) {
