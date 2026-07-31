@@ -95,7 +95,7 @@ func (o *RealOperations) Plan(ctx context.Context, action Action) (Plan, error) 
 	if err := o.initRemote(ctx, o.FoundationTF, o.Config.FoundationStateKey); err != nil {
 		return Plan{}, err
 	}
-	client := o.FoundationTF
+	client := foundationPlanClient(o.FoundationTF, action)
 	if action == ActionSetup && !o.setupPlanCreated {
 		o.setupPlanCreated = true
 		if o.Config.SLOEnabled {
@@ -132,6 +132,19 @@ func (o *RealOperations) Plan(ctx context.Context, action Action) (Plan, error) 
 	}
 	plan := Plan{Artifact: artifact, Human: human}
 	return plan, nil
+}
+
+func foundationPlanClient(client platformterraform.Client, action Action) platformterraform.Client {
+	if action != ActionTeardown {
+		return client
+	}
+
+	// A teardown must not require the controller-managed ALB to still exist.
+	// Existing Synthetics instances remain in Terraform state and are therefore
+	// included in the destroy plan even when their configured count becomes zero.
+	client.BooleanVariables = copyBooleanVariables(client.BooleanVariables)
+	client.BooleanVariables["slo_runtime_enabled"] = false
+	return client
 }
 
 func (o *RealOperations) BeforeApply(ctx context.Context, action Action) error {
