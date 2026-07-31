@@ -58,6 +58,11 @@ traffic directly to EKS Pod IPs. Application data lives in private encrypted RDS
 secrets come from Secrets Manager through External Secrets, and RabbitMQ remains a
 three-node operator-managed workload backed by EBS.
 
+The PROD operating path also includes a CloudWatch Synthetics golden journey with an
+alert runbook and an isolated RDS point-in-time restore drill. The restore drill creates
+and validates a temporary private database, then removes that exact target; it never
+redirects application traffic or overwrites the source database.
+
 The [architecture guide](docs/architecture.md) explains every request, data, operator,
 telemetry and GitOps path shown in these diagrams. The [platform layout](docs/platform-layout.md)
 maps those responsibilities to their source directories.
@@ -193,6 +198,18 @@ Setup and teardown use one reviewed Terraform saved-plan boundary before mutatio
 [Kubernetes source-of-truth guide](infrastructure/k8s/README.md) explains what Terraform,
 Ansible and Argo CD each own.
 
+The optional recovery drill has a separate state and approval boundary:
+
+```bash
+bash scripts/platformctl.sh prod restore-drill run --state "$HOME/coffeeshop-evidence/prod-pitr.json"
+bash scripts/platformctl.sh prod restore-drill status --state "$HOME/coffeeshop-evidence/prod-pitr.json"
+bash scripts/platformctl.sh prod restore-drill cleanup --state "$HOME/coffeeshop-evidence/prod-pitr.json"
+```
+
+Read the [PITR drill runbook](docs/runbooks/prod-rds-pitr-drill.md) before running these
+commands. The drill creates a billable RDS target and requires separate literal
+approvals for restore and cleanup.
+
 `ci setup` installs the ARC controller and the `trusted-build` runner scale set;
 `ci status` checks the EC2, K3s and ARC boundaries; `ci teardown` removes the billable
 runner plane while retaining its remote state. The normal automatic post-merge candidate
@@ -232,8 +249,8 @@ immutable digest and reconciliation back to protected source.
 | GitOps | Argo CD Applications, Kustomize bases/overlays and immutable ECR digests |
 | CI/CD | GitHub Actions, ARC, component-aware builds, QA records, promotion and rollback |
 | Security | OIDC-based AWS access, private networking, network policies, Trivy, SBOM and Cosign |
-| Data | CloudNativePG/Longhorn in DEV; RDS/EBS in PROD; RabbitMQ Operator in both profiles |
-| Observability | Prometheus, Grafana, Loki, Tempo and OpenTelemetry in DEV; CloudWatch integrations in PROD |
+| Data and recovery | CloudNativePG/Longhorn in DEV; RDS/EBS in PROD; RabbitMQ Operator in both profiles; isolated RDS PITR drill |
+| Observability | Prometheus, Grafana, Loki, Tempo and OpenTelemetry in DEV; CloudWatch, Synthetics and an alert runbook in PROD |
 | Kubernetes operations | HPA, controlled failure rehearsals and [PlatformOwnershipGuard](platform-ownership-guard/README.md) |
 
 ## Documentation
@@ -243,13 +260,19 @@ immutable digest and reconciliation back to protected source.
 - [Infrastructure and platform code layout](docs/platform-layout.md)
 - [Kubernetes source-of-truth layout](infrastructure/k8s/README.md)
 - [PlatformOwnershipGuard](platform-ownership-guard/README.md)
+- [PROD golden-journey runbook](docs/runbooks/prod-golden-journey.md)
+- [PROD RDS PITR drill runbook](docs/runbooks/prod-rds-pitr-drill.md)
 
-## Roadmap
+## Project scope
 
-- Generalize the existing PlatformOwnershipGuard detectors across built-in resources
-  and third-party operator CRDs.
-- Connect one measured service objective to alerting and a response runbook.
-- Rehearse an isolated RDS point-in-time restore.
+The planned portfolio scope is complete. The repository contains the self-managed DEV
+platform, the dedicated CI runner plane, the AWS-managed PROD profile,
+PlatformOwnershipGuard, the measured golden journey and the isolated RDS PITR drill.
+
+It is intentionally not presented as a commercial production system. The current
+cost-bounded profile uses HTTP rather than a custom-domain TLS listener, Single-AZ RDS,
+a single-node on-demand CI plane and no multi-Region disaster-recovery cutover. Those are
+explicit design boundaries, not hidden roadmap promises.
 
 ## License and attribution
 

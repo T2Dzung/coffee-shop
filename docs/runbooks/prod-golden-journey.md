@@ -12,7 +12,7 @@ GET /api/v1/api/item-types
 ```
 
 The alarm fires when at least two of three datapoints are below 100 percent. Missing
-datapoints are treated as breaching. O2 has no SNS or paging integration; the alarm is
+datapoints are treated as breaching. This profile has no SNS or paging integration; the alarm is
 an operating exercise, not evidence of a staffed on-call service or an external SLA.
 
 ## 1. Confirm the symptom
@@ -123,7 +123,7 @@ Recovery requires all of the following:
 5. Argo CD reports the platform and application sources Synced and Healthy.
 
 Record what failed, the source revision that repaired it, the alarm transition and any
-unverified dependency. A short O2 evidence window proves the mechanism and transition;
+unverified dependency. A short controlled exercise proves the mechanism and transition;
 it does not prove 24-hour SLO compliance.
 
 ## 7. Follow the PROD lifecycle
@@ -136,7 +136,7 @@ its lifecycle policy. The next `platformctl prod setup` recreates the SLO runtim
 Terraform source.
 
 To stop only the SLO runtime while leaving PROD online, set `slo_runtime_enabled = false`,
-review the `platformctl prod reconcile` saved plan and require exactly the six O2 runtime
+review the `platformctl prod reconcile` saved plan and require exactly the six lifecycle-bound runtime
 deletes with no replacement or unrelated change. Do not leave a stopped canary behind a
 missing-data-breaching alarm; the bounded reconcile removes the alarm and dashboard with
 the canary.

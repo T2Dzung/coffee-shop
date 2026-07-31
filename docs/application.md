@@ -28,6 +28,20 @@ order workflow.
 | Kitchen | Worker only | Food preparation events |
 | Web | <http://localhost:8888> | Browser user interface |
 
+### Data ownership boundary
+
+The stateful services use one logical PostgreSQL database in both runtime profiles:
+CloudNativePG provides it in DEV and Amazon RDS provides it in PROD. `counter`,
+`barista` and `kitchen` write to separate `order`, `barista` and `kitchen` schemas.
+`product` keeps its small catalogue in memory, while `proxy` and `web` are stateless.
+
+The three stateful services currently share the non-master `coffeeshop_app` database
+role. Schema ownership is therefore an application convention rather than a
+database-enforced service security boundary. A future hardening path is to separate the
+migration role from schema-scoped runtime roles; separate databases or PostgreSQL
+instances would only be justified by independent scaling, fault-isolation or recovery
+requirements.
+
 The application stack includes Go, gRPC Gateway, Echo, RabbitMQ, PostgreSQL, sqlc,
 golang-migrate and Wire.
 

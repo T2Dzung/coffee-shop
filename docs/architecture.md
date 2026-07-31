@@ -65,8 +65,9 @@ HTTPS listener is declared in the active PROD Ingress.
   CSI and CloudWatch agent separate AWS identities.
 - External Secrets Operator reads only the allowed Secrets Manager records and owns the
   generated Kubernetes Secrets. Application Pods never read Secrets Manager directly.
-- Argo CD runs a bootstrap Job with the RDS master credential, then a migration Job with
-  the least-privilege application credential before rolling out the six services.
+- Argo CD runs a bootstrap Job with the RDS master credential to create or rotate the
+  shared non-master `coffeeshop_app` role. The migration Job and the three stateful
+  services use that role; it is not a per-service database security boundary.
 - CloudWatch Container Insights, logs and alarms are the PROD observability boundary.
   Terraform defines a lifecycle-bound Synthetics canary for the public read-only
   `item-types` journey and links its alarm to the
@@ -77,10 +78,16 @@ HTTPS listener is declared in the active PROD Ingress.
   is not copied into PROD.
 - Three Argo CD Applications independently own the platform dependencies, CoffeeShop
   workload overlay and PlatformOwnershipGuard.
+- `platformctl prod restore-drill` exercises the configured RDS automated-backup path.
+  It restores an exact timestamp into a separate private Single-AZ target, validates
+  before/after markers plus a bounded application schema, and requires a second approval
+  to remove that exact target. It does not change the application Secret, endpoint or
+  traffic path. See the [PITR drill runbook](runbooks/prod-rds-pitr-drill.md).
 
 RDS is private, encrypted and Single-AZ in the current cost-bounded profile. EKS nodes
 span two private subnets/AZs; the three RabbitMQ Pods are spread across the available
-worker nodes but do not prove three-AZ resilience.
+worker nodes but do not prove three-AZ resilience. The isolated PITR drill proves one
+bounded database recovery path, not Multi-AZ failover or full disaster recovery.
 
 ## Runtime and administrative endpoints
 

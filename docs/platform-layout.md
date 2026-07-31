@@ -38,7 +38,7 @@ lives under `internal/platformctl`:
 | `config` | Typed DEV, CI, PROD, GitHub and operator configuration with validation and precedence |
 | `dev` | DEV setup, status, teardown, approval and retained-recovery verification |
 | `ci` | Ephemeral CI infrastructure lifecycle and failure boundaries |
-| `prod` | PROD bootstrap, setup, verify, release gates, resilience checks and teardown |
+| `prod` | PROD bootstrap, setup, verify, release gates, resilience checks, isolated RDS restore drill and teardown |
 | `github` | Repository governance lifecycle and approval boundary |
 | `release` | Candidate, DEV, QA and PROD artifact identity contracts |
 | `component` | Typed reader for `platform/components.yaml` and change selection |
@@ -75,7 +75,7 @@ infrastructure/terraform/
 ├── envs/
 │   ├── dev/                     EC2/K3s, API endpoint, ECR, IAM, Longhorn EBS and backup S3
 │   ├── ci/                      Ephemeral ARC/CI compute and networking
-│   └── prod/                    VPC, EKS, managed nodes, ECR, RDS, IAM, secrets and alarms
+│   └── prod/                    VPC, EKS, managed nodes, ECR, RDS, IAM, secrets, Synthetics and alarms
 ├── github/                      GitHub environments, variables and protection governance
 └── modules/
     ├── ec2-instance/            Reusable DEV/CI compute
