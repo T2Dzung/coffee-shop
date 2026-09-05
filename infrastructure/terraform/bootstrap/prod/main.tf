@@ -22,16 +22,23 @@ check "expected_aws_region" {
 module "backend" {
   source = "../../modules/terraform-backend"
 
-  project_name       = var.project_name
-  environment        = "prod"
-  custom_bucket_name = var.custom_bucket_name
-  allowed_principals = var.allowed_principals
-  state_key_prefixes = ["prod/*"]
+  project_name          = var.project_name
+  environment           = "prod"
+  custom_bucket_name    = var.custom_bucket_name
+  allowed_principals    = var.allowed_principals
+  state_key_prefixes    = ["prod/*"]
+  state_encryption_mode = var.state_encryption_mode
   additional_backend_roles = {
     ci = {
       role_name          = "${var.project_name}-ci-terraform-backend-role"
       state_key_prefixes = ["ci/*"]
       allowed_principals = var.allowed_principals
+    }
+    dev = {
+      role_name          = "${var.project_name}-dev-terraform-backend-role"
+      state_key_prefixes = ["dev/*"]
+      allowed_principals = var.allowed_principals
+      kms_access         = false
     }
   }
   additional_tags = var.additional_tags

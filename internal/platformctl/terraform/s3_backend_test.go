@@ -24,5 +24,16 @@ func TestRenderS3BackendConfigUsesNestedAssumeRole(t *testing.T) {
 func TestRenderS3BackendConfigRejectsIncompleteInput(t *testing.T) {
 	t.Parallel()
 	_, err := renderS3BackendConfig(S3BackendConfig{Bucket: "state"})
-	require.ErrorContains(t, err, "bucket, key, region and KMS key ARN are required")
+	require.ErrorContains(t, err, "bucket, key and region are required")
+}
+
+func TestRenderS3BackendConfigOmitsKMSForSSES3(t *testing.T) {
+	t.Parallel()
+	content, err := renderS3BackendConfig(S3BackendConfig{
+		Bucket: "state", Key: "prod/terraform.tfstate", Region: "ap-southeast-1",
+		RoleARN: "arn:aws:iam::123456789012:role/state", Encrypt: true, UseLockfile: true,
+	})
+	require.NoError(t, err)
+	require.Contains(t, content, "encrypt = true")
+	require.NotContains(t, content, "kms_key_id")
 }

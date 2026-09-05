@@ -68,7 +68,7 @@ func NewRealOperations(cfg config.Prod, runner command.Runner, approver Approver
 			DataDir: filepath.Join(cacheRoot, "prod-bootstrap-"+cfg.AccountID),
 			Variables: map[string]string{
 				"aws_region": cfg.Region, "expected_aws_account_id": cfg.AccountID,
-				"project_name": cfg.ProjectName,
+				"project_name": cfg.ProjectName, "state_encryption_mode": cfg.StateEncryption,
 			},
 			Timeout:     timeout,
 			Environment: awsEnvironment(cfg.AWSProfile),

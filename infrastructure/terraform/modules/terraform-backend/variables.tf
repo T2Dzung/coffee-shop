@@ -37,12 +37,24 @@ variable "state_key_prefixes" {
   default     = ["*"]
 }
 
+variable "state_encryption_mode" {
+  description = "Backend encryption: sse-s3 removes the managed KMS key. Before applying the switch, independently archive and verify every encrypted state version."
+  type        = string
+  default     = "sse-kms"
+
+  validation {
+    condition     = contains(["sse-kms", "sse-s3"], var.state_encryption_mode)
+    error_message = "state_encryption_mode must be sse-kms or sse-s3."
+  }
+}
+
 variable "additional_backend_roles" {
   description = "Additional isolated backend roles keyed by logical environment"
   type = map(object({
     role_name          = string
     state_key_prefixes = list(string)
     allowed_principals = optional(list(string))
+    kms_access         = optional(bool, true)
   }))
   default = {}
 }

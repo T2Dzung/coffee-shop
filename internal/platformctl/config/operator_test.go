@@ -34,6 +34,7 @@ environments:
   ci:
     terraformVarFile: ci.tfvars
     awsProfile: from-file
+    stateEncryption: sse-s3
     sshPrivateKeyFile: ci.pem
     githubAuth:
       mode: pat
@@ -47,6 +48,7 @@ environments:
 	}).LoadCI("/repo", "")
 	require.NoError(t, err)
 	require.Equal(t, "from-env", cfg.AWSProfile)
+	require.Equal(t, StateEncryptionS3, cfg.StateEncryption)
 	require.Equal(t, key, cfg.SSHPrivateKey)
 	require.Equal(t, "secret-token", cfg.GitHubToken)
 }
@@ -93,6 +95,7 @@ environments:
   prod:
     terraformVarFile: prod.tfvars
     awsProfile: coffeeshop-prod
+    stateEncryption: sse-s3
 `), 0o600))
 	cfg, err := (Loader{OperatorConfigPath: operator}).LoadGitHub("/repo")
 	require.NoError(t, err)
@@ -104,6 +107,7 @@ environments:
 	require.Equal(t, "coffeeshop-terraform-state-123456789012", cfg.StateBucket)
 	require.Equal(t, "prod/github-governance.tfstate", cfg.StateKey)
 	require.Equal(t, "alias/coffeeshop-state-key", cfg.StateKMSKeyID)
+	require.Equal(t, StateEncryptionS3, cfg.StateEncryption)
 }
 
 func TestLoadGitHubRejectsRepositoryDifferentFromProd(t *testing.T) {

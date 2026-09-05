@@ -51,7 +51,7 @@ func NewRealOperations(cfg config.CI, runner command.Runner, output io.Writer) *
 				"prod-bootstrap-"+cfg.AccountID),
 			Variables: map[string]string{
 				"aws_region": cfg.Region, "expected_aws_account_id": cfg.AccountID,
-				"project_name": cfg.ProjectName,
+				"project_name": cfg.ProjectName, "state_encryption_mode": cfg.StateEncryption,
 			},
 			Environment: awsEnvironment,
 			Timeout:     timeout,
@@ -222,10 +222,14 @@ func (o *RealOperations) Plan(ctx context.Context, action Action) (Plan, error) 
 }
 
 func (o *RealOperations) initRemote(ctx context.Context, assumeScopedRole bool) error {
-	kmsARN, err := o.AWS.Text(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID,
-		"--query", "KeyMetadata.Arn", "--output", "text")
-	if err != nil {
-		return err
+	kmsARN := ""
+	if config.UsesStateKMS(o.Config.StateEncryption) {
+		var err error
+		kmsARN, err = o.AWS.Text(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID,
+			"--query", "KeyMetadata.Arn", "--output", "text")
+		if err != nil {
+			return err
+		}
 	}
 	roleARN := ""
 	if assumeScopedRole && o.Config.BackendRoleARN != "" {
@@ -238,10 +242,14 @@ func (o *RealOperations) initRemote(ctx context.Context, assumeScopedRole bool) 
 }
 
 func (o *RealOperations) initBootstrap(ctx context.Context) error {
-	kmsARN, err := o.AWS.Text(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID,
-		"--query", "KeyMetadata.Arn", "--output", "text")
-	if err != nil {
-		return err
+	kmsARN := ""
+	if config.UsesStateKMS(o.Config.StateEncryption) {
+		var err error
+		kmsARN, err = o.AWS.Text(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID,
+			"--query", "KeyMetadata.Arn", "--output", "text")
+		if err != nil {
+			return err
+		}
 	}
 	prodRole := "arn:aws:iam::" + o.Config.AccountID + ":role/" + o.Config.ProjectName + "-terraform-backend-role"
 	return o.Bootstrap.InitS3(ctx, platformterraform.S3BackendConfig{

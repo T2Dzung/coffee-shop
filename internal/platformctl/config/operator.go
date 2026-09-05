@@ -30,6 +30,7 @@ type OperatorEnvironments struct {
 type OperatorEnvironment struct {
 	VarFile                  string             `yaml:"terraformVarFile,omitempty" json:"terraformVarFile,omitempty"`
 	AWSProfile               string             `yaml:"awsProfile,omitempty" json:"awsProfile,omitempty"`
+	StateEncryption          string             `yaml:"stateEncryption,omitempty" json:"stateEncryption,omitempty"`
 	SSHPrivateKeyFile        string             `yaml:"sshPrivateKeyFile,omitempty" json:"sshPrivateKeyFile,omitempty"`
 	AnsibleVaultPasswordFile string             `yaml:"ansibleVaultPasswordFile,omitempty" json:"ansibleVaultPasswordFile,omitempty"`
 	Kubeconfig               string             `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`

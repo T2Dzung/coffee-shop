@@ -18,6 +18,7 @@ type GitHub struct {
 	AccountID            string
 	StateBucket          string
 	StateKey             string
+	StateEncryption      string
 	StateKMSKeyID        string
 	BackendRoleARN       string
 	Owner                string
@@ -47,7 +48,8 @@ func (l Loader) LoadGitHub(projectRoot string) (GitHub, error) {
 		AccountID:            prod.AccountID,
 		StateBucket:          prod.StateBucket,
 		StateKey:             "prod/github-governance.tfstate",
-		StateKMSKeyID:        envString(l.LookupEnv, "PROD_STATE_KMS_KEY_ID", "alias/"+prod.ProjectName+"-state-key"),
+		StateEncryption:      prod.StateEncryption,
+		StateKMSKeyID:        prod.StateKMSKeyID,
 		BackendRoleARN:       prod.BackendRoleARN,
 		RepositorySecretData: map[string]string{},
 	}

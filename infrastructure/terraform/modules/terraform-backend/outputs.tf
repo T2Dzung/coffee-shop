@@ -4,7 +4,7 @@ output "config" {
     bucket       = aws_s3_bucket.terraform_state.bucket
     region       = data.aws_region.current.name
     encrypt      = true
-    kms_key_id   = aws_kms_key.state_key.arn
+    kms_key_id   = var.state_encryption_mode == "sse-kms" ? aws_kms_key.state_key[0].arn : null
     role_arn     = aws_iam_role.backend_role.arn
     use_lockfile = true
   }
@@ -17,7 +17,7 @@ output "additional_configs" {
       bucket       = aws_s3_bucket.terraform_state.bucket
       region       = data.aws_region.current.name
       encrypt      = true
-      kms_key_id   = aws_kms_key.state_key.arn
+      kms_key_id   = var.additional_backend_roles[key].kms_access && var.state_encryption_mode == "sse-kms" ? aws_kms_key.state_key[0].arn : null
       role_arn     = role.arn
       use_lockfile = true
     }

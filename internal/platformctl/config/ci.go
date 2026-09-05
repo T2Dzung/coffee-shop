@@ -21,6 +21,7 @@ type CI struct {
 	OperatorSSHCIDRs        []string
 	StateBucket             string
 	StateKey                string
+	StateEncryption         string
 	StateKMSKeyID           string
 	BackendRoleARN          string
 	SSHPrivateKey           string
@@ -67,6 +68,7 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 		KeyName:                 stringValue(attrs, "key_name", ""),
 		OperatorSSHCIDRs:        stringsValue(attrs, "operator_ssh_cidrs", nil),
 		StateKey:                "ci/foundation.tfstate",
+		StateEncryption:         normalizeStateEncryption(local.StateEncryption),
 		GitHubAuthMode:          "github_app",
 		SSHPrivateKey:           envString(l.LookupEnv, "CI_SSH_PRIVATE_KEY", ""),
 		StateKMSKeyID:           envString(l.LookupEnv, "CI_STATE_KMS_KEY_ID", "alias/coffeeshop-state-key"),
@@ -110,6 +112,7 @@ func (l Loader) LoadCI(projectRoot, varFile string) (CI, error) {
 	cfg.BackendRoleARN = envString(l.LookupEnv, "CI_BACKEND_ROLE_ARN",
 		"arn:aws:iam::"+cfg.AccountID+":role/"+cfg.ProjectName+"-ci-terraform-backend-role")
 	cfg.StateKey = envString(l.LookupEnv, "CI_STATE_KEY", cfg.StateKey)
+	cfg.StateEncryption = normalizeStateEncryption(envString(l.LookupEnv, "CI_STATE_ENCRYPTION", cfg.StateEncryption))
 	cfg.StateKMSKeyID = envString(l.LookupEnv, "CI_STATE_KMS_KEY_ID",
 		"alias/"+cfg.ProjectName+"-state-key")
 	cfg.GitHubAuthMode = envString(l.LookupEnv, "ARC_GITHUB_AUTH_MODE", cfg.GitHubAuthMode)
@@ -140,6 +143,9 @@ func (c CI) Validate() error {
 	}
 	if c.StateKey != "ci/foundation.tfstate" {
 		problems = append(problems, "CI state key must be exactly ci/foundation.tfstate")
+	}
+	if err := validateStateEncryption(c.StateEncryption); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if c.InstanceType == "" || c.RootVolumeGiB < 20 {
 		problems = append(problems, "instance type and root volume must be within the reviewed range")

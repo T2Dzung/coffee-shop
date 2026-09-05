@@ -23,7 +23,10 @@ node_desired_size = 2
 slo_runtime_enabled = true
 synthetics_runtime_version = "syn-nodejs-5.2"
 `), 0o600))
-	env := map[string]string{"PROD_EXPECTED_AWS_REGION": "us-east-1"}
+	env := map[string]string{
+		"PROD_EXPECTED_AWS_REGION": "us-east-1",
+		"PROD_STATE_ENCRYPTION":    "sse-s3",
+	}
 	loader := Loader{
 		LookupEnv: func(key string) (string, bool) { value, ok := env[key]; return value, ok },
 		HomeDir:   func() (string, error) { return "/home/test", nil },
@@ -36,7 +39,19 @@ synthetics_runtime_version = "syn-nodejs-5.2"
 	require.Equal(t, 20, cfg.NodeDiskGiB)
 	require.True(t, cfg.SLOEnabled)
 	require.Equal(t, "syn-nodejs-5.2", cfg.SyntheticsRuntime)
+	require.Equal(t, StateEncryptionS3, cfg.StateEncryption)
 	require.Equal(t, "/home/test/.kube/coffee-prod.yaml", cfg.Kubeconfig)
+}
+
+func TestProdRejectsUnknownStateEncryption(t *testing.T) {
+	t.Parallel()
+	cfg := Prod{
+		AccountID: "123456789012", Region: "ap-southeast-1", GitHubRepository: "owner/repo",
+		GitOpsRevision: "HEAD", PublicAccessCIDRs: []string{"203.0.113.10/32"},
+		NodeInstanceTypes: []string{"t3.medium"}, NodeDesiredSize: 1, NodeDiskGiB: 20,
+		StateEncryption: "custom-kms-maybe", PollAttempts: 1, ReleaseAttempts: 1,
+	}
+	require.ErrorContains(t, cfg.Validate(), "state encryption must be")
 }
 
 func TestLoadProdRejectsUnsafeCIDR(t *testing.T) {

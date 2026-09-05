@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thangchung/go-coffeeshop/internal/platformctl/command"
+	"github.com/thangchung/go-coffeeshop/internal/platformctl/config"
 	platformterraform "github.com/thangchung/go-coffeeshop/internal/platformctl/terraform"
 )
 
@@ -57,12 +58,12 @@ func (o *RealOperations) initRemote(
 	client platformterraform.Client,
 	key string,
 ) error {
-	kmsARN := os.Getenv("PROD_STATE_KMS_KEY_ID")
-	if kmsARN == "" {
+	kmsARN := ""
+	if config.UsesStateKMS(o.Config.StateEncryption) {
 		var err error
 		kmsARN, err = o.AWS.Text(ctx,
 			"kms", "describe-key",
-			"--key-id", "alias/"+o.Config.ProjectName+"-state-key",
+			"--key-id", o.Config.StateKMSKeyID,
 			"--query", "KeyMetadata.Arn",
 			"--output", "text",
 		)
@@ -127,7 +128,7 @@ func (o *RealOperations) firstBootstrap(ctx context.Context) error {
 		Runner: o.Runner, Dir: staging, DataDir: filepath.Join(staging, ".terraform"),
 		Variables: map[string]string{
 			"aws_region": o.Config.Region, "expected_aws_account_id": o.Config.AccountID,
-			"project_name": o.Config.ProjectName,
+			"project_name": o.Config.ProjectName, "state_encryption_mode": o.Config.StateEncryption,
 		},
 		Timeout:     45 * time.Minute,
 		Environment: awsEnvironment(o.Config.AWSProfile),

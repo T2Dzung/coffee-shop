@@ -46,6 +46,8 @@ type Prod struct {
 	SLOEnabled         bool
 	SyntheticsRuntime  string
 	StateBucket        string
+	StateEncryption    string
+	StateKMSKeyID      string
 	BackendRoleARN     string
 	BootstrapStateKey  string
 	FoundationStateKey string
@@ -119,6 +121,7 @@ func (l Loader) LoadProd(projectRoot, varFile string) (Prod, error) {
 		SyntheticsRuntime:  stringValue(attrs, "synthetics_runtime_version", "syn-nodejs-5.2"),
 		BootstrapStateKey:  "prod/bootstrap.tfstate",
 		FoundationStateKey: "prod/foundation.tfstate",
+		StateEncryption:    normalizeStateEncryption(local.StateEncryption),
 		PollAttempts:       60,
 		ReleaseAttempts:    360,
 		WaitTimeout:        "20m",
@@ -139,6 +142,8 @@ func (l Loader) LoadProd(projectRoot, varFile string) (Prod, error) {
 	cfg.GitOpsRepository = envString(l.LookupEnv, "PROD_GITOPS_REPO_URL", "https://github.com/"+cfg.GitHubRepository+".git")
 	cfg.GitOpsRevision = envString(l.LookupEnv, "PROD_GITOPS_REVISION", "HEAD")
 	cfg.StateBucket = envString(l.LookupEnv, "PROD_STATE_BUCKET_NAME", cfg.ProjectName+"-terraform-state-"+cfg.AccountID)
+	cfg.StateEncryption = normalizeStateEncryption(envString(l.LookupEnv, "PROD_STATE_ENCRYPTION", cfg.StateEncryption))
+	cfg.StateKMSKeyID = envString(l.LookupEnv, "PROD_STATE_KMS_KEY_ID", "alias/"+cfg.ProjectName+"-state-key")
 	cfg.BackendRoleARN = envString(l.LookupEnv, "PROD_BACKEND_ROLE_ARN",
 		"arn:aws:iam::"+cfg.AccountID+":role/"+cfg.ProjectName+"-terraform-backend-role")
 	cfg.BootstrapStateKey = envString(l.LookupEnv, "PROD_BOOTSTRAP_STATE_KEY", cfg.BootstrapStateKey)
@@ -165,6 +170,9 @@ func (c Prod) Validate() error {
 	}
 	if c.Region == "" {
 		problems = append(problems, "AWS Region is required")
+	}
+	if err := validateStateEncryption(c.StateEncryption); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if !repoPattern.MatchString(c.GitHubRepository) {
 		problems = append(problems, "GitHub repository must use owner/repository form")

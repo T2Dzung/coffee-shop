@@ -74,10 +74,13 @@ func (o *RealOperations) Plan(ctx context.Context) (Plan, error) {
 			account, o.Config.AccountID,
 		)
 	}
-	kmsARN, err := o.AWS.Text(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID,
-		"--query", "KeyMetadata.Arn", "--output", "text")
-	if err != nil {
-		return Plan{}, fmt.Errorf("resolve GitHub governance state KMS key: %w", err)
+	kmsARN := ""
+	if config.UsesStateKMS(o.Config.StateEncryption) {
+		kmsARN, err = o.AWS.Text(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID,
+			"--query", "KeyMetadata.Arn", "--output", "text")
+		if err != nil {
+			return Plan{}, fmt.Errorf("resolve GitHub governance state KMS key: %w", err)
+		}
 	}
 	if err := o.Terraform.InitS3(ctx, platformterraform.S3BackendConfig{
 		Bucket: o.Config.StateBucket, Key: o.Config.StateKey, Region: o.Config.Region,

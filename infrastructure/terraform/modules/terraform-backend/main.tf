@@ -29,6 +29,7 @@ resource "aws_resourcegroups_group" "bootstrap_group" {
 }
 
 resource "aws_kms_key" "state_key" {
+  count                   = var.state_encryption_mode == "sse-kms" ? 1 : 0
   description             = "KMS key for encrypting Terraform state files in S3"
   deletion_window_in_days = 30
   enable_key_rotation     = true
@@ -36,8 +37,22 @@ resource "aws_kms_key" "state_key" {
 }
 
 resource "aws_kms_alias" "state_key_alias" {
+  count         = var.state_encryption_mode == "sse-kms" ? 1 : 0
   name          = "alias/${var.project_name}-state-key"
-  target_key_id = aws_kms_key.state_key.key_id
+  target_key_id = aws_kms_key.state_key[0].key_id
+}
+
+# Preserve existing KMS identities when upgrading an SSE-KMS backend. Switching
+# to SSE-S3 schedules key deletion only through an explicitly reviewed saved plan,
+# after all encrypted state versions have a verified independent archive.
+moved {
+  from = aws_kms_key.state_key
+  to   = aws_kms_key.state_key[0]
+}
+
+moved {
+  from = aws_kms_alias.state_key_alias
+  to   = aws_kms_alias.state_key_alias[0]
 }
 
 resource "aws_s3_bucket" "terraform_state" {
@@ -61,8 +76,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" 
   bucket = aws_s3_bucket.terraform_state.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.state_key.arn
+      sse_algorithm     = var.state_encryption_mode == "sse-kms" ? "aws:kms" : "AES256"
+      kms_master_key_id = var.state_encryption_mode == "sse-kms" ? aws_kms_key.state_key[0].arn : null
     }
   }
 }
@@ -94,7 +109,7 @@ resource "aws_iam_policy" "backend_policy" {
   description = "Grants permissions to access S3 state bucket and KMS key"
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
@@ -107,13 +122,14 @@ resource "aws_iam_policy" "backend_policy" {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = [for prefix in var.state_key_prefixes : "${aws_s3_bucket.terraform_state.arn}/${prefix}"]
-      },
+      }
+      ], var.state_encryption_mode == "sse-kms" ? [
       {
         Effect   = "Allow"
         Action   = ["kms:DescribeKey", "kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
-        Resource = [aws_kms_key.state_key.arn]
+        Resource = [aws_kms_key.state_key[0].arn]
       }
-    ]
+    ] : [])
   })
 }
 
@@ -145,7 +161,7 @@ resource "aws_iam_policy" "additional_backend" {
   description = "Prefix-scoped Terraform state access for ${each.key}"
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
@@ -160,13 +176,14 @@ resource "aws_iam_policy" "additional_backend" {
         Resource = [
           for prefix in each.value.state_key_prefixes : "${aws_s3_bucket.terraform_state.arn}/${prefix}"
         ]
-      },
+      }
+      ], each.value.kms_access && var.state_encryption_mode == "sse-kms" ? [
       {
         Effect   = "Allow"
         Action   = ["kms:DescribeKey", "kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
-        Resource = [aws_kms_key.state_key.arn]
+        Resource = [aws_kms_key.state_key[0].arn]
       }
-    ]
+    ] : [])
   })
 }
 

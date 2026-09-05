@@ -26,6 +26,7 @@ root_volume_size = 40
 	require.Equal(t, "ci", cfg.Environment)
 	require.Equal(t, "ci/foundation.tfstate", cfg.StateKey)
 	require.Equal(t, "coffeeshop-terraform-state-123456789012", cfg.StateBucket)
+	require.Equal(t, StateEncryptionKMS, cfg.StateEncryption)
 }
 
 func TestCIRejectsCrossEnvironmentStateKey(t *testing.T) {

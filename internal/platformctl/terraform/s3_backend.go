@@ -41,15 +41,17 @@ func (c Client) InitS3(ctx context.Context, config S3BackendConfig) error {
 }
 
 func renderS3BackendConfig(config S3BackendConfig) (string, error) {
-	if config.Bucket == "" || config.Key == "" || config.Region == "" || config.KMSKeyARN == "" {
-		return "", fmt.Errorf("S3 backend bucket, key, region and KMS key ARN are required")
+	if config.Bucket == "" || config.Key == "" || config.Region == "" {
+		return "", fmt.Errorf("S3 backend bucket, key and region are required")
 	}
 	var output strings.Builder
 	fmt.Fprintf(&output, "bucket = %s\n", strconv.Quote(config.Bucket))
 	fmt.Fprintf(&output, "key = %s\n", strconv.Quote(config.Key))
 	fmt.Fprintf(&output, "region = %s\n", strconv.Quote(config.Region))
 	fmt.Fprintf(&output, "encrypt = %t\n", config.Encrypt)
-	fmt.Fprintf(&output, "kms_key_id = %s\n", strconv.Quote(config.KMSKeyARN))
+	if config.KMSKeyARN != "" {
+		fmt.Fprintf(&output, "kms_key_id = %s\n", strconv.Quote(config.KMSKeyARN))
+	}
 	fmt.Fprintf(&output, "use_lockfile = %t\n", config.UseLockfile)
 	if config.RoleARN != "" {
 		fmt.Fprintf(&output, "assume_role = {\n  role_arn = %s\n}\n", strconv.Quote(config.RoleARN))

@@ -200,7 +200,7 @@ func (o *RealOperations) verifyTeardown(ctx context.Context) error {
 	if !o.awsSucceeds(ctx, "s3api", "head-bucket", "--bucket", o.Config.StateBucket) {
 		return fmt.Errorf("retained backend bucket is missing")
 	}
-	if !o.awsSucceeds(ctx, "kms", "describe-key", "--key-id", "alias/"+o.Config.ProjectName+"-state-key") {
+	if config.UsesStateKMS(o.Config.StateEncryption) && !o.awsSucceeds(ctx, "kms", "describe-key", "--key-id", o.Config.StateKMSKeyID) {
 		return fmt.Errorf("retained backend KMS key is missing")
 	}
 	catalog, err := component.Load(filepath.Join(o.Config.ProjectRoot, "platform", "components.yaml"))
