@@ -16,7 +16,6 @@ import (
 	"log/slog"
 
 	pkgConsumer "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/consumer"
-	pkgPublisher "github.com/thangchung/go-coffeeshop/pkg/rabbitmq/publisher"
 
 	_ "github.com/lib/pq"
 )
@@ -45,12 +44,6 @@ func main() {
 		slog.ErrorContext(ctx, "failed init app", "error", err)
 		cancel()
 	}
-
-	a.CounterOrderPub.Configure(
-		pkgPublisher.ExchangeName("counter-order-exchange"),
-		pkgPublisher.BindingKey("counter-order-routing-key"),
-		pkgPublisher.MessageTypeName("kitchen-order-updated"),
-	)
 
 	a.Consumer.Configure(
 		pkgConsumer.ExchangeName("kitchen-order-exchange"),

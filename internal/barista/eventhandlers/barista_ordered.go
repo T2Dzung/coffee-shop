@@ -26,8 +26,12 @@ type baristaOrderedEventHandler struct {
 
 func NewBaristaOrderedEventHandler(pg postgres.DBEngine, counterPub publisher.EventPublisher) BaristaOrderedEventHandler {
 	return &baristaOrderedEventHandler{
-		pg:         pg,
-		counterPub: counterPub,
+		pg: pg,
+		counterPub: counterPub.Configure(
+			publisher.ExchangeName("counter-order-exchange"),
+			publisher.BindingKey("counter-order-routing-key"),
+			publisher.MessageTypeName("barista-order-updated"),
+		),
 	}
 }
 

@@ -29,8 +29,12 @@ func NewKitchenOrderedEventHandler(
 	counterPub pkgPublisher.EventPublisher,
 ) KitchenOrderedEventHandler {
 	return &kitchenOrderedEventHandler{
-		pg:         pg,
-		counterPub: counterPub,
+		pg: pg,
+		counterPub: counterPub.Configure(
+			pkgPublisher.ExchangeName("counter-order-exchange"),
+			pkgPublisher.BindingKey("counter-order-routing-key"),
+			pkgPublisher.MessageTypeName("kitchen-order-updated"),
+		),
 	}
 }
 
