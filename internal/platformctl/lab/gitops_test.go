@@ -1,13 +1,80 @@
 package lab
 
 import (
+	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/thangchung/go-coffeeshop/internal/platformctl/command"
 	"gopkg.in/yaml.v3"
 )
+
+func TestRenderGitOpsRenderedDigests(t *testing.T) {
+	cfg := testConfig(t)
+	makeLock := func(allowed map[string]Image) []byte {
+		images := []Image{}
+		for _, image := range allowed {
+			image.Digest = "sha256:" + strings.Repeat("a", 64)
+			images = append(images, image)
+		}
+		data, err := yaml.Marshal(map[string]any{"images": images})
+		require.NoError(t, err)
+		return data
+	}
+	appData, err := RenderGitOps(cfg, strings.Repeat("b", 40), makeLock(cfg.Images), makeLock(cfg.OrderImages))
+	require.NoError(t, err)
+	appDecoder := yaml.NewDecoder(strings.NewReader(string(appData)))
+	for _, profile := range []struct {
+		name   string
+		images map[string]Image
+	}{{"core", cfg.Images}, {"orders", cfg.OrderImages}} {
+		t.Run(profile.name, func(t *testing.T) {
+			overrides := []map[string]string{}
+			var app map[string]any
+			require.NoError(t, appDecoder.Decode(&app))
+			images := app["spec"].(map[string]any)["source"].(map[string]any)["kustomize"].(map[string]any)["images"].([]any)
+			for _, raw := range images {
+				name, target, ok := strings.Cut(raw.(string), "=")
+				require.True(t, ok)
+				repo, digest, ok := strings.Cut(target, "@")
+				require.True(t, ok)
+				overrides = append(overrides, map[string]string{"name": name, "newName": repo, "digest": digest})
+			}
+			dir := t.TempDir()
+			resource, err := filepath.Rel(dir, filepath.Join(cfg.Root, "infrastructure/iximiuz/gitops", profile.name))
+			require.NoError(t, err)
+			data, err := yaml.Marshal(map[string]any{"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization", "resources": []string{resource}, "images": overrides})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "kustomization.yaml"), data, 0600))
+			result, err := (command.OSRunner{}).Run(context.Background(), command.Request{Name: "kubectl", Args: []string{"kustomize", dir}, Timeout: 30 * time.Second})
+			require.NoError(t, err, result.Stderr)
+			decoder := yaml.NewDecoder(strings.NewReader(result.Stdout))
+			count := 0
+			for {
+				var obj map[string]any
+				err := decoder.Decode(&obj)
+				if err == io.EOF {
+					break
+				}
+				require.NoError(t, err)
+				if obj["kind"] != "Deployment" {
+					continue
+				}
+				pod := obj["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+				for _, raw := range pod["containers"].([]any) {
+					require.Contains(t, raw.(map[string]any)["image"], "@sha256:"+strings.Repeat("a", 64))
+					count++
+				}
+			}
+			require.NotZero(t, count)
+		})
+	}
+}
 
 func TestRenderGitOps(t *testing.T) {
 	cfg := testConfig(t)

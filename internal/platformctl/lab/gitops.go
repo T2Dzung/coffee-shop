@@ -44,7 +44,8 @@ func RenderGitOps(cfg Config, revision string, coreLock, ordersLock []byte) ([]b
 			if expected.Name == "go-coffeeshop-migrate" {
 				continue
 			}
-			images = append(images, expected.Name+"="+image.NewName+"@"+image.Digest)
+			// The referenced overlay has already renamed images to registry paths.
+			images = append(images, image.NewName+"="+image.NewName+"@"+image.Digest)
 		}
 		sort.Strings(images)
 		app := map[string]any{

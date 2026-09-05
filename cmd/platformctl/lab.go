@@ -18,21 +18,22 @@ func runLab(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if len(args) >= 2 && args[0] == "iximiuz" && args[1] == "gitops-render" {
 		return renderLabGitOps(args[2:], stdout, stderr)
 	}
-	if len(args) < 2 || args[0] != "iximiuz" || (args[1] != "setup" && args[1] != "resume" && args[1] != "status" && args[1] != "stop" && args[1] != "stateful" && args[1] != "orders") {
-		return fmt.Errorf("usage: platformctl lab iximiuz <setup|stateful|orders|resume|status|stop|gitops-render>; gitops-render --help describes offline Application rendering")
+	if len(args) < 2 || args[0] != "iximiuz" || (args[1] != "setup" && args[1] != "resume" && args[1] != "status" && args[1] != "stop" && args[1] != "stateful" && args[1] != "orders" && args[1] != "gitops") {
+		return fmt.Errorf("usage: platformctl lab iximiuz <setup|stateful|orders|resume|status|stop|gitops|gitops-render>; gitops-render --help describes offline Application rendering")
 	}
 	flags := flag.NewFlagSet("lab iximiuz "+args[1], flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var options lab.Options
 	options.Create = args[1] == "setup"
 	flags.StringVar(&options.RunID, "run", "", "exact existing playground run ID; never auto-select latest")
+	flags.StringVar(&options.Revision, "revision", "", "gitops: full published source commit SHA")
 	flags.StringVar(&options.Playground, "playground", "", "exact expected custom playground name")
 	flags.StringVar(&options.Binary, "labctl", "labctl", "labctl binary path")
 	flags.StringVar(&options.Machine, "machine", "dev-machine", "builder/control client VM")
 	flags.StringVar(&options.Workspace, "workspace", "/home/laborant/coffeeshop-core", "lab source and runtime lock directory; setup creates it")
 	flags.DurationVar(&options.Lifetime, "lifetime", time.Hour, "after create/restart: total session duration, 5m to 3h; existing running sessions keep their deadline")
 	defaultTimeout := 10 * time.Minute
-	if options.Create || args[1] == "stateful" || args[1] == "orders" {
+	if options.Create || args[1] == "stateful" || args[1] == "orders" || args[1] == "gitops" {
 		defaultTimeout = 45 * time.Minute
 	}
 	timeout := flags.Duration("timeout", defaultTimeout, "overall command timeout (setup/stateful: 45m, other actions: 10m)")

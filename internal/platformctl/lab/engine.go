@@ -23,8 +23,11 @@ type Engine struct {
 }
 
 func (e Engine) Run(ctx context.Context, action string) (err error) {
-	if action != "setup" && action != "resume" && action != "status" && action != "stop" && action != "stateful" && action != "orders" {
+	if action != "setup" && action != "resume" && action != "status" && action != "stop" && action != "stateful" && action != "orders" && action != "gitops" {
 		return fmt.Errorf("unsupported lab action %q", action)
+	}
+	if action == "gitops" && !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(e.Config.Revision) {
+		return fmt.Errorf("gitops requires --revision full commit SHA before any mutation")
 	}
 	if e.Output == nil {
 		e.Output = io.Discard
@@ -162,6 +165,11 @@ func (e Engine) Run(ctx context.Context, action string) (err error) {
 			if err = e.ordersRecoverAndVerify(ctx); err != nil {
 				return err
 			}
+		}
+	}
+	if action == "gitops" {
+		if err = e.gitops(ctx); err != nil {
+			return err
 		}
 	}
 	fmt.Fprintln(e.Output, "Core ready: registry digests verified, workloads ready, menu passed. No AWS actions.")

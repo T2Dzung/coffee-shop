@@ -19,6 +19,7 @@ const registry = "registry.iximiuz.com"
 
 type Options struct {
 	RunID, Playground, Binary, Machine, Workspace string
+	Revision                                      string
 	Lifetime                                      time.Duration
 	Create                                        bool
 }
