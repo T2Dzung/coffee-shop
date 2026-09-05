@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: coffeeshop-orders-migration
+  namespace: coffeeshop-lab-data
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: migrate
+          image: go-coffeeshop-migrate
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 192Mi}
+          env:
+            - name: MIGRATION_MODE
+              value: migrate
+            - name: PG_URI
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-postgres-app, key: uri}
+            - name: PG_URL
+              value: $(PG_URI)?sslmode=require
+            - name: MIGRATION_PATH
+              value: /app/db/migrations
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}

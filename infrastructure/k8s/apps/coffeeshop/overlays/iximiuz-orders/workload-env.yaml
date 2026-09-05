@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: counter
+  namespace: coffeeshop
+spec:
+  template:
+    spec:
+      containers:
+        - name: counter
+          env:
+            - $patch: replace
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: APP_NAME_COUNTER}
+            - name: IN_DOCKER
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: IN_DOCKER}
+            - name: PG_URI
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-postgres-app, key: uri}
+            - name: PG_URL
+              value: $(PG_URI)?sslmode=require
+            - name: PG_DSN_URL
+              value: $(PG_URI)?sslmode=require
+            - name: RABBIT_USER
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: username}
+            - name: RABBIT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: password}
+            - name: RABBITMQ_URL
+              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@coffeeshop-rabbitmq:5672/
+            - name: PRODUCT_CLIENT_URL
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: PRODUCT_CLIENT_URL}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: OTEL_EXPORTER_OTLP_ENDPOINT}
+            - name: OTEL_TRACES_SAMPLER
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: OTEL_TRACES_SAMPLER}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: OTEL_TRACES_SAMPLER_ARG}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: OTEL_RESOURCE_ATTRIBUTES}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: barista
+  namespace: coffeeshop
+spec:
+  template:
+    spec:
+      containers:
+        - name: barista
+          env:
+            - $patch: replace
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: APP_NAME_BARISTA}
+            - name: IN_DOCKER
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: IN_DOCKER}
+            - name: PG_URI
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-postgres-app, key: uri}
+            - name: PG_URL
+              value: $(PG_URI)?sslmode=require
+            - name: PG_DSN_URL
+              value: $(PG_URI)?sslmode=require
+            - name: RABBIT_USER
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: username}
+            - name: RABBIT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: password}
+            - name: RABBITMQ_URL
+              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@coffeeshop-rabbitmq:5672/
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitchen
+  namespace: coffeeshop
+spec:
+  template:
+    spec:
+      containers:
+        - name: kitchen
+          env:
+            - $patch: replace
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: APP_NAME_KITCHEN}
+            - name: IN_DOCKER
+              valueFrom:
+                configMapKeyRef: {name: coffeeshop-config, key: IN_DOCKER}
+            - name: PG_URI
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-postgres-app, key: uri}
+            - name: PG_URL
+              value: $(PG_URI)?sslmode=require
+            - name: PG_DSN_URL
+              value: $(PG_URI)?sslmode=require
+            - name: RABBIT_USER
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: username}
+            - name: RABBIT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: password}
+            - name: RABBITMQ_URL
+              value: amqp://$(RABBIT_USER):$(RABBIT_PASSWORD)@coffeeshop-rabbitmq:5672/

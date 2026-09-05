@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: coffeeshop-lab
+  namespace: argocd
+spec:
+  description: Application workloads only; stateful infrastructure remains CLI/operator-owned.
+  sourceRepos:
+    - https://github.com/T2Dzung/coffee-shop
+  destinations:
+    - namespace: coffeeshop-lab
+      server: https://kubernetes.default.svc
+    - namespace: coffeeshop-lab-data
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: apps
+      kind: Deployment
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ConfigMap
+    - group: networking.k8s.io
+      kind: NetworkPolicy

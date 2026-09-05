@@ -1,0 +1,29 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coffeeshop-postgres
+  namespace: coffeeshop-lab-data
+spec:
+  # imageName is injected from the existing DEV values by platformctl, not duplicated.
+  instances: 2
+  enableSuperuserAccess: false
+  bootstrap:
+    initdb:
+      database: coffeeshop
+      owner: coffeeshop
+  storage:
+    storageClass: coffeeshop-lab-local
+    size: 2Gi
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "1", memory: 768Mi}
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  postgresql:
+    parameters:
+      shared_buffers: 64MB
+      max_connections: "30"
+      max_wal_size: 256MB
+  primaryUpdateStrategy: supervised

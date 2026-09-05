@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stateful-checker
+  namespace: coffeeshop-lab-data
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: curl
+      # image is injected from the core smoke-client contract.
+      command: [sleep, "2147483647"]
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {cpu: 100m, memory: 32Mi}
+      env:
+        - name: RABBIT_USER
+          valueFrom:
+            secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: username}
+        - name: RABBIT_PASS
+          valueFrom:
+            secretKeyRef: {name: coffeeshop-rabbitmq-default-user, key: password}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}

@@ -1,0 +1,87 @@
+# Enforcement requires a working policy-capable CNI; render success does not prove it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app: proxy
+  policyTypes: [Ingress, Egress]
+  # ClusterIP only. Allows in-cluster test clients and a future Gateway to call
+  # this port; it does not create a public endpoint or LoadBalancer.
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: product
+      ports:
+        - protocol: TCP
+          port: 5001
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: coffeeshop-lab-data
+          podSelector:
+            matchLabels:
+              app: counter
+      ports:
+        - protocol: TCP
+          port: 5002
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-product
+spec:
+  podSelector:
+    matchLabels:
+      app: product
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: proxy
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: coffeeshop-lab-data
+          podSelector:
+            matchLabels:
+              app: counter
+      ports:
+        - protocol: TCP
+          port: 5001

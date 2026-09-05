@@ -1,0 +1,46 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orders-workloads
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [counter, barista, kitchen]
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: coffeeshop-lab
+          podSelector:
+            matchLabels: {app: proxy}
+      ports:
+        - {protocol: TCP, port: 5002}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: coffeeshop-postgres}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: coffeeshop-rabbitmq}
+      ports:
+        - {protocol: TCP, port: 5672}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: coffeeshop-lab
+          podSelector:
+            matchLabels: {app: product}
+      ports:
+        - {protocol: TCP, port: 5001}

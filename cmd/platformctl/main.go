@@ -48,9 +48,11 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl [--operator-config path] <prod|dev|ci|github|config|component|toolchain|validate|terraform-plan|release|version> ...")
+		return fmt.Errorf("usage: platformctl [--operator-config path] <lab|prod|dev|ci|github|config|component|toolchain|validate|terraform-plan|release|version> ...")
 	}
 	switch args[0] {
+	case "lab":
+		return runLab(ctx, args[1:], stdout, stderr)
 	case "prod":
 		return runProd(ctx, args[1:], stdin, stdout, stderr, operatorConfig)
 	case "ci":

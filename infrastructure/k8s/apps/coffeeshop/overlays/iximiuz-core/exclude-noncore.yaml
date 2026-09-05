@@ -1,0 +1,43 @@
+# Keep the canonical application base. This profile does not run the web UI or
+# order/payment/fulfillment flow and therefore needs neither PostgreSQL nor RabbitMQ.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: coffeeshop
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: coffeeshop
+$patch: delete
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: counter
+  namespace: coffeeshop
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: counter
+  namespace: coffeeshop
+$patch: delete
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: barista
+  namespace: coffeeshop
+$patch: delete
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitchen
+  namespace: coffeeshop
+$patch: delete

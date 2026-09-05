@@ -1,0 +1,140 @@
+---
+# Native host configuration; lifecycle and image delivery are owned by Go lab.Engine.
+- name: Prepare the three private cluster machines
+  hosts: k3s
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Assert the expected private interface exists
+      ansible.builtin.command: ip -4 -o addr show
+      register: addresses
+      changed_when: false
+      failed_when: ansible_host not in addresses.stdout
+    - name: Create K3s directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: '0700'
+    - name: Download native K3s installer
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /tmp/coffeeshop-install-k3s.sh
+        mode: '0700'
+
+- name: Bootstrap control plane
+  hosts: cplane-01
+  become: true
+  gather_facts: false
+  vars_files: [../ansible/playbooks/group_vars/all/versions.yml]
+  tasks:
+    - name: Install lab-only K3s configuration
+      ansible.builtin.copy:
+        src: k3s-server.yaml
+        dest: /etc/rancher/k3s/config.yaml
+        mode: '0600'
+    - name: Install pinned K3s server
+      ansible.builtin.command: sh /tmp/coffeeshop-install-k3s.sh
+      environment:
+        INSTALL_K3S_VERSION: '{{ k3s_version }}'
+        INSTALL_K3S_EXEC: server
+      changed_when: true
+    - name: Read cluster join token inside the playground
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: lab_join_token
+      no_log: true
+    - name: Fetch lab admin kubeconfig to builder
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: '{{ lab_workspace }}/lab-kubeconfig'
+        flat: true
+      no_log: true
+
+- name: Join workers
+  hosts: k3s:!cplane-01
+  become: true
+  gather_facts: false
+  vars_files: [../ansible/playbooks/group_vars/all/versions.yml]
+  tasks:
+    - name: Configure private join endpoint and token
+      ansible.builtin.copy:
+        content: "{{ {'server': lab_api, 'token': (hostvars['cplane-01'].lab_join_token.content | b64decode | trim)} | to_nice_yaml }}"
+        dest: /etc/rancher/k3s/config.yaml
+        mode: '0600'
+      no_log: true
+    - name: Install pinned K3s agent
+      ansible.builtin.command: sh /tmp/coffeeshop-install-k3s.sh
+      environment:
+        INSTALL_K3S_VERSION: '{{ k3s_version }}'
+        INSTALL_K3S_EXEC: agent
+      changed_when: true
+
+- name: Configure client tools and Cilium
+  hosts: dev-machine
+  gather_facts: false
+  vars_files: [../ansible/playbooks/group_vars/all/versions.yml]
+  tasks:
+    - name: Create private kubeconfig directory
+      ansible.builtin.file:
+        path: /home/laborant/.kube
+        state: directory
+        mode: '0700'
+    - name: Replace loopback endpoint in fetched lab config
+      ansible.builtin.replace:
+        path: '{{ lab_workspace }}/lab-kubeconfig'
+        regexp: 'https://127.0.0.1:6443'
+        replace: '{{ lab_api }}'
+      no_log: true
+    - name: Activate lab kubeconfig
+      ansible.builtin.copy:
+        src: '{{ lab_workspace }}/lab-kubeconfig'
+        dest: /home/laborant/.kube/config
+        mode: '0600'
+        remote_src: true
+      no_log: true
+    - name: Download kubectl matching the version contract
+      become: true
+      ansible.builtin.get_url:
+        url: 'https://dl.k8s.io/release/v{{ kubernetes_schema_version }}/bin/linux/amd64/kubectl'
+        checksum: 'sha256:https://dl.k8s.io/release/v{{ kubernetes_schema_version }}/bin/linux/amd64/kubectl.sha256'
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+    - name: Download checksum-pinned Helm
+      ansible.builtin.get_url:
+        url: 'https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz'
+        checksum: 'sha256:{{ helm_linux_amd64_sha256 }}'
+        dest: '{{ lab_workspace }}/helm.tar.gz'
+        mode: '0600'
+    - name: Extract Helm
+      ansible.builtin.unarchive:
+        src: '{{ lab_workspace }}/helm.tar.gz'
+        dest: '{{ lab_workspace }}'
+        remote_src: true
+    - name: Install Helm binary
+      become: true
+      ansible.builtin.copy:
+        src: '{{ lab_workspace }}/linux-amd64/helm'
+        dest: /usr/local/bin/helm
+        remote_src: true
+        mode: '0755'
+    - name: Download standard Gateway API CRDs
+      ansible.builtin.get_url:
+        url: 'https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_crds_version }}/standard-install.yaml'
+        dest: '{{ lab_workspace }}/gateway-crds.yaml'
+        mode: '0600'
+    - name: Download TLSRoute CRD required by Cilium Gateway API
+      ansible.builtin.get_url:
+        url: 'https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{ gateway_api_crds_version }}/config/crd/experimental/gateway.networking.k8s.io_tlsroutes.yaml'
+        dest: '{{ lab_workspace }}/tlsroute-crd.yaml'
+        mode: '0600'
+    - name: Apply Gateway API CRDs
+      ansible.builtin.command:
+        argv: [kubectl, apply, --server-side, -f, '{{ lab_workspace }}/gateway-crds.yaml', -f, '{{ lab_workspace }}/tlsroute-crd.yaml']
+      changed_when: true
+    - name: Install Cilium and wait for datapath
+      ansible.builtin.command:
+        argv: [helm, upgrade, --install, cilium, cilium, --repo, 'https://helm.cilium.io/', --namespace, kube-system, --version, '{{ cilium_chart_version }}', --values, '{{ lab_workspace }}/infrastructure/iximiuz/cilium-values.yaml', --wait, --timeout, 8m]
+      changed_when: true
+    - name: Verify all three nodes are Ready
+      ansible.builtin.command: kubectl wait node --all --for=condition=Ready --timeout=180s
+      changed_when: false

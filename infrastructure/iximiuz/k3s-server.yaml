@@ -1,0 +1,13 @@
+# Lab-specific host config. Versions remain in the existing DEV version contract.
+tls-san: [cplane-01, 172.16.0.2]
+disable: [traefik, servicelb]
+flannel-backend: none
+disable-kube-proxy: true
+disable-network-policy: true
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+cluster-cidr: 10.42.0.0/16
+service-cidr: 10.43.0.0/16
+cluster-dns: 10.43.0.10
+cluster-domain: cluster.local
+cluster-init: true

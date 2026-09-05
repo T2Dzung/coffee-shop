@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: coffeeshop-lab-data
+resources:
+  - ../../base
+  - network-policy.yaml
+
+patches:
+  - path: exclude-core.yaml
+  - path: workload-env.yaml
+  - target:
+      kind: Namespace
+    patch: |-
+      - op: replace
+        path: /metadata/labels/name
+        value: coffeeshop-lab-data
+      - op: add
+        path: /metadata/labels/app.kubernetes.io~1managed-by
+        value: platformctl-lab
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+
+configMapGenerator:
+  - name: coffeeshop-config
+    literals:
+      - APP_NAME_COUNTER=counter-service
+      - APP_NAME_BARISTA=barista-service
+      - APP_NAME_KITCHEN=kitchen-service
+      - IN_DOCKER=true
+      - PRODUCT_CLIENT_URL=product.coffeeshop-lab.svc.cluster.local:5001
+      - OTEL_EXPORTER_OTLP_ENDPOINT=127.0.0.1:4317
+      - OTEL_TRACES_SAMPLER=parentbased_traceidratio
+      - OTEL_TRACES_SAMPLER_ARG=0
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=iximiuz-lab
+
+images:
+  - name: go-coffeeshop-counter
+    newName: registry.iximiuz.com/go-coffeeshop-counter
+    newTag: lab-orders
+  - name: go-coffeeshop-barista
+    newName: registry.iximiuz.com/go-coffeeshop-barista
+    newTag: lab-orders
+  - name: go-coffeeshop-kitchen
+    newName: registry.iximiuz.com/go-coffeeshop-kitchen
+    newTag: lab-orders
+  - name: go-coffeeshop-migrate
+    newName: registry.iximiuz.com/go-coffeeshop-migrate
+    newTag: lab-orders

@@ -1,0 +1,19 @@
+# MANUAL FAULT ONLY. Never include in normal setup or an app kustomization.
+# Recovery: kubectl -n coffeeshop-lab delete ciliumnetworkpolicy lab-deny-product
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: lab-deny-product
+  namespace: coffeeshop-lab
+spec:
+  endpointSelector:
+    matchLabels:
+      app: proxy
+  egressDeny:
+    - toEndpoints:
+        - matchLabels:
+            app: product
+      toPorts:
+        - ports:
+            - port: "5001"
+              protocol: TCP

@@ -1,0 +1,69 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reusable core source. A run-specific outer overlay pins registry image digests.
+namespace: coffeeshop-lab
+resources:
+  - ../../base
+  - network-policy.yaml
+
+patches:
+  - path: exclude-noncore.yaml
+  - target:
+      kind: Namespace
+    patch: |-
+      - op: replace
+        path: /metadata/labels/name
+        value: coffeeshop-lab
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: APP_ENV
+          value: iximiuz-lab
+
+configMapGenerator:
+  - name: coffeeshop-config
+    literals:
+      - APP_NAME_PRODUCT=product-service
+      - APP_NAME_PROXY=proxy-service
+      - GRPC_PRODUCT_HOST=product
+      - GRPC_PRODUCT_PORT=5001
+      # The gateway registers both APIs lazily. Core works without counter; the
+      # optional orders profile later provides this cross-namespace endpoint.
+      - GRPC_COUNTER_HOST=counter.coffeeshop-lab-data.svc.cluster.local
+      - GRPC_COUNTER_PORT=5002
+      # No collector in core. Do not send a sampled traceparent during the smoke:
+      # parentbased sampling can still sample an explicitly sampled parent.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=127.0.0.1:4317
+      - OTEL_TRACES_SAMPLER=parentbased_traceidratio
+      - OTEL_TRACES_SAMPLER_ARG=0
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=iximiuz-lab
+
+# Build/push these images inside the playground, then pin the run's digests before
+# applying. This bootstrap tag is not evidence of an existing registry artifact.
+images:
+  - name: go-coffeeshop-product
+    newName: registry.iximiuz.com/go-coffeeshop-product
+    newTag: lab-core
+  - name: go-coffeeshop-proxy
+    newName: registry.iximiuz.com/go-coffeeshop-proxy
+    newTag: lab-core

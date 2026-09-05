@@ -1,0 +1,64 @@
+kind: playground
+name: coffeeshop-core
+title: CoffeeShop K3s Cilium learning lab
+description: Private on-demand learning lab. Start VMs here, then provision core with platformctl lab iximiuz setup.
+categories: [kubernetes, networking]
+playground:
+  networks:
+    - name: local
+      subnet: 172.16.0.0/24
+  machines:
+    - name: dev-machine
+      kernel: {source: "6.1"}
+      users:
+        - {name: root}
+        - {name: laborant, default: true}
+      drives:
+        - {source: docker, mount: /, size: 20GiB}
+      network:
+        interfaces:
+          - {network: local, address: 172.16.0.5/24}
+      resources: {cpuCount: 2, ramSize: 4GiB}
+    - name: cplane-01
+      kernel: {source: "6.1"}
+      users:
+        - {name: root}
+        - {name: laborant, default: true}
+      drives:
+        - {source: ubuntu-24-04, mount: /, size: 20GiB}
+      network:
+        interfaces:
+          - {network: local, address: 172.16.0.2/24}
+      resources: {cpuCount: 2, ramSize: 4GiB}
+    - name: node-01
+      kernel: {source: "6.1"}
+      users:
+        - {name: root}
+        - {name: laborant, default: true}
+      drives:
+        - {source: ubuntu-24-04, mount: /, size: 20GiB}
+      network:
+        interfaces:
+          - {network: local, address: 172.16.0.3/24}
+      resources: {cpuCount: 2, ramSize: 4GiB}
+    - name: node-02
+      kernel: {source: "6.1"}
+      users:
+        - {name: root}
+        - {name: laborant, default: true}
+      drives:
+        - {source: ubuntu-24-04, mount: /, size: 20GiB}
+      network:
+        interfaces:
+          - {network: local, address: 172.16.0.4/24}
+      resources: {cpuCount: 2, ramSize: 4GiB}
+  tabs:
+    - {id: ide-dev-machine, kind: ide, name: IDE, machine: dev-machine}
+    - {id: terminal-dev-machine, kind: terminal, name: dev-machine, machine: dev-machine}
+    - {id: terminal-cplane-01, kind: terminal, name: cplane-01, machine: cplane-01}
+    - {id: terminal-node-01, kind: terminal, name: node-01, machine: node-01}
+    - {id: terminal-node-02, kind: terminal, name: node-02, machine: node-02}
+  accessControl:
+    canList: [owner]
+    canRead: [owner]
+    canStart: [owner]

@@ -1,0 +1,30 @@
+# Separate namespace: the app namespace deliberately denies arbitrary client egress.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: coffeeshop-lab-checks
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: smoke-client
+  namespace: coffeeshop-lab-checks
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    # curl's image USER is a name; kubelet requires a numeric UID to verify non-root.
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: curl
+      image: curlimages/curl:8.12.1
+      command: [sleep, "86400"]
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {cpu: 100m, memory: 32Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}

@@ -1,0 +1,35 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: coffeeshop-rabbitmq
+  namespace: coffeeshop-lab-data
+spec:
+  replicas: 3
+  # Operator owns/generated credentials; no copied AWS/DEV secret or guest user.
+  service: {type: ClusterIP}
+  persistence:
+    storageClassName: coffeeshop-lab-local
+    storage: 2Gi
+  resources:
+    requests: {cpu: 250m, memory: 768Mi}
+    limits: {cpu: "1", memory: 768Mi}
+  rabbitmq:
+    additionalConfig: |
+      default_queue_type = quorum
+      disk_free_limit.absolute = 512MB
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: coffeeshop-rabbitmq}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coffeeshop-rabbitmq
+  namespace: coffeeshop-lab-data
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: coffeeshop-rabbitmq}
